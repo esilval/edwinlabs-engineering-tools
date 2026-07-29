@@ -1,0 +1,27 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  structure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"   # version minima que soporta el plugin
+      - name: Estructura del marketplace y de los plugins
+        run: python3 scripts/validate.py --strict
+
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: La compuerta y la trazabilidad funcionan
+        run: python3 plugins/sdd/tests/selftest.py

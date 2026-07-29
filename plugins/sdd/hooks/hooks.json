@@ -1,0 +1,45 @@
+{
+  "description": "Compuerta SDD y control de calidad",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py", "guard"],
+            "timeout": 15,
+            "statusMessage": "Comprobando la compuerta SDD"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py", "quality"],
+            "timeout": 60,
+            "statusMessage": "Formateando y analizando"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py", "context"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

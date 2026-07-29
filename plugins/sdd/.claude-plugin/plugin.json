@@ -1,0 +1,8 @@
+{
+  "name": "sdd",
+  "displayName": "Spec-Driven Development",
+  "description": "Desarrollo orientado a especificaciones: constitution -> specify -> clarify -> plan -> tasks -> implement, con una compuerta que impide escribir codigo sin especificacion.",
+  "author": { "name": "Edwin Silva" },
+  "license": "MIT",
+  "keywords": ["sdd", "spec-driven", "workflow", "specs", "guardrail"]
+}

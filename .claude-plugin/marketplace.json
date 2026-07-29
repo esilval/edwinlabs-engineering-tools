@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "edwinlabs-engineering-tools",
+  "description": "Herramientas internas de ingenieria de EdwinLabs para Claude Code",
+  "owner": {
+    "name": "Edwin Silva",
+    "url": "https://github.com/esilval"
+  },
+  "plugins": [
+    {
+      "name": "sdd",
+      "description": "Desarrollo orientado a especificaciones: constitution -> specify -> clarify -> plan -> tasks -> implement, con compuerta que impide escribir codigo sin especificacion y trazabilidad requisito -> tarea -> prueba.",
+      "source": "./plugins/sdd",
+      "category": "development",
+      "keywords": ["sdd", "spec-driven", "workflow", "guardrail"]
+    }
+  ]
+}

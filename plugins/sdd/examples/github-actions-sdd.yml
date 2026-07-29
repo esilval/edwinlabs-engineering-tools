@@ -1,0 +1,65 @@
+# Ejemplo. Copia a .github/workflows/sdd.yml
+#
+# Corre la misma logica de trazabilidad que el plugin ejecuta en local, para
+# que un PR cuyo requisito MUST no tenga prueba no pueda entrar. El plugin y el
+# pipeline comparten codigo: una sola definicion de "esto esta completo".
+
+name: SDD
+
+on:
+  pull_request:
+    paths: ["specs/**", "src/**", "tests/**"]
+
+jobs:
+  trazabilidad:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # El plugin vive fuera del repo de producto. Ajusta a tu caso: submodulo,
+      # checkout de otro repo, o vendorizado en tools/sdd.
+      - name: Obtener el plugin
+        uses: actions/checkout@v4
+        with:
+          repository: TU-USUARIO/sdd-plugin
+          path: .sdd-plugin
+
+      # La feature se deriva de la rama. Si tus ramas no se llaman como el
+      # directorio de la feature, escribe el slug en .sdd/current en su lugar.
+      - name: Fijar la feature activa
+        run: |
+          mkdir -p .sdd
+          if [ -d "specs/${GITHUB_HEAD_REF}" ]; then
+            echo "${GITHUB_HEAD_REF}" > .sdd/current
+          fi
+
+      - name: Trazabilidad
+        id: trace
+        env:
+          CLAUDE_PROJECT_DIR: ${{ github.workspace }}
+        run: |
+          python3 .sdd-plugin/scripts/sdd.py trace --json > sdd-trace.json || true
+          python3 .sdd-plugin/scripts/sdd.py trace | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 .sdd-plugin/scripts/sdd.py trace --check
+
+      - name: Publicar el reporte
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdd-trace
+          path: sdd-trace.json
+
+# Notas
+#
+# - `trace --check` sale con 1 si hay algun hallazgo E-*. Es el unico paso que
+#   debe tumbar el PR; el resto es informativo.
+# - Para adoptarlo gradualmente en un repo con specs existentes, cambia el
+#   ultimo paso por `continue-on-error: true` durante unas semanas y mira el
+#   resumen antes de hacerlo bloqueante.
+# - El JSON lleva "schema": "sdd.trace/v1". Si construyes algo encima (un
+#   comentario en el PR, un panel), fija esa version y trata un cambio de
+#   schema como breaking.
