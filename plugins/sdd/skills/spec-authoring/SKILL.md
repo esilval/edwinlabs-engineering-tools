@@ -64,5 +64,12 @@ sesión de implementación ya no lo es.
 - Requisitos MUST sin criterio de aceptación.
 - La sección de preguntas abiertas tiene entradas que afectan a requisitos MUST.
 
+## Preguntas abiertas
+
+Cada pregunta cita el requisito al que afecta: `- [ ] (R002) ¿Cuánto dura la
+sesión?`. Es lo que permite al comprobador saber cuáles bloquean. Una pregunta
+abierta sobre un MUST impide aprobar la spec; una que no cita ninguno solo
+genera un aviso.
+
 Cuando detectes alguna, dilo explícitamente al usuario en vez de rellenar el
 hueco con una suposición.

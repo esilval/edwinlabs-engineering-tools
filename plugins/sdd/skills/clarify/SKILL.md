@@ -34,6 +34,11 @@ suposiciones enterradas en el código.
    un requisito EARS o en un criterio de aceptación, y borra la pregunta de la
    sección de preguntas abiertas.
 
+   Las preguntas que sigan abiertas deben citar el requisito al que afectan:
+   `- [ ] (R002) ¿Cuánto dura la sesión?`. Si encuentras una sin cita, añádela.
+   Así el comprobador sabe qué preguntas bloquean: una pregunta abierta sobre
+   un MUST impide aprobar la spec (`E-SPEC-OPEN-MUST-QUESTION`).
+
 5. No inventes respuestas ni marques algo como resuelto por inferencia. Si el
    usuario no contesta a algo, sigue siendo una pregunta abierta.
 

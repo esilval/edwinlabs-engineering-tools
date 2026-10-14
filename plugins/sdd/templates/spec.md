@@ -78,4 +78,9 @@ tengan un número o un umbral verificable; el resto es decoración._
 
 ## Preguntas abiertas
 
-- [ ] _Ambigüedad sin resolver. Debe quedar vacío antes de pasar a `plan.md`._
+> Cita entre paréntesis el requisito al que afecta cada pregunta:
+> `- [ ] (R002) ¿Cuánto dura la sesión?`. Una pregunta abierta sobre un MUST
+> impide aprobar la spec. Al resolverla, conviértela en requisito o criterio y
+> borra la línea.
+
+- [ ] _(R001) Ambigüedad sin resolver._

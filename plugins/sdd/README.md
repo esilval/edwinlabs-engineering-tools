@@ -79,7 +79,7 @@ Qué significa «completo» en cada fase:
 
 | Fase  | Condiciones |
 | ----- | ----------- |
-| spec  | sin huecos de plantilla · al menos un MUST · todo MUST con criterios · sin IDs duplicados |
+| spec  | sin huecos de plantilla · al menos un MUST · todo MUST con criterios · sin IDs duplicados · sin preguntas abiertas sobre un MUST |
 | plan  | sin huecos de plantilla · menciona todos los MUST de la spec |
 | tasks | sin huecos de plantilla · al menos una tarea · ningún MUST sin tarea · sin requisitos ni dependencias inexistentes · sin ciclos |
 
@@ -194,6 +194,7 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `E-TASK-UNKNOWN-DEP` | Tarea que depende de una tarea inexistente |
 | `E-TASK-DEP-CYCLE` | Ciclo de dependencias |
 | `E-DONE-NO-TEST` | Tarea cerrada cuyos requisitos no tienen prueba |
+| `E-SPEC-OPEN-MUST-QUESTION` | Pregunta abierta que cita un requisito MUST |
 | `E-SPEC-TEMPLATE` | `spec.md` conserva huecos de plantilla |
 | `E-TASK-TEMPLATE` | `tasks.md` conserva huecos de plantilla |
 | `W-REQ-NO-TASK` | Requisito SHOULD/COULD sin tarea |
@@ -201,7 +202,7 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `W-REQ-VAGUE` | Adjetivo sin umbral verificable |
 | `W-TASK-NO-REQ` | Tarea que no sirve a ningún requisito |
 | `W-DONE-OPEN-DEPS` | Tarea cerrada con dependencias abiertas |
-| `W-SPEC-OPEN-QUESTIONS` | Preguntas abiertas sin resolver |
+| `W-SPEC-OPEN-QUESTIONS` | Preguntas abiertas que no citan ningún MUST |
 | `W-SPEC-NO-UNWANTED` | Ningún requisito `SI... ENTONCES` |
 | `W-TEST-UNSCOPED` | Prueba que cita el requisito sin prefijo de feature |
 

@@ -196,6 +196,12 @@ def phase_problems(feature, phase):
         if sin:
             problems.append("requisitos MUST sin criterios de aceptacion: "
                             + ", ".join(sin))
+        must_ids = set(musts)
+        blocking = sorted({rid for q in spec["questions"] for rid in q["requirements"]
+                           if rid in must_ids})
+        if blocking:
+            problems.append("preguntas abiertas sobre requisitos MUST: "
+                            + ", ".join(blocking) + " (se cierran con /sdd:clarify)")
 
     elif phase == "plan":
         cited = {"R" + n for n in t.REQ_ID.findall(text)}

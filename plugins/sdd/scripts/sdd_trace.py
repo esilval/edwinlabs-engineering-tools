@@ -28,6 +28,7 @@ FINDINGS = {
     "E-TASK-UNKNOWN-DEP":  "Tarea que depende de una tarea inexistente",
     "E-TASK-DEP-CYCLE":    "Ciclo de dependencias entre tareas",
     "E-DONE-NO-TEST":      "Tarea cerrada cuyos requisitos no tienen prueba",
+    "E-SPEC-OPEN-MUST-QUESTION": "Pregunta abierta que afecta a un requisito MUST",
     "E-SPEC-TEMPLATE":     "spec.md conserva marcadores de plantilla sin rellenar",
     "E-TASK-TEMPLATE":     "tasks.md conserva marcadores de plantilla sin rellenar",
     "W-REQ-NO-TASK":       "Requisito SHOULD/COULD sin tarea",
@@ -256,10 +257,14 @@ def parse_spec(path):
         if current and re.match(r"^\s*[-*]\s+\S", line):
             criteria[current] = criteria.get(current, 0) + 1
 
-    # Preguntas abiertas sin marcar.
-    questions = len(re.findall(
-        r"^\s*[-*]\s*\[ \]", section(text, "preguntas abiertas", "open questions"), re.M
-    ))
+    # Preguntas abiertas sin marcar, con los requisitos que citan:
+    #   - [ ] (R002) ¿Cuanto dura la sesion?
+    questions = [
+        {"text": m.group(1).strip(),
+         "requirements": sorted({"R" + n for n in REQ_ID.findall(m.group(1))})}
+        for m in re.finditer(r"^\s*[-*]\s*\[ \]\s*(.*)$",
+                             section(text, "preguntas abiertas", "open questions"), re.M)
+    ]
 
     return {
         "path": path.name,
@@ -268,7 +273,8 @@ def parse_spec(path):
         "placeholders": find_placeholders(text, "spec.md"),
         "requirements": [dict(reqs[r], criteria=criteria.get(r, 0)) for r in order],
         "duplicates": duplicates,
-        "open_questions": questions,
+        "open_questions": len(questions),
+        "questions": questions,
     }
 
 
@@ -533,9 +539,21 @@ def analyze(root, feature, config):
                 f"La tarea {t['id']} esta cerrada pero depende de {', '.join(abiertas)}, "
                 "sin cerrar.", task=t["id"])
 
-    if spec["open_questions"]:
+    must_ids = {r["id"] for r in reqs if r["priority"] == "MUST"}
+    loose = 0
+    for q in spec["questions"]:
+        blocking = [rid for rid in q["requirements"] if rid in must_ids]
+        if blocking:
+            add("E-SPEC-OPEN-MUST-QUESTION",
+                f"Pregunta abierta sobre {', '.join(blocking)}: {q['text'][:100]}. "
+                "Ciérrala con /sdd:clarify antes de planificar sobre ella.",
+                requirement=blocking[0])
+        else:
+            loose += 1
+    if loose:
         add("W-SPEC-OPEN-QUESTIONS",
-            f"Quedan {spec['open_questions']} preguntas abiertas en spec.md.")
+            f"Quedan {loose} pregunta(s) abierta(s) en spec.md que no citan ningun "
+            "requisito MUST. Si afectan a uno, citalo: - [ ] (R002) ...")
     if reqs and not any(
         re.search(r"\bsi\b.*\bentonces\b", norm(r["text"])) or
         re.search(r"\bif\b.*\bthen\b", norm(r["text"])) for r in reqs

@@ -140,6 +140,12 @@ def test_compuerta(base):
     check("hueco" in razon(p), "detecta '...' en cursiva aunque la linea no sea de la plantilla")
     (feat / "spec.md").write_text(SPEC_LISTA.replace("### R002\n\n- **Dado** d", "### R002\n\nnada"))
     check("sin criterios" in razon(p), "MUST sin criterios: incompleto")
+    (feat / "spec.md").write_text(SPEC_LISTA + "\n## Preguntas abiertas\n\n- [ ] (R002) Cuanto?\n")
+    check("preguntas abiertas sobre requisitos MUST: R002" in razon(p),
+          "pregunta abierta sobre un MUST: incompleto")
+    (feat / "spec.md").write_text(SPEC_LISTA + "\n## Preguntas abiertas\n\n- [ ] Algo general\n"
+                                  "- [x] (R002) Ya resuelta\n")
+    check("no aprobado" in razon(p), "pregunta sin MUST o ya marcada: no bloquea")
     (feat / "spec.md").write_text(SPEC_LISTA)
     check("no aprobado" in razon(p), "spec completa sin aprobar: bloquea")
 
@@ -226,6 +232,9 @@ FIXTURES = {
     "W-SPEC-OPEN-QUESTIONS": ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
                               "| R001 | MUST | CUANDO X el sistema DEBERA Y. |\n"
                               "\n## Preguntas abiertas\n\n- [ ] Sin resolver.\n", None),
+    "E-SPEC-OPEN-MUST-QUESTION": ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
+                                  "| R001 | MUST | CUANDO X el sistema DEBERA Y. |\n"
+                                  "\n## Preguntas abiertas\n\n- [ ] (R001) Cuanto?\n", None),
     "E-TASK-DEP-CYCLE": (None,
                          "### T001 — a\n- **Estado:** `[ ]`\n- **Requisitos:** R001\n"
                          "- **Depende de:** T002\n"
