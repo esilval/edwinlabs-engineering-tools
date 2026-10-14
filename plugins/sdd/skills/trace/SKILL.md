@@ -18,8 +18,9 @@ Muestra la salida completa al usuario. Después:
    falta para cerrarlo. Ordénalos por lo que desbloquea más trabajo.
 2. Si hay **avisos**, agrúpalos: no merecen el mismo peso que un error.
 3. **No arregles nada por tu cuenta.** Corregir `E-REQ-NO-TEST` escribiendo un
-   test vacío que mencione el ID satisface al comprobador y destruye su
-   utilidad. Propón el arreglo real y espera.
+   test vacío que mencione el ID destruye la utilidad del comprobador. Además
+   no sirve: una prueba vacía no cuenta (`W-TEST-EMPTY`). Propón el arreglo
+   real y espera.
 
 ## La convención que hace que esto funcione
 

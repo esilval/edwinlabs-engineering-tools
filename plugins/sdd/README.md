@@ -38,8 +38,10 @@ dependencias externas: el plugin no instala nada.
 /sdd:plan                      # decisiones de arquitectura
 /sdd:approve                   # plan
 /sdd:tasks                     # descomposición en tareas atómicas
+/sdd:analyze                   # coherencia entre artefactos, solo lectura
 /sdd:approve                   # tasks; a partir de aquí la compuerta deja escribir código
 /sdd:implement [T003]          # ejecuta una tarea y se detiene
+/sdd:amend <cambio>            # cambia requisitos ya aprobados sin romper IDs
 /sdd:trace                     # ¿cubre la implementación lo que dice la spec?
 /sdd:status                    # dónde estás y qué falta
 ```
@@ -72,6 +74,7 @@ basta: una plantilla recién copiada no cuenta. Se comporta así:
 | No hay feature activa                      | Bloquea → `/sdd:specify`           |
 | Falta `spec.md` / `plan.md` / `tasks.md`   | Bloquea → la skill que lo produce  |
 | El artefacto existe pero está incompleto   | Bloquea y lista los problemas      |
+| Cambió después de aprobarse               | Bloquea → revisar y `/sdd:approve` |
 | Completo pero sin aprobar                  | Bloquea → `/sdd:approve`           |
 | Los tres listos y aprobados                | Permite                            |
 
@@ -79,7 +82,7 @@ Qué significa «completo» en cada fase:
 
 | Fase  | Condiciones |
 | ----- | ----------- |
-| spec  | sin huecos de plantilla · al menos un MUST · todo MUST con criterios · sin IDs duplicados |
+| spec  | sin huecos de plantilla · al menos un MUST · todo MUST con criterios · sin IDs duplicados · sin preguntas abiertas sobre un MUST |
 | plan  | sin huecos de plantilla · menciona todos los MUST de la spec |
 | tasks | sin huecos de plantilla · al menos una tarea · ningún MUST sin tarea · sin requisitos ni dependencias inexistentes · sin ciclos |
 
@@ -101,8 +104,21 @@ Cada artefacto lleva `| Estado | Draft |` en la cabecera. Solo
   hace que no haya otra aprobable, así que no necesita argumento.
 - Se niega si el artefacto no está completo.
 
+Al aprobar se guarda una **huella del contenido**: `| Estado | Approved ·
+3f9a2c1b0d4e |`. Si el artefacto cambia después, la fase pasa a «cambió tras
+aprobar» (`[!]` en `/sdd:status`) y la compuerta se cierra hasta que vuelvas a
+aprobarla. Así se detecta la deriva sin vigilar archivos:
+
+- La huella ignora espacios y líneas en blanco. En `tasks.md` ignora también
+  el estado de cada tarea, que `/sdd:implement` cambia sin alterar el plan de
+  trabajo.
+- Reaprobar una fase devuelve a borrador las posteriores que estuvieran
+  aprobadas, porque se aprobaron sobre la versión anterior.
+- Las aprobaciones sin huella (versiones anteriores del plugin) se aceptan tal
+  cual.
+
 El hook rechaza cualquier Write, Edit o comando Bash del modelo que pase un
-artefacto a aprobado. Las demás ediciones de un artefacto aprobado pasan (por
+artefacto a aprobado o reescriba su huella. Las demás ediciones de un artefacto aprobado pasan (por
 ejemplo, marcar tareas `[x]` en `tasks.md`). Para desactivar el requisito de
 aprobación: `{"approval": false}` en `.sdd/config.json`.
 
@@ -176,6 +192,13 @@ El prefijo es obligatorio porque cada feature numera sus requisitos desde
 homónimo de otra. Un `test_R001_…` sin prefijo no cuenta y genera
 `W-TEST-UNSCOPED`.
 
+Una prueba cuyo cuerpo es solo `pass`, `...`, comentarios o un docstring no
+cuenta como evidencia (`W-TEST-EMPTY`). Una que tiene código pero ninguna
+aserción reconocible sí cuenta, porque la aserción puede vivir en un helper,
+pero genera `W-TEST-NO-ASSERT`. El análisis del cuerpo cubre Python y los
+lenguajes de llaves (JS/TS, Go, Java, Rust, C#…); en el resto, toda prueba
+cuenta.
+
 Un requisito que no aparezca en ningún test cuenta como no probado, aunque
 tenga cobertura de código. Es deliberado: la cobertura mide líneas ejecutadas,
 no requisitos satisfechos.
@@ -194,6 +217,10 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `E-TASK-UNKNOWN-DEP` | Tarea que depende de una tarea inexistente |
 | `E-TASK-DEP-CYCLE` | Ciclo de dependencias |
 | `E-DONE-NO-TEST` | Tarea cerrada cuyos requisitos no tienen prueba |
+| `E-PLAN-REQ-MISSING` | Requisito MUST que `plan.md` no menciona |
+| `E-PLAN-UNKNOWN-REQ` | `plan.md` cita un requisito que no está en la spec |
+| `E-PLAN-TEMPLATE` | `plan.md` conserva huecos de plantilla |
+| `E-SPEC-OPEN-MUST-QUESTION` | Pregunta abierta que cita un requisito MUST |
 | `E-SPEC-TEMPLATE` | `spec.md` conserva huecos de plantilla |
 | `E-TASK-TEMPLATE` | `tasks.md` conserva huecos de plantilla |
 | `W-REQ-NO-TASK` | Requisito SHOULD/COULD sin tarea |
@@ -201,8 +228,13 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `W-REQ-VAGUE` | Adjetivo sin umbral verificable |
 | `W-TASK-NO-REQ` | Tarea que no sirve a ningún requisito |
 | `W-DONE-OPEN-DEPS` | Tarea cerrada con dependencias abiertas |
-| `W-SPEC-OPEN-QUESTIONS` | Preguntas abiertas sin resolver |
+| `W-SPEC-OPEN-QUESTIONS` | Preguntas abiertas que no citan ningún MUST |
 | `W-SPEC-NO-UNWANTED` | Ningún requisito `SI... ENTONCES` |
+| `W-PLAN-NO-CONSTITUTION-CHECK` | Hay constitución y el plan no la contrasta |
+| `W-TASK-NO-DONE-WHEN` | Tarea sin «hecho cuando» |
+| `W-TEST-EMPTY` | Prueba vacía (solo `pass`, `...`, comentarios): no cuenta |
+| `W-TEST-NO-ASSERT` | Prueba sin aserción reconocible: cuenta, pero revísala |
+| `W-TASK-OBSOLETE-REQ` | Tarea abierta que sirve a un requisito obsoleto |
 | `W-TEST-UNSCOPED` | Prueba que cita el requisito sin prefijo de feature |
 
 Los códigos son contrato público: si construyes algo encima, no cambiarán de
@@ -356,19 +388,47 @@ Dos ideas de ahí que ya condicionan el diseño actual:
   inalcanzable acaba desactivado, y eso desacredita a todas las demás
   comprobaciones.
 
+## Cambios de requisitos
+
+`/sdd:amend <cambio>` modifica una spec ya aprobada sin romper la
+trazabilidad:
+
+| Tipo de cambio | En `spec.md` |
+| -------------- | ------------ |
+| Requisito nuevo | Fila con el siguiente ID libre (`sdd.py next-req`) |
+| Cambio de comportamiento | El viejo pasa a `OBSOLETO`; nace uno con ID nuevo |
+| Requisito retirado | Pasa a `OBSOLETO` |
+| Aclaración | Se edita en su sitio, mismo ID |
+
+Un requisito `OBSOLETO` no exige tarea ni prueba, y su ID no se recicla. Las
+tareas abiertas que aún le sirven generan `W-TASK-OBSOLETE-REQ`. Cada
+enmienda deja una entrada en `## Historial de cambios`. Como la spec cambió,
+la huella deja de coincidir y la compuerta se cierra hasta reaprobar spec,
+plan y tasks.
+
+## Revisión de la implementación
+
+`agents/implementation-reviewer.md` es un subagente de solo lectura (`Read`,
+`Grep`, `Glob` y Bash para `git diff`). `/sdd:implement` lo lanza al terminar
+cada tarea, antes de marcarla `[x]`. Contrasta el diff con:
+
+- los criterios de aceptación de los requisitos que la tarea cita, exigiendo
+  archivo y línea como evidencia;
+- las pruebas, que deben verificar el criterio y no solo nombrarlo;
+- el alcance de la tarea;
+- las decisiones del plan y la constitución.
+
+Devuelve `CUMPLE`, `NO CUMPLE` o `CUMPLE CON RESERVAS`. Es independiente de
+quien implementó: no hereda su contexto ni sus suposiciones.
+
 ## Qué falta a propósito
 
 El detalle y el orden están en `docs/standards-roadmap.md`. En resumen:
 
-- **Agentes** (`agents/`): `spec-reviewer` de solo lectura, e
-  `implementation-reviewer` que audite el diff contra la spec.
+- **Agente `spec-reviewer`**: revisión de solo lectura de la spec antes de
+  aprobarla. Hoy la cubren a medias `/sdd:analyze` y la readiness.
 - **`.lsp.json`**: diagnósticos en tiempo real del servidor de lenguaje, sin
   coste en tokens de contexto.
-- **Detección de deriva**: un hook de tipo `agent` sobre el evento `FileChanged`
-  vigilando `spec.md`, más `/sdd:amend` para cambios de requisito
-  post-implementación. Ojo al montarlo: `FileChanged` solo se dispara sobre
-  rutas registradas, y quien las registra es un hook `SessionStart` que
-  devuelve `watchPaths`. Un `FileChanged` suelto no vigila nada.
 - **Workflow** (`workflows/`) para la fase de implementación, con fan-out de un
   agente por tarea y revisión adversarial. Nota: los workflows no admiten
   entrada del usuario a mitad de ejecución, así que cada fase que requiera tu

@@ -17,6 +17,16 @@
 _Dos o tres frases: qué se construye, cuál es la decisión arquitectónica clave
 y por qué esa vía._
 
+## Comprobación de constitución
+
+> Una fila por regla de `specs/constitution.md` que este plan toque. Si una
+> decisión contradice una regla, no se ignora: se justifica aquí o se cambia
+> la regla. Sin constitución, escribe «No aplica.».
+
+| Regla | ¿Se cumple? | Cómo, o excepción justificada |
+| ----- | ----------- | ----------------------------- |
+| _regla de la constitución_ | _sí / no_ | _..._ |
+
 ## Decisiones
 
 ### D1 — _\<título de la decisión\>_

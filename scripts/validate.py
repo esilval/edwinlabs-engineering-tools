@@ -23,6 +23,13 @@ SKILL_FIELDS = {
     "paths", "arguments", "license", "compatibility", "metadata", "effort",
 }
 
+AGENT_FIELDS = {
+    "name", "description", "tools", "disallowedTools", "model", "effort",
+    "maxTurns", "skills", "memory", "background", "isolation", "color",
+}
+# Los agentes de plugin no pueden declarar hooks, MCP ni modo de permisos.
+AGENT_UNSUPPORTED = {"hooks", "mcpServers", "permissionMode"}
+
 errors, warnings = [], []
 
 
@@ -141,6 +148,34 @@ def check_plugin(entry_name, root, entry):
                 "de activacion.")
         if campos.get("name") and campos["name"] != carpeta:
             warn(f"{tag} {carpeta}: name={campos['name']!r} no coincide con la carpeta.")
+
+    # Agentes
+    for agent in sorted((root / "agents").glob("*.md")):
+        texto = agent.read_text(encoding="utf-8")
+        m = re.match(r"^---\n(.*?)\n---\n", texto, re.S)
+        if not m:
+            err(f"{tag} agents/{agent.name} sin frontmatter YAML.")
+            continue
+        campos = {}
+        for linea in m.group(1).splitlines():
+            if ":" in linea and not linea.startswith((" ", "\t", "-")):
+                k, _, v = linea.partition(":")
+                campos[k.strip()] = v.strip()
+        desconocidos = set(campos) - AGENT_FIELDS
+        if desconocidos:
+            warn(f"{tag} agents/{agent.name}: campos no reconocidos {sorted(desconocidos)}")
+        if not campos.get("description"):
+            err(f"{tag} agents/{agent.name}: falta 'description'; sin ella Claude "
+                "no sabe cuando delegar en el agente.")
+        if campos.get("name") and campos["name"] != agent.stem:
+            warn(f"{tag} agents/{agent.name}: name={campos['name']!r} no coincide "
+                 "con el archivo.")
+        if not texto[m.end():].strip():
+            err(f"{tag} agents/{agent.name}: sin prompt de sistema.")
+        prohibidos = set(campos) & AGENT_UNSUPPORTED
+        if prohibidos:
+            err(f"{tag} agents/{agent.name}: {sorted(prohibidos)} no se admite "
+                "en agentes de plugin.")
 
     # Hooks
     hooks = root / "hooks" / "hooks.json"

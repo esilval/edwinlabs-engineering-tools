@@ -32,7 +32,11 @@ bugs previenen. Si una spec no tiene ninguno, casi seguro está incompleta.
   como obsoleto pero su número no se recicla: hay tareas, commits y tests que lo
   referencian.
 - Prioridad: `MUST` (sin esto no se entrega), `SHOULD` (importante, no
-  bloqueante), `COULD` (deseable).
+  bloqueante), `COULD` (deseable), `OBSOLETO` (retirado; no exige tarea ni
+  prueba, y su ID queda reservado).
+- Cambiar un requisito ya aprobado es trabajo de `/sdd:amend`. Si el cambio
+  altera el comportamiento, el requisito viejo pasa a `OBSOLETO` y nace uno con
+  ID nuevo; así las pruebas antiguas no dan por verificado lo que ya no se pide.
 
 ## Criterios de aceptación
 
@@ -63,6 +67,13 @@ sesión de implementación ya no lo es.
 - Requisitos que describen una solución en vez de una necesidad.
 - Requisitos MUST sin criterio de aceptación.
 - La sección de preguntas abiertas tiene entradas que afectan a requisitos MUST.
+
+## Preguntas abiertas
+
+Cada pregunta cita el requisito al que afecta: `- [ ] (R002) ¿Cuánto dura la
+sesión?`. Es lo que permite al comprobador saber cuáles bloquean. Una pregunta
+abierta sobre un MUST impide aprobar la spec; una que no cita ninguno solo
+genera un aviso.
 
 Cuando detectes alguna, dilo explícitamente al usuario en vez de rellenar el
 hueco con una suposición.

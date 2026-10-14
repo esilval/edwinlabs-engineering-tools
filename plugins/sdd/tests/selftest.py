@@ -140,6 +140,12 @@ def test_compuerta(base):
     check("hueco" in razon(p), "detecta '...' en cursiva aunque la linea no sea de la plantilla")
     (feat / "spec.md").write_text(SPEC_LISTA.replace("### R002\n\n- **Dado** d", "### R002\n\nnada"))
     check("sin criterios" in razon(p), "MUST sin criterios: incompleto")
+    (feat / "spec.md").write_text(SPEC_LISTA + "\n## Preguntas abiertas\n\n- [ ] (R002) Cuanto?\n")
+    check("preguntas abiertas sobre requisitos MUST: R002" in razon(p),
+          "pregunta abierta sobre un MUST: incompleto")
+    (feat / "spec.md").write_text(SPEC_LISTA + "\n## Preguntas abiertas\n\n- [ ] Algo general\n"
+                                  "- [x] (R002) Ya resuelta\n")
+    check("no aprobado" in razon(p), "pregunta sin MUST o ya marcada: no bloquea")
     (feat / "spec.md").write_text(SPEC_LISTA)
     check("no aprobado" in razon(p), "spec completa sin aprobar: bloquea")
 
@@ -163,6 +169,8 @@ def test_compuerta(base):
     check("no esta listo" in razon(p), "plan.md vacio: incompleto")
     (feat / "plan.md").write_text(PLAN_LISTO.replace("R001, R002", "R001"))
     check("R002" in razon(p), "plan que no menciona un MUST: incompleto")
+    (feat / "plan.md").write_text(PLAN_LISTO.replace("R001, R002", "R001, R002, R007"))
+    check("R007" in razon(p), "plan que cita un requisito inexistente: incompleto")
     (feat / "plan.md").write_text(PLAN_LISTO)
     check(run("approve", ["plan"], cwd=p).returncode == 0, "approve plan")
     check(bloquea(p), "con plan aprobado pero sin tasks.md: bloquea")
@@ -174,6 +182,31 @@ def test_compuerta(base):
     check(not bloquea(p), "con los tres artefactos listos y aprobados: permite")
     check(not edita(p, feat / "tasks.md", "`[ ]`", "`[x]`"),
           "marcar tareas en tasks.md aprobado no se bloquea")
+
+    print("\nDeriva: cambios despues de aprobar")
+    import re as _re
+    check(bool(_re.search(r"\| Estado \| Approved · [0-9a-f]{12}", spec_path.read_text())),
+          "approve guarda la huella del contenido")
+    tasks_path = feat / "tasks.md"
+    tasks_path.write_text(tasks_path.read_text().replace("`[ ]`", "`[x]`"))
+    check(not bloquea(p), "cambiar el estado de una tarea no invalida tasks.md")
+    spec_path.write_text(spec_path.read_text().replace("\n\n## Requisitos", "\n\n\n## Requisitos"))
+    check(not bloquea(p), "reformatear espacios no invalida la spec")
+    original = spec_path.read_text()
+    spec_path.write_text(original.replace("CUANDO X, el sistema DEBERA Y.",
+                                          "CUANDO X, el sistema DEBERA Z."))
+    check("cambio despues" in razon(p), "editar una spec aprobada cierra la compuerta")
+    check("[!] spec.md" in run("status", cwd=p).stdout, "status marca la spec con [!]")
+    estado = _re.search(r"\| Estado \| (Approved · [0-9a-f]{12})", original).group(1)
+    check(edita(p, spec_path, estado, "Approved · 000000000000"),
+          "el modelo no puede reescribir la huella")
+    r = run("approve", cwd=p)
+    check(r.returncode == 0 and "Vuelven a borrador" in r.stdout,
+          "reaprobar la spec devuelve plan y tasks a borrador")
+    check("| Estado | Draft" in (feat / "plan.md").read_text()
+          and "| Estado | Draft" in tasks_path.read_text(), "plan y tasks quedan en Draft")
+    check(run("approve", cwd=p).returncode == 0 and run("approve", cwd=p).returncode == 0
+          and not bloquea(p), "tras reaprobar plan y tasks, la compuerta se abre")
 
     sdd_dir = p / ".sdd"
     (sdd_dir / "config.json").write_text('{"approval": false}')
@@ -226,6 +259,14 @@ FIXTURES = {
     "W-SPEC-OPEN-QUESTIONS": ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
                               "| R001 | MUST | CUANDO X el sistema DEBERA Y. |\n"
                               "\n## Preguntas abiertas\n\n- [ ] Sin resolver.\n", None),
+    "E-SPEC-OPEN-MUST-QUESTION": ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
+                                  "| R001 | MUST | CUANDO X el sistema DEBERA Y. |\n"
+                                  "\n## Preguntas abiertas\n\n- [ ] (R001) Cuanto?\n", None),
+    "W-TASK-OBSOLETE-REQ": ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
+                            "| R001 | OBSOLETO | El sistema DEBERA X. |\n"
+                            "| R002 | MUST | SI Z, ENTONCES el sistema DEBERA W. |\n",
+                            "### T001 — a\n- **Estado:** `[ ]`\n- **Requisitos:** R001\n"
+                            "- **Hecho cuando:** x\n"),
     "E-TASK-DEP-CYCLE": (None,
                          "### T001 — a\n- **Estado:** `[ ]`\n- **Requisitos:** R001\n"
                          "- **Depende de:** T002\n"
@@ -285,6 +326,53 @@ def test_trazabilidad(base):
     got = codigos(p)
     for code in ("E-REQ-NO-TASK", "E-REQ-NO-TEST", "E-REQ-NO-CRITERIA"):
         check(code in got, code)
+    print("\nTrazabilidad: consistencia del plan y las tareas")
+    planes = {
+        "E-PLAN-REQ-MISSING": "# Plan\n\nNada que ver.\n",
+        "E-PLAN-UNKNOWN-REQ": "# Plan\n\nCubre R001 y R009.\n",
+        "E-PLAN-TEMPLATE": "# Plan\n\nR001\n\n### D1 — _\\<título de la decisión\\>_\n",
+        "W-PLAN-NO-CONSTITUTION-CHECK": "# Plan\n\nCubre R001.\n",
+    }
+    for code, plan in planes.items():
+        p = base / f"tr-{code.lower()}"
+        (p / "specs" / "001-x").mkdir(parents=True)
+        (p / ".sdd").mkdir()
+        (p / ".sdd" / "current").write_text("001-x\n")
+        (p / "specs" / "001-x" / "spec.md").write_text(SPEC_BASE, encoding="utf-8")
+        (p / "specs" / "001-x" / "plan.md").write_text(plan, encoding="utf-8")
+        (p / "specs" / "constitution.md").write_text("# C\n", encoding="utf-8")
+        check(code in codigos(p), code)
+    p = base / "tr-plan-ok"
+    (p / "specs" / "001-x").mkdir(parents=True)
+    (p / ".sdd").mkdir()
+    (p / ".sdd" / "current").write_text("001-x\n")
+    (p / "specs" / "001-x" / "spec.md").write_text(SPEC_BASE, encoding="utf-8")
+    (p / "specs" / "constitution.md").write_text("# C\n", encoding="utf-8")
+    (p / "specs" / "001-x" / "plan.md").write_text(
+        "# Plan\n\nCubre R001.\n\n## Comprobacion de constitucion\n\n| R | si |\n")
+    got = codigos(p)
+    check(not got & set(planes), "plan coherente: ningun hallazgo de plan", f"{got & set(planes)}")
+    (p / "specs" / "001-x" / "tasks.md").write_text(
+        "### T001 — a\n- **Estado:** `[ ]`\n- **Requisitos:** R001\n- **Depende de:** —\n")
+    check("W-TASK-NO-DONE-WHEN" in codigos(p), "W-TASK-NO-DONE-WHEN")
+
+    print("\nRequisitos obsoletos")
+    p = base / "tr-obsoleto"
+    (p / "specs" / "001-x").mkdir(parents=True)
+    (p / ".sdd").mkdir()
+    (p / ".sdd" / "current").write_text("001-x\n")
+    (p / "specs" / "001-x" / "spec.md").write_text(
+        "| ID | Prioridad | Requisito |\n| - | - | - |\n"
+        "| R001 | MUST | SI Z, ENTONCES el sistema DEBERA W. |\n"
+        "| R004 | OBSOLETO | El login rapido (reemplazado por R001). |\n"
+        "\n## Criterios de aceptacion\n### R001\n- **Dado** a **cuando** b **entonces** c\n",
+        encoding="utf-8")
+    d = json.loads(run("trace", ["--json"], cwd=p).stdout)
+    r004 = [f for f in d["findings"] if f.get("requirement") == "R004"]
+    check(not r004, "un requisito obsoleto no exige tarea, prueba ni EARS", f"{r004}")
+    check(run("next-req", cwd=p).stdout.strip() == "R005",
+          "next-req cuenta los obsoletos: los IDs no se reciclan")
+
     p2 = base / "tr-should"
     (p2 / "specs" / "001-x").mkdir(parents=True)
     (p2 / ".sdd").mkdir()
@@ -297,7 +385,8 @@ def test_trazabilidad(base):
     declarados = set(sdd_trace.FINDINGS)
     probados = set(FIXTURES) | {"E-REQ-NO-TASK", "E-REQ-NO-TEST",
                                 "E-REQ-NO-CRITERIA", "W-REQ-NO-TASK",
-                                "W-TEST-UNSCOPED"}
+                                "W-TEST-UNSCOPED", "W-TASK-NO-DONE-WHEN",
+                                "W-TEST-EMPTY", "W-TEST-NO-ASSERT"} | set(planes)
     check(declarados == probados,
           f"los {len(declarados)} codigos declarados estan cubiertos",
           f"sin probar: {sorted(declarados - probados)}")
@@ -316,7 +405,7 @@ def test_deteccion_pruebas(base):
     (p / "tests").mkdir()
     # El guion bajo es caracter de palabra: \bR001\b NO casa aqui. Regresion.
     (p / "tests" / "test_a.py").write_text(
-        "def test_F001_R001_algo():\n    pass\n", encoding="utf-8")
+        "def test_F001_R001_algo():\n    assert login() is True\n", encoding="utf-8")
     (p / "node_modules" / "x" / "tests").mkdir(parents=True)
     (p / "node_modules" / "x" / "tests" / "test_b.py").write_text(
         "def test_F001_R001_falso():\n    pass\n", encoding="utf-8")
@@ -329,9 +418,44 @@ def test_deteccion_pruebas(base):
     check("E-REQ-NO-TEST" not in {f["code"] for f in d["findings"]},
           "no reporta falta de prueba cuando la hay")
 
+    print("\nCuerpo de las pruebas")
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_trace
+    cuerpos = [
+        (".py", "def test_a():\n    pass\n", "empty"),
+        (".py", "def test_a():\n    \"\"\"Doc.\"\"\"\n    # nada\n    ...\n", "empty"),
+        (".py", "def test_a(x: int) -> None: pass\n", "empty"),
+        (".py", "def test_a():\n    assert f() == 1\n", "ok"),
+        (".py", "def test_a(self):\n    self.assertEqual(f(), 1)\n", "ok"),
+        (".py", "def test_a():\n    with pytest.raises(E):\n        f()\n", "ok"),
+        (".py", "def test_a():\n    f()\n\ndef otra():\n    assert 1\n", "no-assert"),
+        (".ts", "it('R1', () => {\n  // pendiente\n});\n", "empty"),
+        (".ts", "it('R1', async () => {\n  expect(await f()).toBe(1);\n});\n", "ok"),
+        (".ts", "test('R1', () => { f(); });\n", "no-assert"),
+        (".go", "func TestA(t *testing.T) {\n}\n", "empty"),
+        (".go", "func TestA(t *testing.T) {\n  if f() != 1 { t.Errorf(\"x\") }\n}\n", "ok"),
+        (".rb", "it 'x' do\nend\n", "ok"),
+    ]
+    for suf, src, esperado in cuerpos:
+        got = sdd_trace.test_body_kind(src.splitlines(), 0, suf)
+        check(got == esperado, f"cuerpo {suf} {src.splitlines()[0][:30]!r} -> {esperado}", got)
+
+    (p / "tests" / "test_vacio.py").write_text(
+        "def test_F001_R002_vacio():\n    pass\n", encoding="utf-8")
+    d = json.loads(run("trace", ["--json"], cwd=p).stdout)
+    r002 = next(r for r in d["requirements"] if r["id"] == "R002")
+    check(r002["empty_tests"] == ["tests/test_vacio.py::test_F001_R002_vacio"]
+          and "tests/test_vacio.py::test_F001_R002_vacio" not in r002["tests"],
+          "una prueba vacia no cuenta como evidencia")
+    check("W-TEST-EMPTY" in {f["code"] for f in d["findings"]}, "W-TEST-EMPTY")
+    (p / "tests" / "test_vacio.py").write_text(
+        "def test_F001_R001_sin_assert():\n    login()\n", encoding="utf-8")
+    check("W-TEST-NO-ASSERT" in codigos(p), "W-TEST-NO-ASSERT")
+    (p / "tests" / "test_vacio.py").unlink()
+
     print("\nIDs con alcance de feature")
     (p / "tests" / "test_c.py").write_text(
-        "def test_otro():\n    # F001-R002 en comentario\n    pass\n", encoding="utf-8")
+        "def test_otro():\n    # F001-R002 en comentario\n    assert 1\n", encoding="utf-8")
     d = json.loads(run("trace", ["--json"], cwd=p).stdout)
     r002 = next(r for r in d["requirements"] if r["id"] == "R002")
     check(r002["tests"] == ["tests/test_c.py::test_otro"], "F001-R002 en comentario cuenta")
@@ -346,7 +470,7 @@ def test_deteccion_pruebas(base):
           "feature 002 sigue sin prueba para su R001")
 
     (p / "tests" / "test_d.py").write_text(
-        "def test_R001_sin_prefijo():\n    pass\n", encoding="utf-8")
+        "def test_R001_sin_prefijo():\n    assert 1\n", encoding="utf-8")
     d = json.loads(run("trace", ["--json"], cwd=p).stdout)
     codes = {f["code"] for f in d["findings"]}
     check("W-TEST-UNSCOPED" in codes and "E-REQ-NO-TEST" in codes,
@@ -507,6 +631,13 @@ def test_bash(base):
     r = audita(p, "t5")
     check(r.returncode == 2 and "devuelto" in r.stderr, "detecta la autoaprobacion")
     check("| Estado | Draft" in spec.read_text(), "y revierte el Estado a Draft")
+
+    spec.write_text(spec.read_text().replace("| Estado | Draft ", "| Estado | Approved · 111111111111 ", 1))
+    bash_bloquea(p, "python3 ofuscado.py", "t7")
+    spec.write_text(spec.read_text().replace("111111111111", "222222222222", 1))
+    r = audita(p, "t7")
+    check(r.returncode == 2 and "111111111111" in spec.read_text(),
+          "revierte una huella de aprobacion reescrita")
 
     # Con la compuerta abierta, la auditoria de codigo no aplica.
     (p / ".sdd" / "config.json").write_text('{"gate": "off"}')
