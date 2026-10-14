@@ -10,7 +10,7 @@
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
 >
 > Sustituye todo texto en cursiva; si una sección no aplica, escribe
-> «No aplica.». Solo el usuario cambia el Estado, con `/sdd:approve plan`.
+> «No aplica.». Solo el usuario cambia el Estado, con `/sdd:approve`.
 
 ## Resumen
 

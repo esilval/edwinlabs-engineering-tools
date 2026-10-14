@@ -11,7 +11,7 @@
 > Toda decisión de implementación (librerías, esquemas, servicios) va en `plan.md`.
 >
 > Sustituye todo texto en cursiva; si una sección no aplica, escribe
-> «No aplica.». Solo el usuario cambia el Estado, con `/sdd:approve spec`.
+> «No aplica.». Solo el usuario cambia el Estado, con `/sdd:approve`.
 
 ## Problema
 

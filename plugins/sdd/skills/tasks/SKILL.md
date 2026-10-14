@@ -13,7 +13,7 @@ Convierte el plan en unidades de trabajo ejecutables.
 1. Resuelve la feature activa y su estado con
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py" status`. Si `plan.md` no
    está en `[x] listo`, detente y di qué falta: `/sdd:plan` o
-   `/sdd:approve plan`.
+   `/sdd:approve`.
 
 2. Lee `spec.md` y `plan.md`.
 
@@ -51,5 +51,5 @@ es un plan disfrazado de tarea, y es donde la implementación se descarrila.
 ## Al terminar
 
 Muestra la lista de tareas con sus dependencias. Pide al usuario que las revise
-y ejecute `/sdd:approve tasks`; con eso la compuerta deja escribir código y el
+y ejecute `/sdd:approve`; con eso la compuerta deja escribir código y el
 siguiente paso es `/sdd:implement`.

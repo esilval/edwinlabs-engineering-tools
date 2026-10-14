@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""
+sdd_bash.py - la compuerta SDD aplicada a la herramienta Bash.
+
+Write y Edit declaran el archivo que tocan; Bash no. Para que `sed -i` o
+`cat > src/app.py` no sean una puerta trasera, hay dos capas:
+
+  1. Prevencion (PreToolUse): un analizador conservador extrae del comando
+     los archivos que va a escribir -redirecciones, tee, sed -i, perl -i,
+     cp, mv, install, ln, rm, touch, truncate, dd of=- y se evaluan contra
+     la compuerta igual que un Write.
+  2. Deteccion (PostToolUse): lo que el analizador no puede ver (python -c,
+     un script, una sustitucion de comando) se detecta comparando
+     `git status` antes y despues. PostToolUse no puede deshacer, asi que
+     informa al modelo; la aprobacion autoconcedida, en cambio, si se revierte,
+     porque devolver un campo a su valor anterior no destruye trabajo.
+
+El analizador no pretende ser un parser de shell completo. Lo que no entiende
+lo deja pasar y lo recoge la capa 2.
+"""
+
+import hashlib
+import json
+import os
+import re
+import shlex
+import subprocess
+import tempfile
+from pathlib import Path
+
+# Comandos que preceden a otro sin cambiar lo que hace.
+WRAPPERS = {"sudo", "env", "command", "nohup", "time", "nice", "builtin", "exec"}
+
+SEPARATORS = {";", "&&", "||", "|", "|&", "&", "(", ")", ";;"}
+OUTPUT_REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
+INPUT_REDIRECTS = {"<", "<<", "<<<", "<<-", "<>"}
+
+IGNORED_TARGETS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "-"}
+
+HEREDOC = re.compile(
+    r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|$)",
+    re.S,
+)
+
+APPROVE_CALL = re.compile(r"sdd\.py['\"]?\s+approve\b|\bset_status\s*\(")
+APPROVAL_WORD = re.compile(r"approved|aprobad[oa]", re.I)
+
+
+# --------------------------------------------------------------------------
+# Analisis estatico del comando
+# --------------------------------------------------------------------------
+
+def _strip_heredocs(command):
+    """Quita el cuerpo de los heredocs: es texto, no comandos."""
+    return HEREDOC.sub(lambda m: m.group(0).split("\n", 1)[0], command)
+
+
+def _tokens(command):
+    lex = shlex.shlex(command.replace("\n", " ; "), posix=True,
+                      punctuation_chars=True)
+    lex.whitespace_split = True
+    lex.commenters = ""
+    return list(lex)
+
+
+def _segments(tokens):
+    """Parte la lista de tokens en comandos simples, separando redirecciones."""
+    seg, redirects, out = [], [], []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in SEPARATORS:
+            out.append((seg, redirects))
+            seg, redirects = [], []
+        elif tok in OUTPUT_REDIRECTS:
+            if i + 1 < len(tokens):
+                redirects.append(tokens[i + 1])
+            i += 1
+        elif tok in INPUT_REDIRECTS or tok in (">&", "<&"):
+            i += 1  # el siguiente token es una entrada o un descriptor
+        else:
+            seg.append(tok)
+        i += 1
+    out.append((seg, redirects))
+    return out
+
+
+def _command_words(seg):
+    """Quita asignaciones VAR=x y envoltorios como sudo o env."""
+    words = list(seg)
+    while words and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0])
+                     or os.path.basename(words[0]) in WRAPPERS):
+        words.pop(0)
+    return words
+
+
+def _positionals(args, takes_value=()):
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a in takes_value:
+            skip = True
+            continue
+        if (a.startswith("-") and a != "-") or not a:
+            continue  # opcion, o el sufijo vacio de `sed -i ""` en macOS
+        out.append(a)
+    return out
+
+
+def _targets_of(words):
+    if not words:
+        return []
+    name, args = os.path.basename(words[0]), words[1:]
+
+    if name == "tee":
+        return _positionals(args)
+
+    if name == "sed" and any(a.startswith("-i") or a.startswith("--in-place")
+                             or re.match(r"^-[a-zA-Z]*i", a) for a in args):
+        explicit = any(a in ("-e", "-f", "--expression", "--file")
+                       or a.startswith("--expression=") for a in args)
+        pos = _positionals(args, takes_value=("-e", "-f", "--expression", "--file"))
+        return pos if explicit else pos[1:]
+
+    if name == "perl" and any(re.match(r"^-[a-zA-Z]*i", a) for a in args):
+        return _positionals(args, takes_value=("-e", "-E", "-M", "-I"))
+
+    if name in ("cp", "mv", "install", "ln"):
+        pos = _positionals(args, takes_value=("-t", "--target-directory", "-m", "-o", "-g"))
+        return pos[-1:] if len(pos) >= 2 else []
+
+    if name in ("rm", "touch", "truncate", "unlink", "shred"):
+        return _positionals(args, takes_value=("-s", "--size", "-r", "-d"))
+
+    if name == "dd":
+        return [a[3:] for a in args if a.startswith("of=")]
+
+    return []
+
+
+def write_targets(command):
+    """
+    Rutas que el comando va a escribir o borrar, tal como aparecen en el
+    comando. Las que dependen de variables o sustituciones se omiten: no se
+    pueden resolver de forma estatica, y para eso existe la auditoria.
+    """
+    try:
+        tokens = _tokens(_strip_heredocs(command or ""))
+    except ValueError:
+        return []  # comillas sin cerrar: lo recoge la auditoria
+    found = []
+    for seg, redirects in _segments(tokens):
+        for target in redirects + _targets_of(_command_words(seg)):
+            if (not target or target in IGNORED_TARGETS or "$" in target
+                    or "`" in target or target.startswith("&")):
+                continue
+            if target not in found:
+                found.append(target)
+    return found
+
+
+def invokes_approve(command):
+    """True si el comando intenta aprobar una fase por su cuenta."""
+    return bool(APPROVE_CALL.search(command or ""))
+
+
+def mentions_approval(command):
+    return bool(APPROVAL_WORD.search(command or ""))
+
+
+# --------------------------------------------------------------------------
+# Auditoria: instantanea antes, comparacion despues
+# --------------------------------------------------------------------------
+
+def _snapshot_path(root, payload):
+    key = (payload.get("tool_use_id") or payload.get("session_id") or "nosession")
+    digest = hashlib.sha1(f"{root}|{key}".encode("utf-8")).hexdigest()[:20]
+    return Path(tempfile.gettempdir()) / "sdd-audit" / f"{digest}.json"
+
+
+def dirty_files(root):
+    """
+    {ruta_relativa: firma} de los archivos que git ve cambiados o nuevos.
+    None si no hay git: sin git no hay auditoria, y no se inventa una.
+    """
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain=v1", "-z",
+             "--untracked-files=all"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if res.returncode != 0:
+        return None
+    out, entries = {}, res.stdout.split("\0")
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        status, rel = entry[:2], entry[3:]
+        if "R" in status or "C" in status:
+            i += 1  # el origen del rename viene en la siguiente entrada
+        path = root / rel
+        try:
+            st = path.stat()
+            out[rel] = [st.st_mtime_ns, st.st_size]
+        except OSError:
+            out[rel] = None  # borrado
+    return out
+
+
+SNAPSHOT_TTL = 24 * 3600
+
+
+def _prune(directory):
+    """Si el usuario rechaza un comando, PostToolUse no llega y la instantanea
+    queda huerfana. Se barren las de mas de un dia."""
+    import time
+    limit = time.time() - SNAPSHOT_TTL
+    try:
+        for old in directory.glob("*.json"):
+            if old.stat().st_mtime < limit:
+                old.unlink()
+    except OSError:
+        pass
+
+
+def save_snapshot(root, payload, data):
+    path = _snapshot_path(root, payload)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+    except OSError:
+        return
+    _prune(path.parent)
+
+
+def pop_snapshot(root, payload):
+    path = _snapshot_path(root, payload)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    return data
+
+
+def changed_since(before, after):
+    """Rutas cuya firma cambio, o que aparecieron, entre dos instantaneas."""
+    return sorted(rel for rel, sig in after.items() if before.get(rel, "nuevo") != sig)

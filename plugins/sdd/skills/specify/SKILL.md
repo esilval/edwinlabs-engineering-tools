@@ -52,7 +52,7 @@ Ante la duda, pregúntate: si mañana cambiáramos toda la pila tecnológica,
    más rápido revela un malentendido.
 2. Si dejaste preguntas abiertas, dilo explícitamente.
 3. Si hay preguntas abiertas, el siguiente paso es `/sdd:clarify`. Si no, pide
-   al usuario que revise la spec y ejecute `/sdd:approve spec`; después viene
+   al usuario que revise la spec y ejecute `/sdd:approve`; después viene
    `/sdd:plan`.
 4. No cambies tú el campo `Estado`. La compuerta lo impide, y la aprobación es
    del usuario.

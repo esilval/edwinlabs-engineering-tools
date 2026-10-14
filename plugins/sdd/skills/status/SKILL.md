@@ -23,5 +23,5 @@ skill lo produce. La leyenda del reporte:
 - `[~]` incompleto: existe pero tiene huecos de plantilla o le falta cobertura.
   Lista los problemas.
 - `[a]` sin aprobar: está completo. El usuario debe revisarlo y ejecutar
-  `/sdd:approve <fase>`.
+  `/sdd:approve`.
 - `[x]` listo.

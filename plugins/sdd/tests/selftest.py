@@ -152,6 +152,9 @@ def test_compuerta(base):
     check(not edita(p, spec_path, "CUANDO X", "CUANDO X2"),
           "editar otra parte de la spec no se bloquea")
     check(run("approve", ["plan"], cwd=p).returncode == 1, "approve respeta el orden")
+    r = run("approve", ["plan", "--skill"], cwd=p)
+    check(r.returncode == 0 and "antes hay que aprobar spec" in r.stdout,
+          "approve --skill: siempre exit 0 y todo por stdout")
     check(run("approve", cwd=p).returncode == 0, "approve sin argumento aprueba spec")
     check("Approved" in spec_path.read_text(), "approve escribe Estado: Approved")
     check("todavia no tiene plan.md" in razon(p), "spec aprobada, sin plan.md: bloquea")
@@ -394,6 +397,124 @@ def test_degenerados(base):
         check(run(sub, cwd=p).returncode == 0, f"{sub} sobrevive")
 
 
+# ------------------------------------------------------------- bash
+
+PARSER = [
+    ("echo hi > src/a.py", ["src/a.py"]),
+    ("echo hi >src/a.py 2>&1", ["src/a.py"]),
+    ("echo hi >> src/a.py && ls", ["src/a.py"]),
+    ("cat > src/a.py <<EOF\nprint('x > y')\nEOF", ["src/a.py"]),
+    ("cat <<'EOF' | tee -a src/b.py\nhola\nEOF", ["src/b.py"]),
+    ("sed -i '' 's/a/b/' src/c.py", ["src/c.py"]),
+    ("sed -i.bak -e s/a/b/ src/c.py src/d.py", ["src/c.py", "src/d.py"]),
+    ("sed -n 1,5p src/c.py", []),
+    ("perl -pi -e 's/a/b/' src/e.py", ["src/e.py"]),
+    ("cp tmp/x.py src/f.py", ["src/f.py"]),
+    ("rm -rf build src/h.py", ["build", "src/h.py"]),
+    ("FOO=1 sudo touch src/i.py", ["src/i.py"]),
+    ("dd if=/dev/zero of=src/j.bin bs=1", ["src/j.bin"]),
+    ("ls > /dev/null 2>&1", []),
+    ("echo $X > \"$OUT\"", []),
+    ("git status; grep -r foo src | head", []),
+    ("echo \"sin cerrar", []),
+]
+
+
+def bash_payload(cmd, cwd, tool_use_id="t1", sub_cwd=None):
+    return json.dumps({"tool_name": "Bash", "tool_use_id": tool_use_id,
+                       "session_id": "s", "cwd": str(sub_cwd or cwd),
+                       "tool_input": {"command": cmd}})
+
+
+def bash_bloquea(cwd, cmd, tool_use_id="t1", sub_cwd=None):
+    r = run("guard", stdin=bash_payload(cmd, cwd, tool_use_id, sub_cwd), cwd=cwd)
+    assert r.returncode == 0, f"guard debe salir 0 siempre, salio {r.returncode}"
+    return bool(r.stdout.strip())
+
+
+def audita(cwd, tool_use_id="t1"):
+    return run("audit", stdin=bash_payload("", cwd, tool_use_id), cwd=cwd)
+
+
+def test_bash(base):
+    print("\nCompuerta sobre Bash: analizador")
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_bash
+    for cmd, esperado in PARSER:
+        got = sdd_bash.write_targets(cmd)
+        check(got == esperado, f"destinos de {cmd.splitlines()[0][:40]!r}", f"{got}")
+    check(sdd_bash.invokes_approve("python3 x/sdd.py approve plan"), "detecta sdd.py approve")
+
+    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
+    check(any("Bash" in h["matcher"].split("|") for h in hooks["PreToolUse"]),
+          "hooks.json: guard cubre Bash")
+    check(any(h["matcher"] == "Bash" for h in hooks["PostToolUse"]),
+          "hooks.json: audit sobre Bash")
+
+    print("\nCompuerta sobre Bash: prevencion")
+    p = base / "bash"
+    (p / "src").mkdir(parents=True)
+    run("new", ["login"], cwd=p)
+    feat = next((p / "specs").iterdir())
+    check(bash_bloquea(p, "echo y > src/a.py"), "redireccion a codigo con compuerta cerrada")
+    check(bash_bloquea(p, "sed -i 's/a/b/' src/a.py"), "sed -i con compuerta cerrada")
+    check(bash_bloquea(p, "echo 1 > c.py", sub_cwd=p / "src"),
+          "ruta relativa al cwd del comando")
+    check(not bash_bloquea(p, "ls src && git status"), "comando de lectura pasa")
+    check(not bash_bloquea(p, "echo nota > specs/notas.md"), "destino exento pasa")
+    check(not bash_bloquea(p, "echo y > /tmp/fuera.txt"), "fuera del proyecto pasa")
+    check(bash_bloquea(p, "python3 /x/scripts/sdd.py approve"),
+          "el modelo no puede lanzar sdd.py approve")
+    check(bash_bloquea(p, f"sed -i 's/Draft/Approved/' specs/{feat.name}/spec.md"),
+          "sed que aprueba un artefacto: bloquea")
+    check(not bash_bloquea(p, f"sed -i 's/X/Y/' specs/{feat.name}/spec.md"),
+          "sed que edita la spec sin aprobar: pasa")
+    r = run("guard", stdin=bash_payload("echo y > src/a.py", p), cwd=p,
+            env_extra={"SDD_BYPASS": "1"})
+    check(not r.stdout.strip(), "SDD_BYPASS=1 tambien desactiva la compuerta sobre Bash")
+
+    print("\nCompuerta sobre Bash: auditoria")
+    if shutil.which("git") is None:
+        print("  (sin git: auditoria omitida)")
+        return
+    git = ["git", "-C", str(p), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(git + ["init", "-q"], check=True)
+    (p / "src" / "a.py").write_text("x\n")
+    subprocess.run(git + ["add", "."], check=True)
+    subprocess.run(git + ["commit", "-qm", "init"], check=True)
+
+    check(audita(p, "nada").returncode == 0, "sin instantanea: no opina")
+    r = run("audit", stdin="no soy json", cwd=p)
+    check(r.returncode == 0, "stdin no-JSON: no revienta")
+
+    bash_bloquea(p, "python3 script.py", "t2")
+    (p / "src" / "b.py").write_text("1\n")
+    r = audita(p, "t2")
+    check(r.returncode == 2 and "src/b.py" in r.stderr,
+          "detecta un archivo de codigo escrito por un comando opaco")
+
+    bash_bloquea(p, "python3 otro.py", "t3")
+    r = audita(p, "t3")
+    check(r.returncode == 0, "si el comando no cambia nada, silencio")
+
+    bash_bloquea(p, "python3 otro.py", "t4")
+    (p / "specs" / "nota.md").write_text("x\n")
+    check(audita(p, "t4").returncode == 0, "cambios en rutas exentas no se reportan")
+
+    spec = feat / "spec.md"
+    bash_bloquea(p, "python3 ofuscado.py", "t5")
+    spec.write_text(spec.read_text().replace("| Estado | Draft ", "| Estado | Approved ", 1))
+    r = audita(p, "t5")
+    check(r.returncode == 2 and "devuelto" in r.stderr, "detecta la autoaprobacion")
+    check("| Estado | Draft" in spec.read_text(), "y revierte el Estado a Draft")
+
+    # Con la compuerta abierta, la auditoria de codigo no aplica.
+    (p / ".sdd" / "config.json").write_text('{"gate": "off"}')
+    bash_bloquea(p, "python3 script.py", "t6")
+    (p / "src" / "c.py").write_text("1\n")
+    check(audita(p, "t6").returncode == 0, 'gate:"off": no audita')
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -402,6 +523,7 @@ def main():
         test_deteccion_pruebas(base)
         test_contrato_ci(base)
         test_degenerados(base)
+        test_bash(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

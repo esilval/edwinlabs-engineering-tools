@@ -12,6 +12,7 @@ Subcomandos:
   status              Reporte legible del estado del proyecto.
   context             Linea breve para inyectar en SessionStart.
   guard               Hook PreToolUse: lee JSON por stdin, decide sobre stdout.
+  audit               Hook PostToolUse sobre Bash: detecta lo que guard no vio.
   approve [fase]      Marca spec|plan|tasks como aprobado si esta listo.
   trace [--json] [--check]   Matriz requisito -> tarea -> prueba.
   quality             Hook PostToolUse: formateador y linter del archivo.
@@ -258,7 +259,7 @@ def next_step(feature, cfg=None):
     """(archivo, comando, fase, estado) de la primera fase no lista, o None."""
     for fname, skill, phase, state, _p in phase_state(feature, cfg):
         if state == "draft":
-            return fname, f"/sdd:approve {phase}", phase, state
+            return fname, "/sdd:approve", phase, state
         if state != "ready":
             return fname, skill, phase, state
     return None
@@ -394,7 +395,7 @@ def cmd_status(_args):
               "draft": "sin aprobar", "ready": "listo"}
     for fname, skill, phase, state, problems in phase_state(feature, cfg):
         hint = {"missing": f"-> {skill}", "incomplete": f"-> {skill}",
-                "draft": f"-> /sdd:approve {phase}", "ready": ""}[state]
+                "draft": "-> /sdd:approve", "ready": ""}[state]
         print(f"  [{marks[state]}] {fname:<9} {labels[state]:<12} {hint}".rstrip())
         for prob in problems:
             print(f"        - {prob}")
@@ -492,20 +493,19 @@ def cmd_guard(_args):
     if not cfg.get("enabled", True) or cfg.get("gate") == "off":
         return passthrough()
 
+    if payload.get("tool_name") == "Bash":
+        return guard_bash(payload, root, cfg)
+
     tool_input = payload.get("tool_input") or {}
     raw_path = tool_input.get("file_path")
     if not raw_path:
         return passthrough()
 
-    try:
-        target = Path(raw_path)
-        if not target.is_absolute():
-            target = (root / target).resolve()
-        target = target.resolve()
-        rel = target.relative_to(root)
-    except (ValueError, OSError):
+    located = locate(root, raw_path)
+    if located is None:
         # Fuera del proyecto: no es asunto nuestro.
         return passthrough()
+    target, rel = located
 
     if cfg.get("approval", True) and self_approval(rel, target, tool_input):
         return deny(
@@ -519,51 +519,210 @@ def cmd_guard(_args):
     if is_exempt(rel, cfg.get("exempt", DEFAULT_CONFIG["exempt"])):
         return passthrough()
 
+    reason = gate_reason(root, cfg, rel.as_posix())
+    return deny(reason) if reason else passthrough()
+
+
+ESCAPE = "Escape puntual: SDD_BYPASS=1, o \"gate\": \"off\" en .sdd/config.json."
+
+
+def locate(root, raw_path, base=None):
+    """(ruta_absoluta, ruta_relativa_a_root), o None si cae fuera del proyecto."""
+    try:
+        target = Path(os.path.expanduser(raw_path))
+        if not target.is_absolute():
+            target = Path(base or root) / target
+        target = target.resolve()
+        return target, target.relative_to(root)
+    except (ValueError, OSError):
+        return None
+
+
+def is_phase_artifact(rel):
+    parts = rel.parts
+    return (len(parts) == 3 and parts[0] == "specs" and bool(FEATURE_RE.match(parts[1]))
+            and parts[2] in {f for f, _s, _p in PHASES})
+
+
+def gate_reason(root, cfg, what):
+    """
+    Motivo por el que la compuerta impide escribir codigo ahora mismo, o None
+    si lo permite. `what` describe el destino en el mensaje.
+    """
     feature = resolve_feature(root)
     if feature is None:
-        return deny(
+        return (
             "Guardrail SDD: no hay una feature activa, asi que no hay especificacion "
-            f"que respalde escribir en {rel.as_posix()}.\n\n"
+            f"que respalde escribir en {what}.\n\n"
             "Detente y dile al usuario que ejecute /sdd:specify para describir el "
             "cambio antes de tocar codigo. No intentes crear los artefactos a mano "
-            "ni reintentar la escritura.\n\n"
-            "Escape puntual: SDD_BYPASS=1, o \"gate\": \"off\" en .sdd/config.json."
+            "ni reintentar la escritura.\n\n" + ESCAPE
         )
 
     gate = cfg.get("gate", "tasks")
     required = [p for _f, _s, p in PHASES]
     limit = required.index(gate) if gate in required else len(required) - 1
 
-    escape = "Escape puntual: SDD_BYPASS=1, o \"gate\": \"off\" en .sdd/config.json."
     for fname, skill, phase, state, problems in phase_state(feature, cfg):
         if required.index(phase) > limit:
             break
         if state == "missing":
-            return deny(
+            return (
                 f"Guardrail SDD: la feature {feature.name} todavia no tiene {fname}, "
-                f"asi que no se puede escribir en {rel.as_posix()}.\n\n"
+                f"asi que no se puede escribir en {what}.\n\n"
                 f"Detente y dile al usuario que ejecute {skill}. No crees {fname} "
                 "a mano para saltarte la compuerta: la fase existe para que el "
-                "usuario revise antes de que se escriba codigo.\n\n" + escape
+                "usuario revise antes de que se escriba codigo.\n\n" + ESCAPE
             )
         if state == "incomplete":
-            return deny(
+            return (
                 f"Guardrail SDD: {fname} de la feature {feature.name} existe pero "
-                f"no esta listo, asi que no se puede escribir en {rel.as_posix()}:\n"
+                f"no esta listo, asi que no se puede escribir en {what}:\n"
                 + "".join(f"  - {p}\n" for p in problems)
                 + f"\nDetente y dile al usuario que hay que completarlo con {skill}. "
                 "No rellenes huecos con suposiciones para pasar la compuerta.\n\n"
-                + escape
+                + ESCAPE
             )
         if state == "draft":
-            return deny(
+            return (
                 f"Guardrail SDD: {fname} de la feature {feature.name} esta completo "
-                f"pero no aprobado, asi que no se puede escribir en {rel.as_posix()}."
+                f"pero no aprobado, asi que no se puede escribir en {what}."
                 f"\n\nDetente y pidele al usuario que lo revise y ejecute "
-                f"/sdd:approve {phase}. No cambies tu el campo Estado.\n\n" + escape
+                "/sdd:approve. No cambies tu el campo Estado.\n\n" + ESCAPE
             )
+    return None
 
+
+# --------------------------------------------------------------------------
+# La compuerta sobre Bash (ver sdd_bash.py)
+# --------------------------------------------------------------------------
+
+def _bash():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import sdd_bash
+    return sdd_bash
+
+
+BASH_NOTE = ("\n\nEsto aplica igual a Bash: escribir el archivo con una redireccion, "
+             "sed -i, tee, cp o un script es la misma escritura que un Write.")
+
+
+def guard_bash(payload, root, cfg):
+    b = _bash()
+    command = (payload.get("tool_input") or {}).get("command") or ""
+    approval = cfg.get("approval", True)
+    exempt = cfg.get("exempt", DEFAULT_CONFIG["exempt"])
+
+    if approval and b.invokes_approve(command):
+        return deny(
+            "Guardrail SDD: aprobar una fase es decision del usuario. Solo se hace "
+            "con la skill /sdd:approve, que lanza el propio usuario; no ejecutes "
+            "`sdd.py approve` ni cambies el campo Estado tu mismo.\n\n"
+            "Pidele al usuario que revise el artefacto y ejecute /sdd:approve."
+        )
+
+    base = payload.get("cwd") or str(root)
+    reason = None
+    for raw in b.write_targets(command):
+        located = locate(root, raw, base)
+        if located is None:
+            continue
+        _target, rel = located
+        if approval and is_phase_artifact(rel) and b.mentions_approval(command):
+            return deny(
+                f"Guardrail SDD: este comando parece marcar {rel.as_posix()} como "
+                "aprobado. La aprobacion es del usuario: pidele que lo revise y "
+                "ejecute /sdd:approve."
+            )
+        if is_exempt(rel, exempt):
+            continue
+        reason = gate_reason(root, cfg, rel.as_posix())
+        if reason:
+            return deny(reason + BASH_NOTE)
+
+    # Lo que el analizador no ve lo recoge la auditoria de PostToolUse.
+    feature = resolve_feature(root)
+    snapshot = {
+        "approved": phase_approvals(feature) if (approval and feature) else {},
+        "gate": gate_reason(root, cfg, "codigo del proyecto"),
+    }
+    if snapshot["gate"]:
+        snapshot["files"] = b.dirty_files(root)
+    b.save_snapshot(root, payload, snapshot)
     return passthrough()
+
+
+def phase_approvals(feature):
+    """{archivo: valor del campo Estado} de los artefactos de fase."""
+    t = _trace()
+    out = {}
+    for fname, _s, _p in PHASES:
+        path = feature / fname
+        if path.is_file():
+            out[fname] = t.doc_status(path.read_text(encoding="utf-8", errors="replace"))
+    return out
+
+
+def cmd_audit(_args):
+    """
+    Hook PostToolUse sobre Bash. Compara con la instantanea de guard_bash:
+      - una fase que paso a aprobada se devuelve a su Estado anterior;
+      - archivos de codigo cambiados con la compuerta cerrada se reportan.
+    exit 2 hace que Claude lea stderr. PostToolUse no puede deshacer el comando.
+    """
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        return 0
+    root = project_root(payload)
+    b = _bash()
+    snap = b.pop_snapshot(root, payload)
+    if not snap or os.environ.get("SDD_BYPASS") == "1" or not adopted(root):
+        return 0
+    cfg = load_config(root)
+    t = _trace()
+    messages = []
+
+    feature = resolve_feature(root)
+    before = snap.get("approved") or {}
+    if feature and cfg.get("approval", True):
+        for fname, old in before.items():
+            path = feature / fname
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if t.is_approved(text) and not t.is_approved(f"| Estado | {old} |"):
+                restored, ok = t.set_status(text, old or "Draft")
+                if ok:
+                    path.write_text(restored, encoding="utf-8")
+                    messages.append(
+                        f"El comando marco {feature.name}/{fname} como aprobado. "
+                        f"Se ha devuelto a '{old or 'Draft'}': la aprobacion es "
+                        "del usuario, con /sdd:approve."
+                    )
+
+    if snap.get("gate") and snap.get("files") is not None:
+        after = b.dirty_files(root)
+        if after is not None:
+            exempt = cfg.get("exempt", DEFAULT_CONFIG["exempt"])
+            changed = [rel for rel in b.changed_since(snap["files"], after)
+                       if not is_exempt(Path(rel), exempt)]
+            if changed:
+                listed = "".join(f"  - {rel}\n" for rel in changed[:15])
+                more = f"  (y {len(changed) - 15} mas)\n" if len(changed) > 15 else ""
+                messages.append(
+                    "Este comando cambio archivos de codigo con la compuerta SDD "
+                    "cerrada:\n" + listed + more + "\nMotivo de la compuerta: "
+                    + snap["gate"] + "\n\nDeshaz esos cambios (por ejemplo con "
+                    "git checkout o borrando los archivos nuevos) y detente: dile "
+                    "al usuario lo que paso en vez de seguir implementando."
+                )
+
+    if not messages:
+        return 0
+    sys.stderr.write("Guardrail SDD (auditoria de Bash):\n\n"
+                     + "\n\n".join(messages) + "\n")
+    return 2
 
 
 def self_approval(rel, target, tool_input):
@@ -596,6 +755,22 @@ def self_approval(rel, target, tool_input):
 # --------------------------------------------------------------------------
 
 def cmd_approve(args):
+    """
+    Con --skill (lo usa /sdd:approve) todo va a stdout y sale siempre con 0:
+    el resultado lo lee el modelo como texto, no como codigo de salida.
+    """
+    if "--skill" in args:
+        args = [a for a in args if a != "--skill"]
+        real_stderr, sys.stderr = sys.stderr, sys.stdout
+        try:
+            _approve(args)
+        finally:
+            sys.stderr = real_stderr
+        return 0
+    return _approve(args)
+
+
+def _approve(args):
     root = project_root()
     feature = resolve_feature(root)
     if feature is None:
@@ -683,6 +858,7 @@ COMMANDS = {
     "status": cmd_status,
     "context": cmd_context,
     "guard": cmd_guard,
+    "audit": cmd_audit,
     "approve": cmd_approve,
     "trace": cmd_trace,
     "quality": cmd_quality,
@@ -698,7 +874,7 @@ def main(argv):
     except Exception as exc:  # noqa: BLE001
         # Un guardrail que revienta jamas debe bloquear al usuario.
         print(f"sdd.py: {exc}", file=sys.stderr)
-        return 0 if argv[1] in ("guard", "context", "quality") else 1
+        return 0 if argv[1] in ("guard", "context", "quality", "audit") else 1
 
 
 if __name__ == "__main__":

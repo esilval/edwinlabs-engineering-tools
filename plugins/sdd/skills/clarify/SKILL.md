@@ -45,4 +45,4 @@ ambiguos es la vía más común de reescribir todo dos veces.
 
 Si la spec ya estaba aprobada y la cambiaste, díselo al usuario: la aprobación
 que dio fue sobre otra versión. Si no lo estaba, el siguiente paso es que la
-revise y ejecute `/sdd:approve spec`.
+revise y ejecute `/sdd:approve`.

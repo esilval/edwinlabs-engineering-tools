@@ -3,12 +3,15 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|NotebookEdit",
+        "matcher": "Write|Edit|NotebookEdit|Bash",
         "hooks": [
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py", "guard"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py",
+              "guard"
+            ],
             "timeout": 15,
             "statusMessage": "Comprobando la compuerta SDD"
           }
@@ -22,9 +25,27 @@
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py", "quality"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py",
+              "quality"
+            ],
             "timeout": 60,
             "statusMessage": "Formateando y analizando"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py",
+              "audit"
+            ],
+            "timeout": 15,
+            "statusMessage": "Auditando el comando contra la compuerta SDD"
           }
         ]
       }
@@ -35,7 +56,10 @@
           {
             "type": "command",
             "command": "python3",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py", "context"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py",
+              "context"
+            ],
             "timeout": 10
           }
         ]

@@ -34,11 +34,11 @@ dependencias externas: el plugin no instala nada.
 /sdd:constitution              # una vez por repositorio
 /sdd:specify <qué construir>   # crea specs/NNN-slug/spec.md
 /sdd:clarify                   # cierra las preguntas abiertas
-/sdd:approve spec              # tú apruebas la spec tras revisarla
+/sdd:approve                   # tú apruebas la siguiente fase pendiente (aquí, spec)
 /sdd:plan                      # decisiones de arquitectura
-/sdd:approve plan
+/sdd:approve                   # plan
 /sdd:tasks                     # descomposición en tareas atómicas
-/sdd:approve tasks             # a partir de aquí la compuerta deja escribir código
+/sdd:approve                   # tasks; a partir de aquí la compuerta deja escribir código
 /sdd:implement [T003]          # ejecuta una tarea y se detiene
 /sdd:trace                     # ¿cubre la implementación lo que dice la spec?
 /sdd:status                    # dónde estás y qué falta
@@ -60,8 +60,8 @@ specs/
 
 ## La compuerta
 
-Un hook `PreToolUse` sobre `Write|Edit|NotebookEdit` bloquea la escritura de
-código mientras algún artefacto no esté **listo**. Que el archivo exista no
+Un hook `PreToolUse` sobre `Write|Edit|NotebookEdit|Bash` bloquea la escritura
+de código mientras algún artefacto no esté **listo**. Que el archivo exista no
 basta: una plantilla recién copiada no cuenta. Se comporta así:
 
 | Situación                                  | Resultado                          |
@@ -72,7 +72,7 @@ basta: una plantilla recién copiada no cuenta. Se comporta así:
 | No hay feature activa                      | Bloquea → `/sdd:specify`           |
 | Falta `spec.md` / `plan.md` / `tasks.md`   | Bloquea → la skill que lo produce  |
 | El artefacto existe pero está incompleto   | Bloquea y lista los problemas      |
-| Completo pero sin aprobar                  | Bloquea → `/sdd:approve <fase>`    |
+| Completo pero sin aprobar                  | Bloquea → `/sdd:approve`           |
 | Los tres listos y aprobados                | Permite                            |
 
 Qué significa «completo» en cada fase:
@@ -90,17 +90,49 @@ notas que se pueden conservar van en blockquote, no en cursiva.
 ### Aprobación
 
 Cada artefacto lleva `| Estado | Draft |` en la cabecera. Solo
-`/sdd:approve` lo pasa a `Approved`, y esa skill solo la puede lanzar el
-usuario (`disable-model-invocation`). El hook rechaza cualquier Write o Edit
-del modelo que haga esa transición. Las demás ediciones de un artefacto
-aprobado pasan (por ejemplo, marcar tareas `[x]` en `tasks.md`).
+`/sdd:approve` lo pasa a `Approved`:
 
-`approve` también se niega si el artefacto no está completo o si una fase
-anterior no está aprobada. Para desactivar el requisito de aprobación:
-`{"approval": false}` en `.sdd/config.json`.
+- La skill solo la puede lanzar el usuario (`disable-model-invocation`).
+- La aprobación la ejecuta Claude Code al cargar la skill, con la inyección
+  `` !`…` ``, así que no pasa por la herramienta Bash. Por eso el hook puede
+  denegar **cualquier** `sdd.py approve` que lance el modelo sin bloquear al
+  usuario.
+- Aprueba siempre la siguiente fase pendiente. El orden spec → plan → tasks
+  hace que no haya otra aprobable, así que no necesita argumento.
+- Se niega si el artefacto no está completo.
 
-Límite conocido: el hook no ve las escrituras hechas con Bash (`sed -i`,
-`cat >`). Cerrar esa vía es un paso posterior.
+El hook rechaza cualquier Write, Edit o comando Bash del modelo que pase un
+artefacto a aprobado. Las demás ediciones de un artefacto aprobado pasan (por
+ejemplo, marcar tareas `[x]` en `tasks.md`). Para desactivar el requisito de
+aprobación: `{"approval": false}` en `.sdd/config.json`.
+
+### Bash
+
+Write y Edit declaran el archivo que tocan; Bash no. Para que `sed -i` o
+`cat > src/app.py` no sean una puerta trasera hay dos capas:
+
+1. **Prevención** (`PreToolUse`). Un analizador conservador extrae del comando
+   los archivos que va a escribir —redirecciones, `tee`, `sed -i`, `perl -i`,
+   `cp`, `mv`, `install`, `ln`, `rm`, `touch`, `truncate`, `dd of=`— y los
+   evalúa contra la compuerta igual que un Write. Las rutas relativas se
+   resuelven contra el `cwd` del comando.
+2. **Auditoría** (`PostToolUse`). Lo que el analizador no puede ver
+   (`python -c`, un script, una variable) se detecta comparando `git status`
+   antes y después del comando:
+   - Archivos de código cambiados con la compuerta cerrada: se informa al
+     modelo, con instrucción de deshacerlos y detenerse. `PostToolUse` no
+     puede deshacer el comando, y borrar trabajo por su cuenta no es asunto
+     de un hook.
+   - Un artefacto que pasó a aprobado: se devuelve a su Estado anterior. Ahí
+     revertir sí es seguro: solo restaura un campo.
+
+Límites:
+- Sin git, la auditoría no corre y solo queda la prevención.
+- Con la compuerta cerrada, cualquier cambio fuera de las rutas exentas
+  cuenta como código, también un `package-lock.json` tras `npm install`.
+  Añade a `exempt` lo que deba poder cambiar durante la especificación.
+- Las instantáneas se guardan en el directorio temporal del sistema, una por
+  llamada (`tool_use_id`), y se barren al cabo de un día.
 
 **Escapes**, en orden de contundencia:
 
@@ -288,7 +320,7 @@ guardrail que revienta no debe dejarte sin poder trabajar.
 
 **Las skills de fase llevan `disable-model-invocation: true`.** Solo se disparan
 cuando tú escribes el comando; el modelo no decide entrar en la fase de plan por
-su cuenta. La excepción es `spec-authoring`, que sí es invocable por el modelo
+su cuenta. En `/sdd:approve` es además la garantía de la aprobación. La excepción es `spec-authoring`, que sí es invocable por el modelo
 para que las reglas de redacción EARS se apliquen solas al editar cualquier
 archivo bajo `specs/`.
 

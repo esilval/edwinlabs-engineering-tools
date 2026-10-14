@@ -178,9 +178,18 @@ STATUS_ROW = re.compile(
 APPROVED = {"approved", "aprobado", "aprobada"}
 
 
+def _header_end(text):
+    """Fin de la cabecera: el primer encabezado de nivel 2. Asi una fila
+    «| Estado | MIENTRAS ... |» de la tabla de patrones EARS no se confunde
+    con el estado del documento."""
+    m = re.search(r"^##\s", text, re.M)
+    return m.start() if m else len(text)
+
+
 def doc_status(text):
     """Valor del campo Estado de la cabecera, o None si no existe."""
-    m = STATUS_ROW.search(text or "")
+    text = text or ""
+    m = STATUS_ROW.search(text, 0, _header_end(text))
     return m.group(2).strip() if m else None
 
 
@@ -191,8 +200,10 @@ def is_approved(text):
 
 def set_status(text, value):
     """Devuelve (texto_nuevo, cambiado?)."""
-    new, n = STATUS_ROW.subn(lambda m: m.group(1) + value + m.group(3), text, count=1)
-    return new, bool(n)
+    end = _header_end(text)
+    head, n = STATUS_ROW.subn(lambda m: m.group(1) + value + m.group(3),
+                              text[:end], count=1)
+    return head + text[end:], bool(n)
 
 
 # --------------------------------------------------------------------------

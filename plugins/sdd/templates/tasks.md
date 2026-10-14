@@ -12,7 +12,7 @@
 > está mal descompuesta.
 >
 > Sustituye todo texto en cursiva. Solo el usuario cambia el Estado, con
-> `/sdd:approve tasks`. Las pruebas citan el requisito con el prefijo de la
+> `/sdd:approve`. Las pruebas citan el requisito con el prefijo de la
 > feature: `test_F001_R001_rechaza_token_expirado`.
 
 ## Leyenda
