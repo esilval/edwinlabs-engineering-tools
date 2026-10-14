@@ -1,38 +1,38 @@
 ---
 name: approve
-description: Aprueba la fase SDD actual (spec, plan o tasks) de la feature activa tras la revisión del usuario. Solo el usuario la invoca; es lo que deja avanzar a la compuerta.
+description: Aprueba la siguiente fase SDD pendiente (spec, plan o tasks) de la feature activa tras la revisión del usuario. Solo el usuario la invoca; es lo que deja avanzar a la compuerta.
 disable-model-invocation: true
+allowed-tools: Bash(python3:*)
 ---
 
 # Aprobación de fase
 
-El usuario revisó un artefacto y lo da por bueno. Esta skill registra esa
-decisión en el campo `Estado` de la cabecera, que es lo que la compuerta exige
-antes de dejar escribir código.
+El usuario revisó un artefacto y lo da por bueno. La aprobación ya se ejecutó
+al invocar esta skill, antes de que leyeras este texto, porque la lanza Claude
+Code directamente y no pasa por la herramienta Bash. Es la única vía que la
+compuerta acepta. Se aprueba la primera fase que aún no lo esté; el orden
+spec → plan → tasks hace que no haya otra aprobable.
 
-Fase a aprobar (opcional: `spec`, `plan` o `tasks`): `$ARGUMENTS`
+Resultado:
 
-## Procedimiento
+!`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py" approve --skill`
 
-1. Ejecuta:
+## Qué hacer con el resultado
 
-   ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py" approve $ARGUMENTS
-   ```
+1. Muéstraselo al usuario tal cual.
 
-   Sin argumento, aprueba la primera fase que aún no lo esté.
+2. Si aprobó, indica el siguiente paso que el script señala.
 
-2. Muestra la salida al usuario.
-
-3. Si el script se niega, **no edites nada para forzarlo**. Explica qué falta,
-   en el mismo orden en que lo listó el script, y qué skill lo completa. Las
+3. Si se negó, **no edites nada para forzarlo**. Explica qué falta, en el
+   mismo orden en que lo listó el script, y qué skill lo completa. Las
    negativas posibles:
    - el artefacto conserva huecos de plantilla, o le faltan requisitos,
      criterios o cobertura;
-   - una fase anterior no está aprobada todavía.
+   - todavía no existe el artefacto de la siguiente fase.
 
 ## Límite
 
-Esta es la única vía para aprobar. No cambies tú el campo `Estado` con
-Write, Edit ni Bash, ni ejecutes `sdd.py approve` fuera de esta skill: la
-aprobación es la prueba de que una persona revisó el artefacto.
+No cambies tú el campo `Estado` con Write, Edit ni Bash, ni ejecutes
+`sdd.py approve` por tu cuenta. La compuerta lo bloquea, y si un comando lo
+consigue, la auditoría devuelve el campo a su valor anterior. La aprobación es
+la prueba de que una persona revisó el artefacto.

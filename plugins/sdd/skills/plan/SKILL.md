@@ -14,7 +14,7 @@ Decide **cómo** se construye lo que la spec describe.
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py" status`.
    Si no hay ninguna, detente y pide `/sdd:specify`. Si `spec.md` no está en
    `[x] listo`, detente: o falta completarla, o falta que el usuario ejecute
-   `/sdd:approve spec`. Planificar sobre una spec sin revisar es planificar
+   `/sdd:approve`. Planificar sobre una spec sin revisar es planificar
    sobre una suposición.
 
 2. Lee, en este orden: `specs/constitution.md` (si existe), el `spec.md` de la
@@ -48,4 +48,4 @@ la spec es la fuente de verdad.
 ## Al terminar
 
 Resume las decisiones principales y sus consecuencias. Pide al usuario que
-revise el plan y ejecute `/sdd:approve plan`; después viene `/sdd:tasks`.
+revise el plan y ejecute `/sdd:approve`; después viene `/sdd:tasks`.
