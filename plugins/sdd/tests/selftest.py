@@ -338,7 +338,8 @@ def test_trazabilidad(base):
     declarados = set(sdd_trace.FINDINGS)
     probados = set(FIXTURES) | {"E-REQ-NO-TASK", "E-REQ-NO-TEST",
                                 "E-REQ-NO-CRITERIA", "W-REQ-NO-TASK",
-                                "W-TEST-UNSCOPED", "W-TASK-NO-DONE-WHEN"} | set(planes)
+                                "W-TEST-UNSCOPED", "W-TASK-NO-DONE-WHEN",
+                                "W-TEST-EMPTY", "W-TEST-NO-ASSERT"} | set(planes)
     check(declarados == probados,
           f"los {len(declarados)} codigos declarados estan cubiertos",
           f"sin probar: {sorted(declarados - probados)}")
@@ -357,7 +358,7 @@ def test_deteccion_pruebas(base):
     (p / "tests").mkdir()
     # El guion bajo es caracter de palabra: \bR001\b NO casa aqui. Regresion.
     (p / "tests" / "test_a.py").write_text(
-        "def test_F001_R001_algo():\n    pass\n", encoding="utf-8")
+        "def test_F001_R001_algo():\n    assert login() is True\n", encoding="utf-8")
     (p / "node_modules" / "x" / "tests").mkdir(parents=True)
     (p / "node_modules" / "x" / "tests" / "test_b.py").write_text(
         "def test_F001_R001_falso():\n    pass\n", encoding="utf-8")
@@ -370,9 +371,44 @@ def test_deteccion_pruebas(base):
     check("E-REQ-NO-TEST" not in {f["code"] for f in d["findings"]},
           "no reporta falta de prueba cuando la hay")
 
+    print("\nCuerpo de las pruebas")
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_trace
+    cuerpos = [
+        (".py", "def test_a():\n    pass\n", "empty"),
+        (".py", "def test_a():\n    \"\"\"Doc.\"\"\"\n    # nada\n    ...\n", "empty"),
+        (".py", "def test_a(x: int) -> None: pass\n", "empty"),
+        (".py", "def test_a():\n    assert f() == 1\n", "ok"),
+        (".py", "def test_a(self):\n    self.assertEqual(f(), 1)\n", "ok"),
+        (".py", "def test_a():\n    with pytest.raises(E):\n        f()\n", "ok"),
+        (".py", "def test_a():\n    f()\n\ndef otra():\n    assert 1\n", "no-assert"),
+        (".ts", "it('R1', () => {\n  // pendiente\n});\n", "empty"),
+        (".ts", "it('R1', async () => {\n  expect(await f()).toBe(1);\n});\n", "ok"),
+        (".ts", "test('R1', () => { f(); });\n", "no-assert"),
+        (".go", "func TestA(t *testing.T) {\n}\n", "empty"),
+        (".go", "func TestA(t *testing.T) {\n  if f() != 1 { t.Errorf(\"x\") }\n}\n", "ok"),
+        (".rb", "it 'x' do\nend\n", "ok"),
+    ]
+    for suf, src, esperado in cuerpos:
+        got = sdd_trace.test_body_kind(src.splitlines(), 0, suf)
+        check(got == esperado, f"cuerpo {suf} {src.splitlines()[0][:30]!r} -> {esperado}", got)
+
+    (p / "tests" / "test_vacio.py").write_text(
+        "def test_F001_R002_vacio():\n    pass\n", encoding="utf-8")
+    d = json.loads(run("trace", ["--json"], cwd=p).stdout)
+    r002 = next(r for r in d["requirements"] if r["id"] == "R002")
+    check(r002["empty_tests"] == ["tests/test_vacio.py::test_F001_R002_vacio"]
+          and "tests/test_vacio.py::test_F001_R002_vacio" not in r002["tests"],
+          "una prueba vacia no cuenta como evidencia")
+    check("W-TEST-EMPTY" in {f["code"] for f in d["findings"]}, "W-TEST-EMPTY")
+    (p / "tests" / "test_vacio.py").write_text(
+        "def test_F001_R001_sin_assert():\n    login()\n", encoding="utf-8")
+    check("W-TEST-NO-ASSERT" in codigos(p), "W-TEST-NO-ASSERT")
+    (p / "tests" / "test_vacio.py").unlink()
+
     print("\nIDs con alcance de feature")
     (p / "tests" / "test_c.py").write_text(
-        "def test_otro():\n    # F001-R002 en comentario\n    pass\n", encoding="utf-8")
+        "def test_otro():\n    # F001-R002 en comentario\n    assert 1\n", encoding="utf-8")
     d = json.loads(run("trace", ["--json"], cwd=p).stdout)
     r002 = next(r for r in d["requirements"] if r["id"] == "R002")
     check(r002["tests"] == ["tests/test_c.py::test_otro"], "F001-R002 en comentario cuenta")
@@ -387,7 +423,7 @@ def test_deteccion_pruebas(base):
           "feature 002 sigue sin prueba para su R001")
 
     (p / "tests" / "test_d.py").write_text(
-        "def test_R001_sin_prefijo():\n    pass\n", encoding="utf-8")
+        "def test_R001_sin_prefijo():\n    assert 1\n", encoding="utf-8")
     d = json.loads(run("trace", ["--json"], cwd=p).stdout)
     codes = {f["code"] for f in d["findings"]}
     check("W-TEST-UNSCOPED" in codes and "E-REQ-NO-TEST" in codes,

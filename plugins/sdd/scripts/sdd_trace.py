@@ -43,6 +43,8 @@ FINDINGS = {
     "W-SPEC-NO-UNWANTED":  "La spec no tiene requisitos de comportamiento no deseado",
     "W-PLAN-NO-CONSTITUTION-CHECK": "plan.md no contrasta sus decisiones con la constitucion",
     "W-TASK-NO-DONE-WHEN": "Tarea sin condicion de terminado",
+    "W-TEST-EMPTY":        "Prueba vacia que cita el requisito: no cuenta como evidencia",
+    "W-TEST-NO-ASSERT":    "Prueba que cita el requisito sin ninguna asercion reconocible",
     "W-TEST-UNSCOPED":     "Prueba que cita el requisito sin el prefijo de la feature",
 }
 
@@ -368,7 +370,8 @@ def is_test_file(path):
 def scan_tests(root, extra_globs=None):
     """
     Devuelve (scoped, bare):
-      scoped: {(numero_feature, req_id): ["ruta::nombre", ...]}  (F002_R001)
+      scoped: {(numero_feature, req_id): {"ruta::nombre": tipo}}  (F002_R001)
+              tipo: 'ok' | 'no-assert' | 'empty' (ver test_body_kind)
       bare:   {req_id: [...]}  (R001 sin prefijo: ambiguo, no cuenta)
     """
     from fnmatch import fnmatch
@@ -397,17 +400,86 @@ def scan_tests(root, extra_globs=None):
                          for r in REQ_ID.findall(SCOPED_REQ_ID.sub(" ", line))]
                 if not hits:
                     continue
-                label = None
+                label, kind = None, "ok"
                 for j in range(i, max(-1, i - 25), -1):
                     d = TEST_DECL.search(lines[j])
                     if d:
                         label = next(g for g in d.groups() if g)
+                        kind = test_body_kind(lines, j, path.suffix.lower())
                         break
                 ref = f"{rel.as_posix()}::{label}" if label else rel.as_posix()
                 for key, bucket in hits:
-                    bucket.setdefault(key, set()).add(ref)
-    return ({k: sorted(v) for k, v in scoped.items()},
-            {k: sorted(v) for k, v in bare.items()})
+                    if bucket is scoped:
+                        bucket.setdefault(key, {})[ref] = kind
+                    else:
+                        bucket.setdefault(key, set()).add(ref)
+    return (scoped, {k: sorted(v) for k, v in bare.items()})
+
+
+# --------------------------------------------------------------------------
+# Cuerpo de una prueba: vacia, sin asercion, o con asercion
+# --------------------------------------------------------------------------
+
+ASSERTION = re.compile(
+    r"\bassert\w*|\bexpect\s*\(|\.should\b|\bt\.(?:Error|Fatal|Fail)\w*"
+    r"|\brequire\.\w+|\bpytest\.(?:raises|fail|warns)|\bself\.assert\w+"
+    r"|\bAssert\.\w+|\bassertThat\b|\bverify\s*\(|\bpanic!|\bfail\s*\("
+    r"|\braise\b|\bthrow\b|\bmust\.\w+|\bshould\.\w+"
+)
+BRACE_LANGS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".java",
+               ".kt", ".rs", ".cs", ".swift", ".scala", ".php"}
+
+
+def _python_body(lines, decl):
+    head = lines[decl]
+    indent = len(head) - len(head.lstrip())
+    # Cuerpo en la misma linea: def test_x(a: int) -> None: pass
+    m = re.search(r"\)\s*(?:->[^:]*)?:(.*)$", head)
+    body = [m.group(1) if m else ""]
+    for line in lines[decl + 1:]:
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        body.append(line)
+    text = "\n".join(body)
+    text = re.sub(r'("""|\'\'\')[\s\S]*?\1', "", text)       # docstrings
+    text = re.sub(r"#[^\n]*", "", text)                         # comentarios
+    return text
+
+
+def _brace_body(lines, decl):
+    text = "\n".join(lines[decl:decl + 400])
+    text = re.sub(r"/\*[\s\S]*?\*/", "", text)
+    text = re.sub(r"(?<![:\\])//[^\n]*", "", text)
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1:i]
+    return None
+
+
+def test_body_kind(lines, decl, suffix):
+    """'empty' | 'no-assert' | 'ok'. Ante la duda, 'ok': un falso positivo aqui
+    le quitaria a un requisito una prueba legitima."""
+    if suffix == ".py":
+        body = _python_body(lines, decl)
+    elif suffix in BRACE_LANGS:
+        body = _brace_body(lines, decl)
+    else:
+        return "ok"
+    if body is None:
+        return "ok"
+    residue = re.sub(r"\b(?:pass|return)\b|\.\.\.|[;\s]", "", body)
+    if not residue:
+        return "empty"
+    return "ok" if ASSERTION.search(body) else "no-assert"
 
 
 # --------------------------------------------------------------------------
@@ -520,8 +592,11 @@ def analyze(root, feature, config):
     for r in reqs:
         rid = r["id"]
         r_tasks = sorted(set(by_req_tasks.get(rid, [])))
-        r_tests = scoped.get((fnum, rid), [])
-        r_unscoped = [] if r_tests else bare.get(rid, [])
+        found = scoped.get((fnum, rid), {})
+        r_tests = sorted(ref for ref, kind in found.items() if kind != "empty")
+        r_empty = sorted(ref for ref, kind in found.items() if kind == "empty")
+        r_noassert = sorted(ref for ref, kind in found.items() if kind == "no-assert")
+        r_unscoped = [] if found else bare.get(rid, [])
         must = r["priority"] == "MUST"
         issues = []
 
@@ -536,6 +611,18 @@ def analyze(root, feature, config):
                 f"{rid} no aparece en ninguna prueba. Nombra un test con el ID "
                 f"de la feature (por ejemplo test_{scoped_ref(feature, rid)}_...) "
                 f"o menciona {scoped_ref(feature, rid)} en un comentario.",
+                requirement=rid)
+        if r_empty:
+            issues.append("W-TEST-EMPTY")
+            add("W-TEST-EMPTY",
+                f"{rid}: {', '.join(r_empty[:3])} no tiene cuerpo (solo pass, ... o "
+                "comentarios). No cuenta como prueba: una prueba vacia satisface "
+                "al comprobador y no verifica nada.", requirement=rid)
+        if r_noassert:
+            issues.append("W-TEST-NO-ASSERT")
+            add("W-TEST-NO-ASSERT",
+                f"{rid}: {', '.join(r_noassert[:3])} no contiene ninguna asercion "
+                "reconocible. Cuenta como prueba, pero revisa que verifique algo.",
                 requirement=rid)
         if r_unscoped:
             issues.append("W-TEST-UNSCOPED")
@@ -566,7 +653,7 @@ def analyze(root, feature, config):
         rows.append({
             "id": rid, "priority": r["priority"], "text": r["text"],
             "criteria": r["criteria"], "tasks": r_tasks, "tests": r_tests,
-            "unscoped_tests": r_unscoped, "issues": issues,
+            "empty_tests": r_empty, "unscoped_tests": r_unscoped, "issues": issues,
         })
 
     tests_by_req = {r["id"]: r["tests"] for r in rows}

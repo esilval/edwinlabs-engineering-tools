@@ -177,6 +177,13 @@ El prefijo es obligatorio porque cada feature numera sus requisitos desde
 homónimo de otra. Un `test_R001_…` sin prefijo no cuenta y genera
 `W-TEST-UNSCOPED`.
 
+Una prueba cuyo cuerpo es solo `pass`, `...`, comentarios o un docstring no
+cuenta como evidencia (`W-TEST-EMPTY`). Una que tiene código pero ninguna
+aserción reconocible sí cuenta, porque la aserción puede vivir en un helper,
+pero genera `W-TEST-NO-ASSERT`. El análisis del cuerpo cubre Python y los
+lenguajes de llaves (JS/TS, Go, Java, Rust, C#…); en el resto, toda prueba
+cuenta.
+
 Un requisito que no aparezca en ningún test cuenta como no probado, aunque
 tenga cobertura de código. Es deliberado: la cobertura mide líneas ejecutadas,
 no requisitos satisfechos.
@@ -210,6 +217,8 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `W-SPEC-NO-UNWANTED` | Ningún requisito `SI... ENTONCES` |
 | `W-PLAN-NO-CONSTITUTION-CHECK` | Hay constitución y el plan no la contrasta |
 | `W-TASK-NO-DONE-WHEN` | Tarea sin «hecho cuando» |
+| `W-TEST-EMPTY` | Prueba vacía (solo `pass`, `...`, comentarios): no cuenta |
+| `W-TEST-NO-ASSERT` | Prueba sin aserción reconocible: cuenta, pero revísala |
 | `W-TEST-UNSCOPED` | Prueba que cita el requisito sin prefijo de feature |
 
 Los códigos son contrato público: si construyes algo encima, no cambiarán de
@@ -363,12 +372,27 @@ Dos ideas de ahí que ya condicionan el diseño actual:
   inalcanzable acaba desactivado, y eso desacredita a todas las demás
   comprobaciones.
 
+## Revisión de la implementación
+
+`agents/implementation-reviewer.md` es un subagente de solo lectura (`Read`,
+`Grep`, `Glob` y Bash para `git diff`). `/sdd:implement` lo lanza al terminar
+cada tarea, antes de marcarla `[x]`. Contrasta el diff con:
+
+- los criterios de aceptación de los requisitos que la tarea cita, exigiendo
+  archivo y línea como evidencia;
+- las pruebas, que deben verificar el criterio y no solo nombrarlo;
+- el alcance de la tarea;
+- las decisiones del plan y la constitución.
+
+Devuelve `CUMPLE`, `NO CUMPLE` o `CUMPLE CON RESERVAS`. Es independiente de
+quien implementó: no hereda su contexto ni sus suposiciones.
+
 ## Qué falta a propósito
 
 El detalle y el orden están en `docs/standards-roadmap.md`. En resumen:
 
-- **Agentes** (`agents/`): `spec-reviewer` de solo lectura, e
-  `implementation-reviewer` que audite el diff contra la spec.
+- **Agente `spec-reviewer`**: revisión de solo lectura de la spec antes de
+  aprobarla. Hoy la cubren a medias `/sdd:analyze` y la readiness.
 - **`.lsp.json`**: diagnósticos en tiempo real del servidor de lenguaje, sin
   coste en tokens de contexto.
 - **Detección de deriva**: un hook de tipo `agent` sobre el evento `FileChanged`

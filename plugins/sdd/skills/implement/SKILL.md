@@ -33,10 +33,21 @@ Tarea concreta a ejecutar (opcional): `$ARGUMENTS`
       feature (`test_F001_R001_rechaza_token_expirado`, o un comentario
       `# F001-R001` dentro del test). Es lo que hace verificable la
       trazabilidad; sin ello, `/sdd:trace` dará el requisito por no probado.
-   5. Marca la tarea como `[x]` solo si la verificación pasó.
+      Una prueba vacía (solo `pass` o `...`) no cuenta como prueba.
+   5. Lanza el agente `sdd:implementation-reviewer` con la feature
+      (`specs/NNN-slug/`) y el ID de la tarea. Es
+      un revisor independiente y de solo lectura: contrasta el diff con los
+      criterios de aceptación, el plan y la constitución.
+      - Si devuelve **NO CUMPLE**, corrige lo que señala y vuelve a lanzarlo.
+        Si el arreglo exige cambiar el plan o la spec, ve a «Si la realidad
+        contradice al plan».
+      - Si devuelve **CUMPLE CON RESERVAS**, muestra las reservas al usuario
+        en el reporte del paso 5.
+      - No discutas el veredicto ni lo omitas del reporte.
+   6. Marca la tarea como `[x]` solo si la verificación y la revisión pasaron.
 
 5. **Detente después de cada tarea** y reporta al usuario: qué cambió, qué
-   verificaste, cuál es la siguiente. No encadenes tareas sin dar oportunidad de
+   verificaste, el veredicto del revisor, cuál es la siguiente. No encadenes tareas sin dar oportunidad de
    revisar, salvo que el usuario lo pida explícitamente.
 
 ## Si la realidad contradice al plan
