@@ -183,6 +183,31 @@ def test_compuerta(base):
     check(not edita(p, feat / "tasks.md", "`[ ]`", "`[x]`"),
           "marcar tareas en tasks.md aprobado no se bloquea")
 
+    print("\nDeriva: cambios despues de aprobar")
+    import re as _re
+    check(bool(_re.search(r"\| Estado \| Approved · [0-9a-f]{12}", spec_path.read_text())),
+          "approve guarda la huella del contenido")
+    tasks_path = feat / "tasks.md"
+    tasks_path.write_text(tasks_path.read_text().replace("`[ ]`", "`[x]`"))
+    check(not bloquea(p), "cambiar el estado de una tarea no invalida tasks.md")
+    spec_path.write_text(spec_path.read_text().replace("\n\n## Requisitos", "\n\n\n## Requisitos"))
+    check(not bloquea(p), "reformatear espacios no invalida la spec")
+    original = spec_path.read_text()
+    spec_path.write_text(original.replace("CUANDO X, el sistema DEBERA Y.",
+                                          "CUANDO X, el sistema DEBERA Z."))
+    check("cambio despues" in razon(p), "editar una spec aprobada cierra la compuerta")
+    check("[!] spec.md" in run("status", cwd=p).stdout, "status marca la spec con [!]")
+    estado = _re.search(r"\| Estado \| (Approved · [0-9a-f]{12})", original).group(1)
+    check(edita(p, spec_path, estado, "Approved · 000000000000"),
+          "el modelo no puede reescribir la huella")
+    r = run("approve", cwd=p)
+    check(r.returncode == 0 and "Vuelven a borrador" in r.stdout,
+          "reaprobar la spec devuelve plan y tasks a borrador")
+    check("| Estado | Draft" in (feat / "plan.md").read_text()
+          and "| Estado | Draft" in tasks_path.read_text(), "plan y tasks quedan en Draft")
+    check(run("approve", cwd=p).returncode == 0 and run("approve", cwd=p).returncode == 0
+          and not bloquea(p), "tras reaprobar plan y tasks, la compuerta se abre")
+
     sdd_dir = p / ".sdd"
     (sdd_dir / "config.json").write_text('{"approval": false}')
     (feat / "tasks.md").write_text(TASKS_LISTAS)
@@ -237,6 +262,11 @@ FIXTURES = {
     "E-SPEC-OPEN-MUST-QUESTION": ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
                                   "| R001 | MUST | CUANDO X el sistema DEBERA Y. |\n"
                                   "\n## Preguntas abiertas\n\n- [ ] (R001) Cuanto?\n", None),
+    "W-TASK-OBSOLETE-REQ": ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
+                            "| R001 | OBSOLETO | El sistema DEBERA X. |\n"
+                            "| R002 | MUST | SI Z, ENTONCES el sistema DEBERA W. |\n",
+                            "### T001 — a\n- **Estado:** `[ ]`\n- **Requisitos:** R001\n"
+                            "- **Hecho cuando:** x\n"),
     "E-TASK-DEP-CYCLE": (None,
                          "### T001 — a\n- **Estado:** `[ ]`\n- **Requisitos:** R001\n"
                          "- **Depende de:** T002\n"
@@ -325,6 +355,23 @@ def test_trazabilidad(base):
     (p / "specs" / "001-x" / "tasks.md").write_text(
         "### T001 — a\n- **Estado:** `[ ]`\n- **Requisitos:** R001\n- **Depende de:** —\n")
     check("W-TASK-NO-DONE-WHEN" in codigos(p), "W-TASK-NO-DONE-WHEN")
+
+    print("\nRequisitos obsoletos")
+    p = base / "tr-obsoleto"
+    (p / "specs" / "001-x").mkdir(parents=True)
+    (p / ".sdd").mkdir()
+    (p / ".sdd" / "current").write_text("001-x\n")
+    (p / "specs" / "001-x" / "spec.md").write_text(
+        "| ID | Prioridad | Requisito |\n| - | - | - |\n"
+        "| R001 | MUST | SI Z, ENTONCES el sistema DEBERA W. |\n"
+        "| R004 | OBSOLETO | El login rapido (reemplazado por R001). |\n"
+        "\n## Criterios de aceptacion\n### R001\n- **Dado** a **cuando** b **entonces** c\n",
+        encoding="utf-8")
+    d = json.loads(run("trace", ["--json"], cwd=p).stdout)
+    r004 = [f for f in d["findings"] if f.get("requirement") == "R004"]
+    check(not r004, "un requisito obsoleto no exige tarea, prueba ni EARS", f"{r004}")
+    check(run("next-req", cwd=p).stdout.strip() == "R005",
+          "next-req cuenta los obsoletos: los IDs no se reciclan")
 
     p2 = base / "tr-should"
     (p2 / "specs" / "001-x").mkdir(parents=True)
@@ -584,6 +631,13 @@ def test_bash(base):
     r = audita(p, "t5")
     check(r.returncode == 2 and "devuelto" in r.stderr, "detecta la autoaprobacion")
     check("| Estado | Draft" in spec.read_text(), "y revierte el Estado a Draft")
+
+    spec.write_text(spec.read_text().replace("| Estado | Draft ", "| Estado | Approved · 111111111111 ", 1))
+    bash_bloquea(p, "python3 ofuscado.py", "t7")
+    spec.write_text(spec.read_text().replace("111111111111", "222222222222", 1))
+    r = audita(p, "t7")
+    check(r.returncode == 2 and "111111111111" in spec.read_text(),
+          "revierte una huella de aprobacion reescrita")
 
     # Con la compuerta abierta, la auditoria de codigo no aplica.
     (p / ".sdd" / "config.json").write_text('{"gate": "off"}')

@@ -45,6 +45,7 @@ FINDINGS = {
     "W-TASK-NO-DONE-WHEN": "Tarea sin condicion de terminado",
     "W-TEST-EMPTY":        "Prueba vacia que cita el requisito: no cuenta como evidencia",
     "W-TEST-NO-ASSERT":    "Prueba que cita el requisito sin ninguna asercion reconocible",
+    "W-TASK-OBSOLETE-REQ": "Tarea abierta que sirve a un requisito obsoleto",
     "W-TEST-UNSCOPED":     "Prueba que cita el requisito sin el prefijo de la feature",
 }
 
@@ -206,6 +207,42 @@ def is_approved(text):
     return bool(words) and words[0].strip("`*_") in APPROVED
 
 
+TASK_STATE_LINE = re.compile(r"^\s*[-*]\s*\*\*\s*(?:Estado|Status)\s*:?\s*\*\*", re.I)
+DIGEST = re.compile(r"\b([0-9a-f]{12})\b")
+
+
+def content_digest(text, fname):
+    """
+    Huella del contenido revisable de un artefacto. Excluye la fila Estado de
+    la cabecera (donde se guarda la propia huella) y, en tasks.md, las lineas
+    de estado de cada tarea, que /sdd:implement cambia sin alterar el plan de
+    trabajo. Ignora espacios y lineas en blanco: reformatear no es cambiar.
+    """
+    end = _header_end(text)
+    head = STATUS_ROW.sub("", text[:end], count=1)
+    lines = []
+    for raw in (head + text[end:]).splitlines():
+        if fname == "tasks.md" and TASK_STATE_LINE.match(raw):
+            continue
+        line = _squash(raw)
+        if line:
+            lines.append(line)
+    import hashlib
+    return hashlib.sha1("\n".join(lines).encode("utf-8")).hexdigest()[:12]
+
+
+def approval_digest(text):
+    """Huella guardada al aprobar ('Approved · 3f9a2c...'), o None."""
+    m = DIGEST.search(doc_status(text) or "")
+    return m.group(1) if m else None
+
+
+def is_stale(text, fname):
+    """True si el artefacto cambio despues de aprobarse."""
+    stamp = approval_digest(text)
+    return bool(is_approved(text) and stamp and stamp != content_digest(text, fname))
+
+
 def set_status(text, value):
     """Devuelve (texto_nuevo, cambiado?)."""
     end = _header_end(text)
@@ -223,14 +260,15 @@ def parse_spec(path):
     reqs, order, duplicates = {}, [], []
 
     row = re.compile(
-        r"^\|\s*(R\d{2,})\s*\|\s*(MUST|SHOULD|COULD|DEBE|DEBERIA|PODRIA)\s*\|\s*(.+?)\s*\|\s*$",
+        r"^\|\s*(R\d{2,})\s*\|\s*(MUST|SHOULD|COULD|DEBE|DEBERIA|PODRIA|"
+        r"OBSOLETE|OBSOLETO|OBSOLETA|DEPRECATED)\s*\|\s*(.+?)\s*\|\s*$",
         re.I | re.M,
     )
     for rid, prio, body in row.findall(text):
         rid = rid.upper()
-        prio = {"DEBE": "MUST", "DEBERIA": "SHOULD", "PODRIA": "COULD"}.get(
-            prio.upper(), prio.upper()
-        )
+        prio = {"DEBE": "MUST", "DEBERIA": "SHOULD", "PODRIA": "COULD",
+                "OBSOLETO": "OBSOLETE", "OBSOLETA": "OBSOLETE",
+                "DEPRECATED": "OBSOLETE"}.get(prio.upper(), prio.upper())
         if rid in reqs:
             duplicates.append(rid)
             continue
@@ -588,9 +626,25 @@ def analyze(root, feature, config):
         add("E-TASK-DEP-CYCLE",
             "Ciclo de dependencias: " + " -> ".join(cycle))
 
+    obsolete = {r["id"] for r in reqs if r["priority"] == "OBSOLETE"}
+    for t in tasks:
+        stale = [rid for rid in t["requirements"] if rid in obsolete]
+        if stale and t["state"] != "done":
+            add("W-TASK-OBSOLETE-REQ",
+                f"La tarea {t['id']} sigue abierta y sirve a {', '.join(stale)}, "
+                "que es obsoleto. Retirala o reasignala al requisito que lo sustituye.",
+                task=t["id"])
+
     rows = []
     for r in reqs:
         rid = r["id"]
+        if rid in obsolete:
+            rows.append({
+                "id": rid, "priority": r["priority"], "text": r["text"],
+                "criteria": r["criteria"], "tasks": sorted(set(by_req_tasks.get(rid, []))),
+                "tests": [], "empty_tests": [], "unscoped_tests": [], "issues": [],
+            })
+            continue
         r_tasks = sorted(set(by_req_tasks.get(rid, [])))
         found = scoped.get((fnum, rid), {})
         r_tests = sorted(ref for ref, kind in found.items() if kind != "empty")

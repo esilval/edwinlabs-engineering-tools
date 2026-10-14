@@ -14,6 +14,7 @@ Subcomandos:
   guard               Hook PreToolUse: lee JSON por stdin, decide sobre stdout.
   audit               Hook PostToolUse sobre Bash: detecta lo que guard no vio.
   approve [fase]      Marca spec|plan|tasks como aprobado si esta listo.
+  next-req            Imprime el siguiente ID de requisito libre (R00N).
   trace [--json] [--check]   Matriz requisito -> tarea -> prueba.
   quality             Hook PostToolUse: formateador y linter del archivo.
 """
@@ -237,28 +238,36 @@ def phase_problems(feature, phase):
     return problems
 
 
-def phase_approved(feature, phase):
+def phase_approval(feature, phase):
+    """'approved' | 'stale' (cambio tras aprobarse) | 'draft'."""
     fname = dict((p, f) for f, _s, p in PHASES)[phase]
     path = feature / fname
-    return path.is_file() and _trace().is_approved(
-        path.read_text(encoding="utf-8", errors="replace"))
+    if not path.is_file():
+        return "draft"
+    t = _trace()
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if not t.is_approved(text):
+        return "draft"
+    return "stale" if t.is_stale(text, fname) else "approved"
 
 
 def phase_state(feature, cfg=None):
     """
     [(archivo, skill, fase, estado, problemas), ...] en orden.
-    estado: "missing" | "incomplete" | "draft" (falta aprobar) | "ready".
+    estado: "missing" | "incomplete" | "draft" (falta aprobar) |
+            "stale" (cambio despues de aprobarse) | "ready".
     """
     need_approval = (cfg or DEFAULT_CONFIG).get("approval", True)
     out = []
     for fname, skill, phase in PHASES:
         problems = phase_problems(feature, phase)
+        approval = phase_approval(feature, phase) if need_approval else "approved"
         if problems is None:
             state = "missing"
         elif problems:
             state = "incomplete"
-        elif need_approval and not phase_approved(feature, phase):
-            state = "draft"
+        elif approval != "approved":
+            state = approval
         else:
             state = "ready"
         out.append((fname, skill, phase, state, problems or []))
@@ -268,7 +277,7 @@ def phase_state(feature, cfg=None):
 def next_step(feature, cfg=None):
     """(archivo, comando, fase, estado) de la primera fase no lista, o None."""
     for fname, skill, phase, state, _p in phase_state(feature, cfg):
-        if state == "draft":
+        if state in ("draft", "stale"):
             return fname, "/sdd:approve", phase, state
         if state != "ready":
             return fname, skill, phase, state
@@ -400,19 +409,23 @@ def cmd_status(_args):
         return 0
 
     print(f"Activa:    {feature.name}\n")
-    marks = {"missing": " ", "incomplete": "~", "draft": "a", "ready": "x"}
+    marks = {"missing": " ", "incomplete": "~", "draft": "a", "stale": "!",
+             "ready": "x"}
     labels = {"missing": "falta", "incomplete": "incompleto",
-              "draft": "sin aprobar", "ready": "listo"}
+              "draft": "sin aprobar", "stale": "cambio tras aprobar",
+              "ready": "listo"}
     for fname, skill, phase, state, problems in phase_state(feature, cfg):
         hint = {"missing": f"-> {skill}", "incomplete": f"-> {skill}",
-                "draft": "-> /sdd:approve", "ready": ""}[state]
+                "draft": "-> /sdd:approve", "stale": "-> revisar y /sdd:approve",
+                "ready": ""}[state]
         print(f"  [{marks[state]}] {fname:<9} {labels[state]:<12} {hint}".rstrip())
         for prob in problems:
             print(f"        - {prob}")
 
     nxt = next_step(feature, cfg)
     print(f"\nSiguiente: {nxt[1] if nxt else 'listo para /sdd:implement'}")
-    print("Leyenda:   [x] listo · [a] sin aprobar · [~] incompleto · [ ] falta")
+    print("Leyenda:   [x] listo · [!] cambio tras aprobar · [a] sin aprobar · "
+          "[~] incompleto · [ ] falta")
     return 0
 
 
@@ -433,7 +446,10 @@ def cmd_context(_args):
     line = (f"[SDD] Este proyecto usa desarrollo orientado a especificaciones. "
             f"La feature activa es {feature.name} y tiene estos artefactos listos: "
             f"{', '.join(done) or 'ninguno'}.")
-    if nxt and nxt[3] == "draft":
+    if nxt and nxt[3] == "stale":
+        line += (f" {nxt[0]} cambio despues de aprobarse y la aprobacion ya no "
+                 f"vale; el usuario debe revisarlo y aprobarlo de nuevo ({nxt[1]}).")
+    elif nxt and nxt[3] == "draft":
         line += (f" {nxt[0]} esta pendiente de aprobacion por el usuario "
                  f"({nxt[1]}); el campo Estado solo lo cambia el usuario.")
     elif nxt and nxt[3] == "incomplete":
@@ -593,6 +609,16 @@ def gate_reason(root, cfg, what):
                 "No rellenes huecos con suposiciones para pasar la compuerta.\n\n"
                 + ESCAPE
             )
+        if state == "stale":
+            return (
+                f"Guardrail SDD: {fname} de la feature {feature.name} cambio despues "
+                f"de que el usuario lo aprobara, asi que no se puede escribir en "
+                f"{what}. La aprobacion era sobre otra version.\n\n"
+                "Detente y dile al usuario que hay cambios sin revisar en "
+                f"{fname}. Si el cambio es de requisitos, el camino es /sdd:amend; "
+                "en cualquier caso, el usuario revisa y ejecuta /sdd:approve. "
+                "No cambies tu el campo Estado.\n\n" + ESCAPE
+            )
         if state == "draft":
             return (
                 f"Guardrail SDD: {fname} de la feature {feature.name} esta completo "
@@ -701,14 +727,14 @@ def cmd_audit(_args):
             if not path.is_file():
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            if t.is_approved(text) and not t.is_approved(f"| Estado | {old} |"):
+            if t.is_approved(text) and t.doc_status(text) != old:
                 restored, ok = t.set_status(text, old or "Draft")
                 if ok:
                     path.write_text(restored, encoding="utf-8")
                     messages.append(
-                        f"El comando marco {feature.name}/{fname} como aprobado. "
-                        f"Se ha devuelto a '{old or 'Draft'}': la aprobacion es "
-                        "del usuario, con /sdd:approve."
+                        f"El comando cambio el campo Estado de {feature.name}/{fname} "
+                        f"hacia una aprobacion. Se ha devuelto a '{old or 'Draft'}': "
+                        "la aprobacion es del usuario, con /sdd:approve."
                     )
 
     if snap.get("gate") and snap.get("files") is not None:
@@ -737,8 +763,9 @@ def cmd_audit(_args):
 
 def self_approval(rel, target, tool_input):
     """
-    True si la escritura pasa un artefacto de fase de no aprobado a aprobado.
-    Solo `sdd.py approve` (lanzado por el usuario) debe hacer esa transicion.
+    True si la escritura deja el artefacto aprobado con un Estado distinto del
+    que tenia: aprobarlo, o reescribir la huella de una aprobacion. Solo
+    `sdd.py approve` (lanzado por el usuario) puede hacerlo.
     """
     parts = rel.parts
     if (len(parts) != 3 or parts[0] != "specs" or not FEATURE_RE.match(parts[1])
@@ -757,7 +784,7 @@ def self_approval(rel, target, tool_input):
         after = before.replace(old, tool_input.get("new_string") or "", count)
     else:
         return False
-    return t.is_approved(after) and not t.is_approved(before)
+    return t.is_approved(after) and t.doc_status(after) != t.doc_status(before)
 
 
 # --------------------------------------------------------------------------
@@ -820,17 +847,48 @@ def _approve(args):
         print(f"{fname} ya estaba aprobado.")
         return 0
 
+    t = _trace()
     path = feature / fname
-    text, changed = _trace().set_status(path.read_text(encoding="utf-8"), "Approved")
+    current = path.read_text(encoding="utf-8")
+    digest = t.content_digest(current, fname)
+    text, changed = t.set_status(current, f"Approved · {digest}")
     if not changed:
         print(f"{fname} no tiene la fila '| Estado | ... |' en la cabecera. "
               "Anadela y vuelve a aprobar.", file=sys.stderr)
         return 1
     path.write_text(text, encoding="utf-8")
 
+    # Las fases posteriores se aprobaron sobre la version anterior de esta:
+    # vuelven a borrador para que se revisen contra la nueva.
+    reopened = []
+    for later in order[order.index(target) + 1:]:
+        later_path = feature / dict((p, f) for f, _s, p in PHASES)[later]
+        if later_path.is_file():
+            later_text = later_path.read_text(encoding="utf-8")
+            if t.is_approved(later_text):
+                later_path.write_text(t.set_status(later_text, "Draft")[0], encoding="utf-8")
+                reopened.append(later_path.name)
+
     nxt = next_step(feature)
-    print(f"{feature.name}: {fname} aprobado.")
+    print(f"{feature.name}: {fname} aprobado (huella {digest}).")
+    if reopened:
+        print(f"Vuelven a borrador, porque se aprobaron sobre la version anterior: "
+              f"{', '.join(reopened)}. Revisalos contra el cambio y apruebalos de nuevo.")
     print(f"Siguiente: {nxt[1] if nxt else '/sdd:implement'}")
+    return 0
+
+
+def cmd_next_req(_args):
+    """Siguiente ID libre. Cuenta los obsoletos: un ID no se recicla nunca."""
+    root = project_root()
+    feature = resolve_feature(root)
+    if feature is None:
+        print("No hay una feature activa.", file=sys.stderr)
+        return 1
+    text = (feature / "spec.md").read_text(encoding="utf-8", errors="replace") \
+        if (feature / "spec.md").is_file() else ""
+    used = [int(n) for n in _trace().REQ_ID.findall(text)]
+    print(f"R{(max(used) if used else 0) + 1:03d}")
     return 0
 
 
@@ -870,6 +928,7 @@ COMMANDS = {
     "guard": cmd_guard,
     "audit": cmd_audit,
     "approve": cmd_approve,
+    "next-req": cmd_next_req,
     "trace": cmd_trace,
     "quality": cmd_quality,
 }

@@ -17,7 +17,10 @@ Convierte el plan en unidades de trabajo ejecutables.
 
 2. Lee `spec.md` y `plan.md`.
 
-3. Copia `${CLAUDE_PLUGIN_ROOT}/templates/tasks.md` al directorio de la feature
+3. Si `tasks.md` ya existe (por ejemplo, tras `/sdd:amend`), **actualízalo**:
+   no reescribas ni renumeres las tareas existentes; añade las nuevas con el
+   siguiente ID libre, y para retirar comportamiento crea tareas explícitas. Si
+   no existe, copia `${CLAUDE_PLUGIN_ROOT}/templates/tasks.md` al directorio de la feature
    y rellénalo. Sustituye `{{TITLE}}`, `{{DATE}}` y todo texto en cursiva, y
    borra las tareas de ejemplo que no uses. Deja `Estado: Draft`.
 

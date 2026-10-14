@@ -24,7 +24,9 @@ Decide **cómo** se construye lo que la spec describe.
    que afectan a requisitos MUST, detente y recomienda `/sdd:clarify`. Planificar
    sobre ambigüedad genera trabajo que hay que tirar.
 
-4. Copia `${CLAUDE_PLUGIN_ROOT}/templates/plan.md` al directorio de la feature y
+4. Si `plan.md` ya existe (por ejemplo, tras `/sdd:amend`), **actualízalo**:
+   no lo sobrescribas con la plantilla, y cubre el cambio de la spec. Si no
+   existe, copia `${CLAUDE_PLUGIN_ROOT}/templates/plan.md` al directorio de la feature y
    rellénalo. Sustituye `{{TITLE}}`, `{{DATE}}` y todo texto en cursiva; la
    compuerta trata cualquier hueco que quede como plan incompleto. Deja
    `Estado: Draft`.

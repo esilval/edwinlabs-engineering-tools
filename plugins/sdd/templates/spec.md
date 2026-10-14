@@ -84,3 +84,8 @@ tengan un número o un umbral verificable; el resto es decoración._
 > borra la línea.
 
 - [ ] _(R001) Ambigüedad sin resolver._
+
+## Historial de cambios
+
+> Lo rellena `/sdd:amend` cuando cambian los requisitos después de aprobar la
+> spec: fecha, qué cambió, por qué y los IDs afectados.

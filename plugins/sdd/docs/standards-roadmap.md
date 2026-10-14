@@ -98,6 +98,8 @@ filtrado o un ciclo de dependencias no admiten «un poco».
 | 0 | Compuerta SDD, trazabilidad, calidad de archivo | — | — | **Hecho** |
 | 0b | Compuerta por readiness, aprobación del usuario, IDs con alcance de feature | — | bajo | **Hecho** (2026-10-14) |
 | 0c | Compuerta sobre Bash: prevención por análisis del comando y auditoría por `git status` | — | bajo | **Hecho** (2026-10-14) |
+| 0d | Preguntas ligadas a requisitos, `/sdd:analyze`, pruebas vacías, `implementation-reviewer` | — | bajo | **Hecho** (2026-10-14) |
+| 0e | Deriva por huella de aprobación, `/sdd:amend`, requisitos obsoletos | — | bajo | **Hecho** (2026-10-14) |
 | 1 | Detección de secretos | siempre; hazlo primero | bajo | Pendiente |
 | 2 | `standards.yaml` + ratchet de cobertura | tras 2–3 features reales | medio | Pendiente |
 | 3 | Dirección de dependencias | existe una separación de capas de facto | bajo | Pendiente |

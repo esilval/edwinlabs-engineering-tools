@@ -41,6 +41,7 @@ dependencias externas: el plugin no instala nada.
 /sdd:analyze                   # coherencia entre artefactos, solo lectura
 /sdd:approve                   # tasks; a partir de aquí la compuerta deja escribir código
 /sdd:implement [T003]          # ejecuta una tarea y se detiene
+/sdd:amend <cambio>            # cambia requisitos ya aprobados sin romper IDs
 /sdd:trace                     # ¿cubre la implementación lo que dice la spec?
 /sdd:status                    # dónde estás y qué falta
 ```
@@ -73,6 +74,7 @@ basta: una plantilla recién copiada no cuenta. Se comporta así:
 | No hay feature activa                      | Bloquea → `/sdd:specify`           |
 | Falta `spec.md` / `plan.md` / `tasks.md`   | Bloquea → la skill que lo produce  |
 | El artefacto existe pero está incompleto   | Bloquea y lista los problemas      |
+| Cambió después de aprobarse               | Bloquea → revisar y `/sdd:approve` |
 | Completo pero sin aprobar                  | Bloquea → `/sdd:approve`           |
 | Los tres listos y aprobados                | Permite                            |
 
@@ -102,8 +104,21 @@ Cada artefacto lleva `| Estado | Draft |` en la cabecera. Solo
   hace que no haya otra aprobable, así que no necesita argumento.
 - Se niega si el artefacto no está completo.
 
+Al aprobar se guarda una **huella del contenido**: `| Estado | Approved ·
+3f9a2c1b0d4e |`. Si el artefacto cambia después, la fase pasa a «cambió tras
+aprobar» (`[!]` en `/sdd:status`) y la compuerta se cierra hasta que vuelvas a
+aprobarla. Así se detecta la deriva sin vigilar archivos:
+
+- La huella ignora espacios y líneas en blanco. En `tasks.md` ignora también
+  el estado de cada tarea, que `/sdd:implement` cambia sin alterar el plan de
+  trabajo.
+- Reaprobar una fase devuelve a borrador las posteriores que estuvieran
+  aprobadas, porque se aprobaron sobre la versión anterior.
+- Las aprobaciones sin huella (versiones anteriores del plugin) se aceptan tal
+  cual.
+
 El hook rechaza cualquier Write, Edit o comando Bash del modelo que pase un
-artefacto a aprobado. Las demás ediciones de un artefacto aprobado pasan (por
+artefacto a aprobado o reescriba su huella. Las demás ediciones de un artefacto aprobado pasan (por
 ejemplo, marcar tareas `[x]` en `tasks.md`). Para desactivar el requisito de
 aprobación: `{"approval": false}` en `.sdd/config.json`.
 
@@ -219,6 +234,7 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `W-TASK-NO-DONE-WHEN` | Tarea sin «hecho cuando» |
 | `W-TEST-EMPTY` | Prueba vacía (solo `pass`, `...`, comentarios): no cuenta |
 | `W-TEST-NO-ASSERT` | Prueba sin aserción reconocible: cuenta, pero revísala |
+| `W-TASK-OBSOLETE-REQ` | Tarea abierta que sirve a un requisito obsoleto |
 | `W-TEST-UNSCOPED` | Prueba que cita el requisito sin prefijo de feature |
 
 Los códigos son contrato público: si construyes algo encima, no cambiarán de
@@ -372,6 +388,24 @@ Dos ideas de ahí que ya condicionan el diseño actual:
   inalcanzable acaba desactivado, y eso desacredita a todas las demás
   comprobaciones.
 
+## Cambios de requisitos
+
+`/sdd:amend <cambio>` modifica una spec ya aprobada sin romper la
+trazabilidad:
+
+| Tipo de cambio | En `spec.md` |
+| -------------- | ------------ |
+| Requisito nuevo | Fila con el siguiente ID libre (`sdd.py next-req`) |
+| Cambio de comportamiento | El viejo pasa a `OBSOLETO`; nace uno con ID nuevo |
+| Requisito retirado | Pasa a `OBSOLETO` |
+| Aclaración | Se edita en su sitio, mismo ID |
+
+Un requisito `OBSOLETO` no exige tarea ni prueba, y su ID no se recicla. Las
+tareas abiertas que aún le sirven generan `W-TASK-OBSOLETE-REQ`. Cada
+enmienda deja una entrada en `## Historial de cambios`. Como la spec cambió,
+la huella deja de coincidir y la compuerta se cierra hasta reaprobar spec,
+plan y tasks.
+
 ## Revisión de la implementación
 
 `agents/implementation-reviewer.md` es un subagente de solo lectura (`Read`,
@@ -395,11 +429,6 @@ El detalle y el orden están en `docs/standards-roadmap.md`. En resumen:
   aprobarla. Hoy la cubren a medias `/sdd:analyze` y la readiness.
 - **`.lsp.json`**: diagnósticos en tiempo real del servidor de lenguaje, sin
   coste en tokens de contexto.
-- **Detección de deriva**: un hook de tipo `agent` sobre el evento `FileChanged`
-  vigilando `spec.md`, más `/sdd:amend` para cambios de requisito
-  post-implementación. Ojo al montarlo: `FileChanged` solo se dispara sobre
-  rutas registradas, y quien las registra es un hook `SessionStart` que
-  devuelve `watchPaths`. Un `FileChanged` suelto no vigila nada.
 - **Workflow** (`workflows/`) para la fase de implementación, con fan-out de un
   agente por tarea y revisión adversarial. Nota: los workflows no admiten
   entrada del usuario a mitad de ejecución, así que cada fase que requiera tu
