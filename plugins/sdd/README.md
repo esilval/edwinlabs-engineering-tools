@@ -38,6 +38,7 @@ dependencias externas: el plugin no instala nada.
 /sdd:plan                      # decisiones de arquitectura
 /sdd:approve                   # plan
 /sdd:tasks                     # descomposición en tareas atómicas
+/sdd:analyze                   # coherencia entre artefactos, solo lectura
 /sdd:approve                   # tasks; a partir de aquí la compuerta deja escribir código
 /sdd:implement [T003]          # ejecuta una tarea y se detiene
 /sdd:trace                     # ¿cubre la implementación lo que dice la spec?
@@ -194,6 +195,9 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `E-TASK-UNKNOWN-DEP` | Tarea que depende de una tarea inexistente |
 | `E-TASK-DEP-CYCLE` | Ciclo de dependencias |
 | `E-DONE-NO-TEST` | Tarea cerrada cuyos requisitos no tienen prueba |
+| `E-PLAN-REQ-MISSING` | Requisito MUST que `plan.md` no menciona |
+| `E-PLAN-UNKNOWN-REQ` | `plan.md` cita un requisito que no está en la spec |
+| `E-PLAN-TEMPLATE` | `plan.md` conserva huecos de plantilla |
 | `E-SPEC-OPEN-MUST-QUESTION` | Pregunta abierta que cita un requisito MUST |
 | `E-SPEC-TEMPLATE` | `spec.md` conserva huecos de plantilla |
 | `E-TASK-TEMPLATE` | `tasks.md` conserva huecos de plantilla |
@@ -204,6 +208,8 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `W-DONE-OPEN-DEPS` | Tarea cerrada con dependencias abiertas |
 | `W-SPEC-OPEN-QUESTIONS` | Preguntas abiertas que no citan ningún MUST |
 | `W-SPEC-NO-UNWANTED` | Ningún requisito `SI... ENTONCES` |
+| `W-PLAN-NO-CONSTITUTION-CHECK` | Hay constitución y el plan no la contrasta |
+| `W-TASK-NO-DONE-WHEN` | Tarea sin «hecho cuando» |
 | `W-TEST-UNSCOPED` | Prueba que cita el requisito sin prefijo de feature |
 
 Los códigos son contrato público: si construyes algo encima, no cambiarán de

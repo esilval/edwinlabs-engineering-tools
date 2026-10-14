@@ -29,6 +29,9 @@ FINDINGS = {
     "E-TASK-DEP-CYCLE":    "Ciclo de dependencias entre tareas",
     "E-DONE-NO-TEST":      "Tarea cerrada cuyos requisitos no tienen prueba",
     "E-SPEC-OPEN-MUST-QUESTION": "Pregunta abierta que afecta a un requisito MUST",
+    "E-PLAN-REQ-MISSING":  "Requisito MUST que plan.md no menciona",
+    "E-PLAN-UNKNOWN-REQ":  "plan.md cita un requisito que no existe en spec.md",
+    "E-PLAN-TEMPLATE":     "plan.md conserva marcadores de plantilla sin rellenar",
     "E-SPEC-TEMPLATE":     "spec.md conserva marcadores de plantilla sin rellenar",
     "E-TASK-TEMPLATE":     "tasks.md conserva marcadores de plantilla sin rellenar",
     "W-REQ-NO-TASK":       "Requisito SHOULD/COULD sin tarea",
@@ -38,6 +41,8 @@ FINDINGS = {
     "W-DONE-OPEN-DEPS":    "Tarea cerrada con dependencias sin cerrar",
     "W-SPEC-OPEN-QUESTIONS": "La spec tiene preguntas abiertas sin resolver",
     "W-SPEC-NO-UNWANTED":  "La spec no tiene requisitos de comportamiento no deseado",
+    "W-PLAN-NO-CONSTITUTION-CHECK": "plan.md no contrasta sus decisiones con la constitucion",
+    "W-TASK-NO-DONE-WHEN": "Tarea sin condicion de terminado",
     "W-TEST-UNSCOPED":     "Prueba que cita el requisito sin el prefijo de la feature",
 }
 
@@ -331,6 +336,25 @@ def parse_tasks(path):
 
 
 # --------------------------------------------------------------------------
+# Parseo de plan.md
+# --------------------------------------------------------------------------
+
+def parse_plan(path):
+    if not path.is_file():
+        return {"path": path.name, "exists": False, "status": None,
+                "placeholders": [], "cited": [], "constitution_check": False}
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return {
+        "path": path.name,
+        "exists": True,
+        "status": doc_status(text),
+        "placeholders": find_placeholders(text, "plan.md"),
+        "cited": sorted({"R" + n for n in REQ_ID.findall(text)}),
+        "constitution_check": bool(section(text, "constitucion", "constitution").strip()),
+    }
+
+
+# --------------------------------------------------------------------------
 # Barrido de pruebas
 # --------------------------------------------------------------------------
 
@@ -413,6 +437,7 @@ def find_cycles(tasks):
 
 def analyze(root, feature, config):
     spec = parse_spec(feature / "spec.md")
+    plan = parse_plan(feature / "plan.md")
     tasks_doc = parse_tasks(feature / "tasks.md")
     scoped, bare = scan_tests(root, (config.get("tests") or {}).get("globs"))
     fnum = feature_number(feature)
@@ -435,6 +460,7 @@ def analyze(root, feature, config):
         })
 
     for ph, code in ((spec["placeholders"], "E-SPEC-TEMPLATE"),
+                     (plan["placeholders"], "E-PLAN-TEMPLATE"),
                      (tasks_doc["placeholders"], "E-TASK-TEMPLATE")):
         if ph:
             line, text = ph[0]
@@ -463,6 +489,28 @@ def analyze(root, feature, config):
                 f"La tarea {t['id']} no referencia ningun requisito. "
                 "Si no sirve a un requisito, sobra o falta el requisito.",
                 task=t["id"])
+
+    if plan["exists"]:
+        for rid in [r["id"] for r in reqs if r["priority"] == "MUST"]:
+            if rid not in plan["cited"]:
+                add("E-PLAN-REQ-MISSING",
+                    f"{rid} es MUST y plan.md no lo menciona: o falta cobertura en el "
+                    "plan o sobra el requisito.", requirement=rid)
+        for rid in plan["cited"]:
+            if rid not in req_ids:
+                add("E-PLAN-UNKNOWN-REQ",
+                    f"plan.md cita {rid}, que no existe en spec.md. Un requisito nuevo "
+                    "se anade a la spec, no al plan.", requirement=rid)
+        if (root / "specs" / "constitution.md").is_file() and not plan["constitution_check"]:
+            add("W-PLAN-NO-CONSTITUTION-CHECK",
+                "Existe specs/constitution.md y plan.md no tiene la seccion "
+                "'Comprobacion de constitucion'.")
+
+    for t in tasks:
+        if not t["done_when"].strip():
+            add("W-TASK-NO-DONE-WHEN",
+                f"La tarea {t['id']} no tiene 'Hecho cuando': no hay forma objetiva "
+                "de cerrarla.", task=t["id"])
 
     for cycle in find_cycles(tasks):
         add("E-TASK-DEP-CYCLE",
@@ -570,7 +618,8 @@ def analyze(root, feature, config):
         "schema": "sdd.trace/v1",
         "feature": feature.name,
         "ok": not errors,
-        "status": {"spec": spec["status"], "tasks": tasks_doc["status"]},
+        "status": {"spec": spec["status"], "plan": plan["status"],
+                   "tasks": tasks_doc["status"]},
         "counts": {
             "requirements": len(rows), "tasks": len(tasks),
             "errors": len(errors), "warnings": len(warnings),

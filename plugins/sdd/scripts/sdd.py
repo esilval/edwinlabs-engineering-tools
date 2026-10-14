@@ -209,6 +209,10 @@ def phase_problems(feature, phase):
         if missing:
             problems.append("plan.md no menciona estos requisitos MUST: "
                             + ", ".join(missing))
+        unknown = sorted(cited - {r["id"] for r in spec["requirements"]})
+        if unknown:
+            problems.append("plan.md cita requisitos que no estan en spec.md: "
+                            + ", ".join(unknown) + " (un requisito nuevo va a la spec)")
 
     elif phase == "tasks":
         tasks = t.parse_tasks(path)["tasks"]

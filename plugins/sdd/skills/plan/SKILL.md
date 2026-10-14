@@ -29,14 +29,20 @@ Decide **cómo** se construye lo que la spec describe.
    compuerta trata cualquier hueco que quede como plan incompleto. Deja
    `Estado: Draft`.
 
-5. Para cada decisión relevante, documenta también **la alternativa que
+5. Rellena «Comprobación de constitución» con cada regla que el plan toque. Si
+   una decisión contradice una regla, justifícalo ahí o propón cambiar la
+   regla; no la ignores. `trace` avisa si existe constitución y esta sección
+   falta.
+
+6. Para cada decisión relevante, documenta también **la alternativa que
    descartaste y por qué**. Es la parte del plan que más valor tiene dentro de
    seis meses, y la que siempre se omite.
 
-6. Cierra con la tabla de trazabilidad: todo requisito MUST de la spec debe
+7. Cierra con la tabla de trazabilidad: todo requisito MUST de la spec debe
    aparecer en la tabla de componentes o en la de pruebas. Si alguno no aparece,
    o falta cobertura en el plan o sobra el requisito en la spec. Señálalo, no lo
-   silencies.
+   silencies. Cita solo IDs que existan en la spec: un `R0xx` que no esté ahí
+   es un requisito colado por la puerta de atrás (`E-PLAN-UNKNOWN-REQ`).
 
 ## Límite
 

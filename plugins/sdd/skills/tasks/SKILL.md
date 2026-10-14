@@ -50,6 +50,7 @@ es un plan disfrazado de tarea, y es donde la implementación se descarrila.
 
 ## Al terminar
 
-Muestra la lista de tareas con sus dependencias. Pide al usuario que las revise
-y ejecute `/sdd:approve`; con eso la compuerta deja escribir código y el
-siguiente paso es `/sdd:implement`.
+Muestra la lista de tareas con sus dependencias. Recomienda `/sdd:analyze`
+para revisar la coherencia entre constitución, spec, plan y tareas antes de
+aprobar. Después, el usuario revisa y ejecuta `/sdd:approve`; con eso la
+compuerta deja escribir código y el siguiente paso es `/sdd:implement`.

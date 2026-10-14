@@ -301,6 +301,7 @@ no colisionen, este es el reparto de prefijos:
 | `*-TASK-*` | tareas de `tasks.md` | en uso |
 | `*-DONE-*` | coherencia de tareas cerradas | en uso |
 | `*-SPEC-*` | el documento de spec en conjunto | en uso |
+| `*-PLAN-*` | `plan.md` frente a la spec y la constitución | en uso |
 | `*-TEST-*` | evidencia de prueba (forma de citar requisitos) | en uso |
 | `*-ARCH-*` | dirección de dependencias y capas | fase 3 |
 | `*-CONTRACT-*` | contratos de API | fase 4 |

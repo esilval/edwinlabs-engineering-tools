@@ -169,6 +169,8 @@ def test_compuerta(base):
     check("no esta listo" in razon(p), "plan.md vacio: incompleto")
     (feat / "plan.md").write_text(PLAN_LISTO.replace("R001, R002", "R001"))
     check("R002" in razon(p), "plan que no menciona un MUST: incompleto")
+    (feat / "plan.md").write_text(PLAN_LISTO.replace("R001, R002", "R001, R002, R007"))
+    check("R007" in razon(p), "plan que cita un requisito inexistente: incompleto")
     (feat / "plan.md").write_text(PLAN_LISTO)
     check(run("approve", ["plan"], cwd=p).returncode == 0, "approve plan")
     check(bloquea(p), "con plan aprobado pero sin tasks.md: bloquea")
@@ -294,6 +296,36 @@ def test_trazabilidad(base):
     got = codigos(p)
     for code in ("E-REQ-NO-TASK", "E-REQ-NO-TEST", "E-REQ-NO-CRITERIA"):
         check(code in got, code)
+    print("\nTrazabilidad: consistencia del plan y las tareas")
+    planes = {
+        "E-PLAN-REQ-MISSING": "# Plan\n\nNada que ver.\n",
+        "E-PLAN-UNKNOWN-REQ": "# Plan\n\nCubre R001 y R009.\n",
+        "E-PLAN-TEMPLATE": "# Plan\n\nR001\n\n### D1 — _\\<título de la decisión\\>_\n",
+        "W-PLAN-NO-CONSTITUTION-CHECK": "# Plan\n\nCubre R001.\n",
+    }
+    for code, plan in planes.items():
+        p = base / f"tr-{code.lower()}"
+        (p / "specs" / "001-x").mkdir(parents=True)
+        (p / ".sdd").mkdir()
+        (p / ".sdd" / "current").write_text("001-x\n")
+        (p / "specs" / "001-x" / "spec.md").write_text(SPEC_BASE, encoding="utf-8")
+        (p / "specs" / "001-x" / "plan.md").write_text(plan, encoding="utf-8")
+        (p / "specs" / "constitution.md").write_text("# C\n", encoding="utf-8")
+        check(code in codigos(p), code)
+    p = base / "tr-plan-ok"
+    (p / "specs" / "001-x").mkdir(parents=True)
+    (p / ".sdd").mkdir()
+    (p / ".sdd" / "current").write_text("001-x\n")
+    (p / "specs" / "001-x" / "spec.md").write_text(SPEC_BASE, encoding="utf-8")
+    (p / "specs" / "constitution.md").write_text("# C\n", encoding="utf-8")
+    (p / "specs" / "001-x" / "plan.md").write_text(
+        "# Plan\n\nCubre R001.\n\n## Comprobacion de constitucion\n\n| R | si |\n")
+    got = codigos(p)
+    check(not got & set(planes), "plan coherente: ningun hallazgo de plan", f"{got & set(planes)}")
+    (p / "specs" / "001-x" / "tasks.md").write_text(
+        "### T001 — a\n- **Estado:** `[ ]`\n- **Requisitos:** R001\n- **Depende de:** —\n")
+    check("W-TASK-NO-DONE-WHEN" in codigos(p), "W-TASK-NO-DONE-WHEN")
+
     p2 = base / "tr-should"
     (p2 / "specs" / "001-x").mkdir(parents=True)
     (p2 / ".sdd").mkdir()
@@ -306,7 +338,7 @@ def test_trazabilidad(base):
     declarados = set(sdd_trace.FINDINGS)
     probados = set(FIXTURES) | {"E-REQ-NO-TASK", "E-REQ-NO-TEST",
                                 "E-REQ-NO-CRITERIA", "W-REQ-NO-TASK",
-                                "W-TEST-UNSCOPED"}
+                                "W-TEST-UNSCOPED", "W-TASK-NO-DONE-WHEN"} | set(planes)
     check(declarados == probados,
           f"los {len(declarados)} codigos declarados estan cubiertos",
           f"sin probar: {sorted(declarados - probados)}")
