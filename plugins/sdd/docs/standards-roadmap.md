@@ -96,6 +96,7 @@ filtrado o un ciclo de dependencias no admiten «un poco».
 | # | Escalón | Criterio de entrada | Coste | Estado |
 | - | ------- | ------------------- | ----- | ------ |
 | 0 | Compuerta SDD, trazabilidad, calidad de archivo | — | — | **Hecho** |
+| 0b | Compuerta por readiness, aprobación del usuario, IDs con alcance de feature | — | bajo | **Hecho** (2026-10-14) |
 | 1 | Detección de secretos | siempre; hazlo primero | bajo | Pendiente |
 | 2 | `standards.yaml` + ratchet de cobertura | tras 2–3 features reales | medio | Pendiente |
 | 3 | Dirección de dependencias | existe una separación de capas de facto | bajo | Pendiente |
@@ -299,6 +300,7 @@ no colisionen, este es el reparto de prefijos:
 | `*-TASK-*` | tareas de `tasks.md` | en uso |
 | `*-DONE-*` | coherencia de tareas cerradas | en uso |
 | `*-SPEC-*` | el documento de spec en conjunto | en uso |
+| `*-TEST-*` | evidencia de prueba (forma de citar requisitos) | en uso |
 | `*-ARCH-*` | dirección de dependencias y capas | fase 3 |
 | `*-CONTRACT-*` | contratos de API | fase 4 |
 | `*-DEP-*` | dependencias y ADRs | fase 5 |

@@ -42,3 +42,7 @@ suposiciones enterradas en el código.
 Reporta cuántas preguntas quedaron cerradas y cuántas siguen abiertas. Si quedan
 abiertas de tipo MUST, dilo claramente: pasar a `/sdd:plan` con requisitos MUST
 ambiguos es la vía más común de reescribir todo dos veces.
+
+Si la spec ya estaba aprobada y la cambiaste, díselo al usuario: la aprobación
+que dio fue sobre otra versión. Si no lo estaba, el siguiente paso es que la
+revise y ejecute `/sdd:approve spec`.

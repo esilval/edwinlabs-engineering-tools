@@ -32,6 +32,9 @@ Descripción de la feature: `$ARGUMENTS`
 
 5. Rellena `spec.md`. Aplica las reglas de redacción de la skill
    `sdd:spec-authoring`, que se activa sola al editar specs.
+   Sustituye **todo** texto en cursiva de la plantilla: la compuerta trata
+   cualquier hueco que quede como spec incompleta. Si una sección no aplica,
+   escribe «No aplica.». Borra los requisitos de ejemplo que no uses.
 
 ## La regla que más se rompe
 
@@ -48,5 +51,8 @@ Ante la duda, pregúntate: si mañana cambiáramos toda la pila tecnológica,
 1. Muestra al usuario los requisitos y los non-goals que redactaste. Es lo que
    más rápido revela un malentendido.
 2. Si dejaste preguntas abiertas, dilo explícitamente.
-3. Indica que el siguiente paso es `/sdd:clarify` si hay preguntas abiertas, o
-   `/sdd:plan` si no las hay.
+3. Si hay preguntas abiertas, el siguiente paso es `/sdd:clarify`. Si no, pide
+   al usuario que revise la spec y ejecute `/sdd:approve spec`; después viene
+   `/sdd:plan`.
+4. No cambies tú el campo `Estado`. La compuerta lo impide, y la aprobación es
+   del usuario.

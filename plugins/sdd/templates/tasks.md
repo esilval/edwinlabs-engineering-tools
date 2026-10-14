@@ -1,14 +1,19 @@
 # Tasks: {{TITLE}}
 
-| Campo | Valor       |
-| ----- | ----------- |
-| Spec  | `spec.md`   |
-| Plan  | `plan.md`   |
-| Fecha | {{DATE}}    |
+| Campo  | Valor       |
+| ------ | ----------- |
+| Spec   | `spec.md`   |
+| Plan   | `plan.md`   |
+| Fecha  | {{DATE}}    |
+| Estado | Draft       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
 > está mal descompuesta.
+>
+> Sustituye todo texto en cursiva. Solo el usuario cambia el Estado, con
+> `/sdd:approve tasks`. Las pruebas citan el requisito con el prefijo de la
+> feature: `test_F001_R001_rechaza_token_expirado`.
 
 ## Leyenda
 
@@ -40,4 +45,4 @@
 | R001 | T001, T002 |
 | R002 | T002 |
 
-_Todo requisito MUST debe tener al menos una tarea._
+> Todo requisito MUST debe tener al menos una tarea.

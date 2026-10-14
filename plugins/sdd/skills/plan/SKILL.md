@@ -10,9 +10,12 @@ Decide **cómo** se construye lo que la spec describe.
 
 ## Procedimiento
 
-1. Resuelve la feature activa con
-   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py" current`.
-   Si no hay ninguna, detente y pide `/sdd:specify`.
+1. Resuelve la feature activa y su estado con
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py" status`.
+   Si no hay ninguna, detente y pide `/sdd:specify`. Si `spec.md` no está en
+   `[x] listo`, detente: o falta completarla, o falta que el usuario ejecute
+   `/sdd:approve spec`. Planificar sobre una spec sin revisar es planificar
+   sobre una suposición.
 
 2. Lee, en este orden: `specs/constitution.md` (si existe), el `spec.md` de la
    feature, y el código relevante del repositorio.
@@ -22,7 +25,9 @@ Decide **cómo** se construye lo que la spec describe.
    sobre ambigüedad genera trabajo que hay que tirar.
 
 4. Copia `${CLAUDE_PLUGIN_ROOT}/templates/plan.md` al directorio de la feature y
-   rellénalo.
+   rellénalo. Sustituye `{{TITLE}}`, `{{DATE}}` y todo texto en cursiva; la
+   compuerta trata cualquier hueco que quede como plan incompleto. Deja
+   `Estado: Draft`.
 
 5. Para cada decisión relevante, documenta también **la alternativa que
    descartaste y por qué**. Es la parte del plan que más valor tiene dentro de
@@ -42,5 +47,5 @@ la spec es la fuente de verdad.
 
 ## Al terminar
 
-Resume las decisiones principales y sus consecuencias. Indica que el siguiente
-paso es `/sdd:tasks`.
+Resume las decisiones principales y sus consecuencias. Pide al usuario que
+revise el plan y ejecute `/sdd:approve plan`; después viene `/sdd:tasks`.

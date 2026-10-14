@@ -5,10 +5,13 @@
 | ID     | `{{ID}}`     |
 | Fecha  | {{DATE}}     |
 | Estado | Draft        |
-| Issue  | _(opcional)_ |
+| Issue  | —            |
 
 > Este documento describe **qué** y **por qué**, nunca **cómo**.
 > Toda decisión de implementación (librerías, esquemas, servicios) va en `plan.md`.
+>
+> Sustituye todo texto en cursiva; si una sección no aplica, escribe
+> «No aplica.». Solo el usuario cambia el Estado, con `/sdd:approve spec`.
 
 ## Problema
 

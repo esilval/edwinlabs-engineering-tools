@@ -1,7 +1,8 @@
 # sdd — Spec-Driven Development para Claude Code
 
 Plugin que implementa el ciclo **constitution → specify → clarify → plan → tasks
-→ implement**, con una compuerta que impide escribir código sin especificación.
+→ implement**, con una compuerta que impide escribir código sin una
+especificación completa y aprobada por el usuario.
 
 ## Instalación
 
@@ -33,8 +34,11 @@ dependencias externas: el plugin no instala nada.
 /sdd:constitution              # una vez por repositorio
 /sdd:specify <qué construir>   # crea specs/NNN-slug/spec.md
 /sdd:clarify                   # cierra las preguntas abiertas
+/sdd:approve spec              # tú apruebas la spec tras revisarla
 /sdd:plan                      # decisiones de arquitectura
+/sdd:approve plan
 /sdd:tasks                     # descomposición en tareas atómicas
+/sdd:approve tasks             # a partir de aquí la compuerta deja escribir código
 /sdd:implement [T003]          # ejecuta una tarea y se detiene
 /sdd:trace                     # ¿cubre la implementación lo que dice la spec?
 /sdd:status                    # dónde estás y qué falta
@@ -57,15 +61,46 @@ specs/
 ## La compuerta
 
 Un hook `PreToolUse` sobre `Write|Edit|NotebookEdit` bloquea la escritura de
-código mientras falten artefactos. Se comporta así:
+código mientras algún artefacto no esté **listo**. Que el archivo exista no
+basta: una plantilla recién copiada no cuenta. Se comporta así:
 
-| Situación                            | Resultado                          |
-| ------------------------------------ | ---------------------------------- |
-| El repo no tiene `specs/`            | No opina. El plugin es inerte      |
-| La ruta está en la lista de exentos  | Permite                            |
-| No hay feature activa                | Bloquea → `/sdd:specify`           |
-| Falta `spec.md` / `plan.md` / `tasks.md` | Bloquea → la skill que lo produce |
-| Todos los artefactos presentes       | Permite                            |
+| Situación                                  | Resultado                          |
+| ------------------------------------------ | ---------------------------------- |
+| El repo no tiene `specs/`                  | No opina. El plugin es inerte      |
+| La escritura pone `Estado: Approved`       | Bloquea: solo aprueba el usuario   |
+| La ruta está en la lista de exentos        | Permite                            |
+| No hay feature activa                      | Bloquea → `/sdd:specify`           |
+| Falta `spec.md` / `plan.md` / `tasks.md`   | Bloquea → la skill que lo produce  |
+| El artefacto existe pero está incompleto   | Bloquea y lista los problemas      |
+| Completo pero sin aprobar                  | Bloquea → `/sdd:approve <fase>`    |
+| Los tres listos y aprobados                | Permite                            |
+
+Qué significa «completo» en cada fase:
+
+| Fase  | Condiciones |
+| ----- | ----------- |
+| spec  | sin huecos de plantilla · al menos un MUST · todo MUST con criterios · sin IDs duplicados |
+| plan  | sin huecos de plantilla · menciona todos los MUST de la spec |
+| tasks | sin huecos de plantilla · al menos una tarea · ningún MUST sin tarea · sin requisitos ni dependencias inexistentes · sin ciclos |
+
+Un **hueco de plantilla** es cualquier texto en cursiva de la plantilla que
+siga sin sustituir, un `{{VARIABLE}}`, o una cursiva con `...` o `\<…\>`. Las
+notas que se pueden conservar van en blockquote, no en cursiva.
+
+### Aprobación
+
+Cada artefacto lleva `| Estado | Draft |` en la cabecera. Solo
+`/sdd:approve` lo pasa a `Approved`, y esa skill solo la puede lanzar el
+usuario (`disable-model-invocation`). El hook rechaza cualquier Write o Edit
+del modelo que haga esa transición. Las demás ediciones de un artefacto
+aprobado pasan (por ejemplo, marcar tareas `[x]` en `tasks.md`).
+
+`approve` también se niega si el artefacto no está completo o si una fase
+anterior no está aprobada. Para desactivar el requisito de aprobación:
+`{"approval": false}` en `.sdd/config.json`.
+
+Límite conocido: el hook no ve las escrituras hechas con Bash (`sed -i`,
+`cat >`). Cerrar esa vía es un paso posterior.
 
 **Escapes**, en orden de contundencia:
 
@@ -91,13 +126,23 @@ sdd.py trace --json    # contrato estable para CI (schema sdd.trace/v1)
 sdd.py trace --check   # sale con 1 si hay algún error
 ```
 
-La evidencia de prueba se detecta por el ID del requisito dentro del archivo de
-test, en el nombre de la función o en un comentario:
+La evidencia de prueba se detecta por el ID del requisito **con el prefijo de
+la feature** dentro del archivo de test, en el nombre de la función o en un
+comentario:
 
 ```python
-def test_R001_rechaza_token_expirado():
+def test_F001_R001_rechaza_token_expirado():   # R001 de specs/001-…
+    ...
+
+def test_otro_caso():
+    # F001-R002
     ...
 ```
+
+El prefijo es obligatorio porque cada feature numera sus requisitos desde
+`R001`. Sin él, la prueba de una feature cubriría en silencio el requisito
+homónimo de otra. Un `test_R001_…` sin prefijo no cuenta y genera
+`W-TEST-UNSCOPED`.
 
 Un requisito que no aparezca en ningún test cuenta como no probado, aunque
 tenga cobertura de código. Es deliberado: la cobertura mide líneas ejecutadas,
@@ -117,6 +162,8 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `E-TASK-UNKNOWN-DEP` | Tarea que depende de una tarea inexistente |
 | `E-TASK-DEP-CYCLE` | Ciclo de dependencias |
 | `E-DONE-NO-TEST` | Tarea cerrada cuyos requisitos no tienen prueba |
+| `E-SPEC-TEMPLATE` | `spec.md` conserva huecos de plantilla |
+| `E-TASK-TEMPLATE` | `tasks.md` conserva huecos de plantilla |
 | `W-REQ-NO-TASK` | Requisito SHOULD/COULD sin tarea |
 | `W-REQ-NO-EARS` | Requisito que no usa la forma EARS |
 | `W-REQ-VAGUE` | Adjetivo sin umbral verificable |
@@ -124,6 +171,7 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `W-DONE-OPEN-DEPS` | Tarea cerrada con dependencias abiertas |
 | `W-SPEC-OPEN-QUESTIONS` | Preguntas abiertas sin resolver |
 | `W-SPEC-NO-UNWANTED` | Ningún requisito `SI... ENTONCES` |
+| `W-TEST-UNSCOPED` | Prueba que cita el requisito sin prefijo de feature |
 
 Los códigos son contrato público: si construyes algo encima, no cambiarán de
 nombre sin subir la versión del schema.
@@ -167,6 +215,7 @@ Para desactivarlo: `SDD_NO_QUALITY=1`, o `{"quality": {"enabled": false}}`.
 {
   "enabled": true,
   "gate": "tasks",
+  "approval": true,
   "exempt": ["specs/**", ".sdd/**", ".claude/**", ".git/**", "*.md", ".gitignore"],
   "quality": {
     "enabled": true,
@@ -189,6 +238,7 @@ Para desactivarlo: `SDD_NO_QUALITY=1`, o `{"quality": {"enabled": false}}`.
 - **`gate`**: hasta qué fase exige antes de permitir código.
   `"spec"` es permisivo, `"tasks"` es el ciclo completo, `"off"` desactiva.
   Empieza en `"spec"` si el flujo te resulta pesado y endurécelo después.
+- **`approval`**: si exige `Estado: Approved` en cada fase. `true` por defecto.
 - **`exempt`**: rutas que la compuerta nunca bloquea. Los patrones que terminan
   en `/**` son prefijos; el resto son globs contra la ruta relativa y contra el
   nombre del archivo.
@@ -250,7 +300,7 @@ claude plugin details sdd
 ```
 
 El segundo comando muestra el coste en tokens: *always-on* (lo que el plugin
-añade a cada sesión solo por existir, unos 8 descripciones de skill) frente a
+añade a cada sesión solo por existir, unas 10 descripciones de skill) frente a
 *on-invoke*. Si el coste always-on te molesta, la vía es fusionar skills, no
 acortar sus descripciones: la descripción es el mecanismo de activación.
 

@@ -12,6 +12,9 @@ Subcomandos:
   status              Reporte legible del estado del proyecto.
   context             Linea breve para inyectar en SessionStart.
   guard               Hook PreToolUse: lee JSON por stdin, decide sobre stdout.
+  approve [fase]      Marca spec|plan|tasks como aprobado si esta listo.
+  trace [--json] [--check]   Matriz requisito -> tarea -> prueba.
+  quality             Hook PostToolUse: formateador y linter del archivo.
 """
 
 import datetime
@@ -37,6 +40,9 @@ DEFAULT_CONFIG = {
     # Fase que debe estar completa antes de permitir escribir codigo.
     # Valores: "spec" | "plan" | "tasks" | "off"
     "gate": "tasks",
+    # Si es true, cada fase exige ademas "Estado: Approved", que solo pone el
+    # usuario con /sdd:approve. El modelo no puede escribirlo.
+    "approval": True,
     # Rutas relativas a la raiz del proyecto que la compuerta nunca bloquea.
     "exempt": [
         "specs/**",
@@ -142,19 +148,119 @@ def resolve_feature(root):
     return None
 
 
-def phase_state(feature):
-    """[(archivo, skill, fase, existe?), ...] en orden."""
-    return [
-        (fname, skill, phase, (feature / fname).is_file())
-        for fname, skill, phase in PHASES
-    ]
+# --------------------------------------------------------------------------
+# Readiness: una fase cuenta solo si su artefacto esta relleno y aprobado
+# --------------------------------------------------------------------------
+
+def _trace():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import sdd_trace
+    return sdd_trace
 
 
-def next_missing(feature):
-    """Primera fase incompleta, o None si estan todas."""
-    for fname, skill, phase, ok in phase_state(feature):
-        if not ok:
-            return fname, skill, phase
+def _musts(spec):
+    return [r["id"] for r in spec["requirements"] if r["priority"] == "MUST"]
+
+
+def phase_problems(feature, phase):
+    """
+    Problemas de contenido que impiden dar la fase por lista (sin contar la
+    aprobacion). None si el artefacto no existe; [] si esta listo.
+    """
+    t = _trace()
+    fname = dict((p, f) for f, _s, p in PHASES)[phase]
+    path = feature / fname
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8", errors="replace")
+    problems = []
+
+    holes = t.find_placeholders(text, fname)
+    if holes:
+        line, sample = holes[0]
+        problems.append(f"{fname} conserva {len(holes)} hueco(s) de plantilla sin "
+                        f"rellenar (linea {line}: {sample[:70]})")
+
+    spec = t.parse_spec(feature / "spec.md")
+    musts = _musts(spec)
+
+    if phase == "spec":
+        if not musts:
+            problems.append("spec.md no declara ningun requisito MUST")
+        if spec["duplicates"]:
+            problems.append("IDs de requisito duplicados: "
+                            + ", ".join(sorted(set(spec["duplicates"]))))
+        sin = [r["id"] for r in spec["requirements"]
+               if r["priority"] == "MUST" and not r["criteria"]]
+        if sin:
+            problems.append("requisitos MUST sin criterios de aceptacion: "
+                            + ", ".join(sin))
+
+    elif phase == "plan":
+        cited = {"R" + n for n in t.REQ_ID.findall(text)}
+        missing = [rid for rid in musts if rid not in cited]
+        if missing:
+            problems.append("plan.md no menciona estos requisitos MUST: "
+                            + ", ".join(missing))
+
+    elif phase == "tasks":
+        tasks = t.parse_tasks(path)["tasks"]
+        req_ids = {r["id"] for r in spec["requirements"]}
+        task_ids = {x["id"] for x in tasks}
+        if not tasks:
+            problems.append("tasks.md no declara ninguna tarea")
+        unknown = sorted({rid for x in tasks for rid in x["requirements"]} - req_ids)
+        if unknown:
+            problems.append("tareas que citan requisitos inexistentes: "
+                            + ", ".join(unknown))
+        bad_deps = sorted({d for x in tasks for d in x["depends_on"]} - task_ids)
+        if bad_deps:
+            problems.append("dependencias a tareas inexistentes: " + ", ".join(bad_deps))
+        for cycle in t.find_cycles(tasks):
+            problems.append("ciclo de dependencias: " + " -> ".join(cycle))
+        covered = {rid for x in tasks for rid in x["requirements"]}
+        orphan = [rid for rid in musts if rid not in covered]
+        if orphan:
+            problems.append("requisitos MUST sin tarea: " + ", ".join(orphan))
+
+    return problems
+
+
+def phase_approved(feature, phase):
+    fname = dict((p, f) for f, _s, p in PHASES)[phase]
+    path = feature / fname
+    return path.is_file() and _trace().is_approved(
+        path.read_text(encoding="utf-8", errors="replace"))
+
+
+def phase_state(feature, cfg=None):
+    """
+    [(archivo, skill, fase, estado, problemas), ...] en orden.
+    estado: "missing" | "incomplete" | "draft" (falta aprobar) | "ready".
+    """
+    need_approval = (cfg or DEFAULT_CONFIG).get("approval", True)
+    out = []
+    for fname, skill, phase in PHASES:
+        problems = phase_problems(feature, phase)
+        if problems is None:
+            state = "missing"
+        elif problems:
+            state = "incomplete"
+        elif need_approval and not phase_approved(feature, phase):
+            state = "draft"
+        else:
+            state = "ready"
+        out.append((fname, skill, phase, state, problems or []))
+    return out
+
+
+def next_step(feature, cfg=None):
+    """(archivo, comando, fase, estado) de la primera fase no lista, o None."""
+    for fname, skill, phase, state, _p in phase_state(feature, cfg):
+        if state == "draft":
+            return fname, f"/sdd:approve {phase}", phase, state
+        if state != "ready":
+            return fname, skill, phase, state
     return None
 
 
@@ -283,11 +389,19 @@ def cmd_status(_args):
         return 0
 
     print(f"Activa:    {feature.name}\n")
-    for fname, skill, _phase, ok in phase_state(feature):
-        print(f"  [{'x' if ok else ' '}] {fname:<9} {'' if ok else '-> ' + skill}")
+    marks = {"missing": " ", "incomplete": "~", "draft": "a", "ready": "x"}
+    labels = {"missing": "falta", "incomplete": "incompleto",
+              "draft": "sin aprobar", "ready": "listo"}
+    for fname, skill, phase, state, problems in phase_state(feature, cfg):
+        hint = {"missing": f"-> {skill}", "incomplete": f"-> {skill}",
+                "draft": f"-> /sdd:approve {phase}", "ready": ""}[state]
+        print(f"  [{marks[state]}] {fname:<9} {labels[state]:<12} {hint}".rstrip())
+        for prob in problems:
+            print(f"        - {prob}")
 
-    nxt = next_missing(feature)
+    nxt = next_step(feature, cfg)
     print(f"\nSiguiente: {nxt[1] if nxt else 'listo para /sdd:implement'}")
+    print("Leyenda:   [x] listo · [a] sin aprobar · [~] incompleto · [ ] falta")
     return 0
 
 
@@ -302,13 +416,21 @@ def cmd_context(_args):
               "No hay ninguna feature activa, y la compuerta bloquea la escritura "
               "de codigo mientras siga asi. La skill /sdd:specify crea una.")
         return 0
-    nxt = next_missing(feature)
-    done = [f for f, _s, _p, ok in phase_state(feature) if ok]
+    cfg = load_config(root)
+    nxt = next_step(feature, cfg)
+    done = [f for f, _s, _p, st, _x in phase_state(feature, cfg) if st == "ready"]
     line = (f"[SDD] Este proyecto usa desarrollo orientado a especificaciones. "
-            f"La feature activa es {feature.name} y tiene estos artefactos: "
+            f"La feature activa es {feature.name} y tiene estos artefactos listos: "
             f"{', '.join(done) or 'ninguno'}.")
-    line += (f" La compuerta exige {nxt[0]}, que produce la skill {nxt[1]}."
-             if nxt else " Estan los tres artefactos, asi que la compuerta permite escribir codigo.")
+    if nxt and nxt[3] == "draft":
+        line += (f" {nxt[0]} esta pendiente de aprobacion por el usuario "
+                 f"({nxt[1]}); el campo Estado solo lo cambia el usuario.")
+    elif nxt and nxt[3] == "incomplete":
+        line += f" {nxt[0]} existe pero esta incompleto; lo completa la skill {nxt[1]}."
+    elif nxt:
+        line += f" La compuerta exige {nxt[0]}, que produce la skill {nxt[1]}."
+    else:
+        line += " Los tres artefactos estan listos, asi que la compuerta permite escribir codigo."
     print(line)
     return 0
 
@@ -370,7 +492,8 @@ def cmd_guard(_args):
     if not cfg.get("enabled", True) or cfg.get("gate") == "off":
         return passthrough()
 
-    raw_path = (payload.get("tool_input") or {}).get("file_path")
+    tool_input = payload.get("tool_input") or {}
+    raw_path = tool_input.get("file_path")
     if not raw_path:
         return passthrough()
 
@@ -378,10 +501,20 @@ def cmd_guard(_args):
         target = Path(raw_path)
         if not target.is_absolute():
             target = (root / target).resolve()
-        rel = target.resolve().relative_to(root)
+        target = target.resolve()
+        rel = target.relative_to(root)
     except (ValueError, OSError):
         # Fuera del proyecto: no es asunto nuestro.
         return passthrough()
+
+    if cfg.get("approval", True) and self_approval(rel, target, tool_input):
+        return deny(
+            f"Guardrail SDD: esta escritura marca {rel.as_posix()} como aprobado. "
+            "La aprobacion es del usuario, no tuya: es la unica prueba de que "
+            "alguien reviso el artefacto antes de escribir codigo.\n\n"
+            "Deja el campo Estado como esta, termina la edicion sin tocarlo, y "
+            f"pidele al usuario que lo revise y ejecute /sdd:approve."
+        )
 
     if is_exempt(rel, cfg.get("exempt", DEFAULT_CONFIG["exempt"])):
         return passthrough()
@@ -401,27 +534,125 @@ def cmd_guard(_args):
     required = [p for _f, _s, p in PHASES]
     limit = required.index(gate) if gate in required else len(required) - 1
 
-    for fname, skill, phase, ok in phase_state(feature):
+    escape = "Escape puntual: SDD_BYPASS=1, o \"gate\": \"off\" en .sdd/config.json."
+    for fname, skill, phase, state, problems in phase_state(feature, cfg):
         if required.index(phase) > limit:
             break
-        if not ok:
+        if state == "missing":
             return deny(
                 f"Guardrail SDD: la feature {feature.name} todavia no tiene {fname}, "
                 f"asi que no se puede escribir en {rel.as_posix()}.\n\n"
                 f"Detente y dile al usuario que ejecute {skill}. No crees {fname} "
                 "a mano para saltarte la compuerta: la fase existe para que el "
-                "usuario revise antes de que se escriba codigo.\n\n"
-                "Escape puntual: SDD_BYPASS=1, o \"gate\": \"off\" en .sdd/config.json."
+                "usuario revise antes de que se escriba codigo.\n\n" + escape
+            )
+        if state == "incomplete":
+            return deny(
+                f"Guardrail SDD: {fname} de la feature {feature.name} existe pero "
+                f"no esta listo, asi que no se puede escribir en {rel.as_posix()}:\n"
+                + "".join(f"  - {p}\n" for p in problems)
+                + f"\nDetente y dile al usuario que hay que completarlo con {skill}. "
+                "No rellenes huecos con suposiciones para pasar la compuerta.\n\n"
+                + escape
+            )
+        if state == "draft":
+            return deny(
+                f"Guardrail SDD: {fname} de la feature {feature.name} esta completo "
+                f"pero no aprobado, asi que no se puede escribir en {rel.as_posix()}."
+                f"\n\nDetente y pidele al usuario que lo revise y ejecute "
+                f"/sdd:approve {phase}. No cambies tu el campo Estado.\n\n" + escape
             )
 
     return passthrough()
 
 
+def self_approval(rel, target, tool_input):
+    """
+    True si la escritura pasa un artefacto de fase de no aprobado a aprobado.
+    Solo `sdd.py approve` (lanzado por el usuario) debe hacer esa transicion.
+    """
+    parts = rel.parts
+    if (len(parts) != 3 or parts[0] != "specs" or not FEATURE_RE.match(parts[1])
+            or parts[2] not in {f for f, _s, _p in PHASES}):
+        return False
+    t = _trace()
+    before = (target.read_text(encoding="utf-8", errors="replace")
+              if target.is_file() else "")
+    if "content" in tool_input:
+        after = tool_input.get("content") or ""
+    elif "new_string" in tool_input:
+        old = tool_input.get("old_string") or ""
+        if not old or old not in before:
+            return False
+        count = -1 if tool_input.get("replace_all") else 1
+        after = before.replace(old, tool_input.get("new_string") or "", count)
+    else:
+        return False
+    return t.is_approved(after) and not t.is_approved(before)
+
+
+# --------------------------------------------------------------------------
+# Subcomando: approve
+# --------------------------------------------------------------------------
+
+def cmd_approve(args):
+    root = project_root()
+    feature = resolve_feature(root)
+    if feature is None:
+        print("No hay una feature activa. Ejecuta /sdd:specify primero.",
+              file=sys.stderr)
+        return 1
+
+    order = [p for _f, _s, p in PHASES]
+    states = {p: (f, sk, st, pr) for f, sk, p, st, pr in phase_state(feature)}
+    target = args[0].strip().lower() if args else None
+    if target and target not in order:
+        print(f"error: fase desconocida '{target}'. Usa: {', '.join(order)}",
+              file=sys.stderr)
+        return 1
+    if not target:
+        target = next((p for p in order if states[p][2] != "ready"), None)
+        if target is None:
+            print(f"{feature.name}: spec, plan y tasks ya estan aprobados.")
+            return 0
+
+    for prev in order[:order.index(target)]:
+        if states[prev][2] != "ready":
+            print(f"No se puede aprobar {target}: antes hay que aprobar {prev} "
+                  f"(estado: {states[prev][2]}).", file=sys.stderr)
+            return 1
+
+    fname, skill, state, problems = states[target]
+    if state == "missing":
+        print(f"No existe {fname}. Lo produce {skill}.", file=sys.stderr)
+        return 1
+    if state == "incomplete":
+        print(f"{fname} no esta listo para aprobarse:", file=sys.stderr)
+        for prob in problems:
+            print(f"  - {prob}", file=sys.stderr)
+        return 1
+    if state == "ready":
+        print(f"{fname} ya estaba aprobado.")
+        return 0
+
+    path = feature / fname
+    text, changed = _trace().set_status(path.read_text(encoding="utf-8"), "Approved")
+    if not changed:
+        print(f"{fname} no tiene la fila '| Estado | ... |' en la cabecera. "
+              "Anadela y vuelve a aprobar.", file=sys.stderr)
+        return 1
+    path.write_text(text, encoding="utf-8")
+
+    nxt = next_step(feature)
+    print(f"{feature.name}: {fname} aprobado.")
+    print(f"Siguiente: {nxt[1] if nxt else '/sdd:implement'}")
+    return 0
+
+
 # --------------------------------------------------------------------------
 
 def cmd_trace(args):
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import sdd_trace
+    sdd_trace = _trace()
 
     root = project_root()
     feature = resolve_feature(root)
@@ -452,6 +683,7 @@ COMMANDS = {
     "status": cmd_status,
     "context": cmd_context,
     "guard": cmd_guard,
+    "approve": cmd_approve,
     "trace": cmd_trace,
     "quality": cmd_quality,
 }

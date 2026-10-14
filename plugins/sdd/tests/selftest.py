@@ -2,8 +2,9 @@
 """
 Regresion del plugin sdd. Sin dependencias externas: solo stdlib.
 
-Cubre la compuerta, sus escapes, los modos de fallo, y que los quince codigos
-de hallazgo de la trazabilidad sean alcanzables. Corre en CI y en local:
+Cubre la compuerta (existencia, readiness y aprobacion), sus escapes, los
+modos de fallo, y que todos los codigos de hallazgo de la trazabilidad sean
+alcanzables. Corre en CI y en local:
 
     python3 plugins/sdd/tests/selftest.py
 """
@@ -48,6 +49,70 @@ def bloquea(cwd, path="src/app.py", **kw):
     return bool(r.stdout.strip())
 
 
+def razon(cwd, path="src/app.py"):
+    out = run("guard", stdin=payload(path, cwd), cwd=cwd).stdout
+    return json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"] if out.strip() else ""
+
+
+def edita(cwd, path, old, new):
+    """True si el guard deniega un Edit de old -> new sobre path."""
+    stdin = json.dumps({"tool_name": "Edit", "cwd": str(cwd), "tool_input": {
+        "file_path": str(path), "old_string": old, "new_string": new}})
+    return bool(run("guard", stdin=stdin, cwd=cwd).stdout.strip())
+
+
+SPEC_LISTA = """# Spec: x
+
+| Campo  | Valor |
+| ------ | ----- |
+| Estado | Draft |
+
+## Requisitos
+
+| ID   | Prioridad | Requisito |
+| ---- | --------- | --------- |
+| R001 | MUST | CUANDO X, el sistema DEBERA Y. |
+| R002 | MUST | SI Z, ENTONCES el sistema DEBERA W. |
+
+## Criterios de aceptacion
+
+### R001
+
+- **Dado** a **cuando** b **entonces** c
+
+### R002
+
+- **Dado** d **cuando** e **entonces** f
+"""
+
+PLAN_LISTO = """# Plan: x
+
+| Campo  | Valor |
+| ------ | ----- |
+| Estado | Draft |
+
+## Componentes afectados
+
+| Componente | Cambio | Requisitos |
+| ---------- | ------ | ---------- |
+| src/app.py | nuevo  | R001, R002 |
+"""
+
+TASKS_LISTAS = """# Tasks: x
+
+| Campo  | Valor |
+| ------ | ----- |
+| Estado | Draft |
+
+### T001 — a
+
+- **Estado:** `[ ]`
+- **Requisitos:** R001, R002
+- **Depende de:** —
+- **Hecho cuando:** pasan los tests
+"""
+
+
 # ---------------------------------------------------------------- compuerta
 
 def test_compuerta(base):
@@ -65,20 +130,62 @@ def test_compuerta(base):
     feat = next((p / "specs").iterdir())
     check(feat.name == "001-autenticacion-oauth-google", "slug sin palabras vacias", feat.name)
     check((feat / "spec.md").is_file(), "spec.md creado desde plantilla")
-    check(bloquea(p), "con spec.md pero sin plan.md: bloquea")
+
+    print("\nReadiness: existir no basta")
+    check("no esta listo" in razon(p), "spec.md recien creado desde plantilla: bloquea")
+    r = run("approve", cwd=p)
+    check(r.returncode == 1 and "hueco" in r.stderr, "approve rechaza una plantilla")
+    (feat / "spec.md").write_text(SPEC_LISTA.replace(
+        "SI Z, ENTONCES el sistema DEBERA W.", "_SI Z, ENTONCES el sistema DEBERA ..._"))
+    check("hueco" in razon(p), "detecta '...' en cursiva aunque la linea no sea de la plantilla")
+    (feat / "spec.md").write_text(SPEC_LISTA.replace("### R002\n\n- **Dado** d", "### R002\n\nnada"))
+    check("sin criterios" in razon(p), "MUST sin criterios: incompleto")
+    (feat / "spec.md").write_text(SPEC_LISTA)
+    check("no aprobado" in razon(p), "spec completa sin aprobar: bloquea")
+
+    print("\nAprobacion")
+    spec_path = feat / "spec.md"
+    check(edita(p, spec_path, "| Estado | Draft |", "| Estado | Approved |"),
+          "el modelo no puede autoaprobar con Edit")
+    check(edita(p, f"specs/{feat.name}/spec.md", "| Estado | Draft |", "| Estado | Aprobado |"),
+          "tampoco en espanol ni con ruta relativa")
+    check(not edita(p, spec_path, "CUANDO X", "CUANDO X2"),
+          "editar otra parte de la spec no se bloquea")
+    check(run("approve", ["plan"], cwd=p).returncode == 1, "approve respeta el orden")
+    check(run("approve", cwd=p).returncode == 0, "approve sin argumento aprueba spec")
+    check("Approved" in spec_path.read_text(), "approve escribe Estado: Approved")
+    check("todavia no tiene plan.md" in razon(p), "spec aprobada, sin plan.md: bloquea")
 
     (feat / "plan.md").touch()
-    check(bloquea(p), "con plan.md pero sin tasks.md: bloquea")
-    (feat / "tasks.md").touch()
-    check(not bloquea(p), "con los tres artefactos: permite")
+    check("no esta listo" in razon(p), "plan.md vacio: incompleto")
+    (feat / "plan.md").write_text(PLAN_LISTO.replace("R001, R002", "R001"))
+    check("R002" in razon(p), "plan que no menciona un MUST: incompleto")
+    (feat / "plan.md").write_text(PLAN_LISTO)
+    check(run("approve", ["plan"], cwd=p).returncode == 0, "approve plan")
+    check(bloquea(p), "con plan aprobado pero sin tasks.md: bloquea")
+    (feat / "tasks.md").write_text(TASKS_LISTAS.replace("R001, R002", "R001"))
+    check("sin tarea" in razon(p), "MUST sin tarea: incompleto")
+    (feat / "tasks.md").write_text(TASKS_LISTAS)
+    check("no aprobado" in razon(p), "tasks sin aprobar: bloquea")
+    check(run("approve", ["tasks"], cwd=p).returncode == 0, "approve tasks")
+    check(not bloquea(p), "con los tres artefactos listos y aprobados: permite")
+    check(not edita(p, feat / "tasks.md", "`[ ]`", "`[x]`"),
+          "marcar tareas en tasks.md aprobado no se bloquea")
+
+    sdd_dir = p / ".sdd"
+    (sdd_dir / "config.json").write_text('{"approval": false}')
+    (feat / "tasks.md").write_text(TASKS_LISTAS)
+    check(not bloquea(p), 'approval:false no exige aprobacion')
+    check(not edita(p, feat / "tasks.md", "| Estado | Draft |", "| Estado | Approved |"),
+          "approval:false no protege el campo Estado")
+    (sdd_dir / "config.json").unlink()
 
     (feat / "tasks.md").unlink()
     check(not bloquea(p, env_extra={"SDD_BYPASS": "1"}), "SDD_BYPASS=1 desactiva")
-    sdd_dir = p / ".sdd"
     (sdd_dir / "config.json").write_text('{"gate":"off"}')
     check(not bloquea(p), 'gate:"off" desactiva')
     (sdd_dir / "config.json").write_text('{"gate":"spec"}')
-    check(not bloquea(p), 'gate:"spec" permite si spec.md existe')
+    check(not bloquea(p), 'gate:"spec" permite si spec.md esta lista y aprobada')
 
     print("\nModos de fallo: nada debe bloquear al usuario")
     (sdd_dir / "config.json").write_text("no soy json {{{")
@@ -133,6 +240,10 @@ FIXTURES = {
                                "- **Requisitos:** R001\n- **Depende de:** T001\n"),
     "E-DONE-NO-TEST": (None, "### T001 — a\n- **Estado:** `[x]`\n"
                              "- **Requisitos:** R001\n- **Depende de:** —\n"),
+    "E-SPEC-TEMPLATE": ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
+                        "| R001 | MUST | _CUANDO ..., el sistema DEBERÁ ..._ |\n", None),
+    "E-TASK-TEMPLATE": (None, "### T001 — _\\<título\\>_\n- **Estado:** `[ ]`\n"
+                              "- **Requisitos:** R001\n- **Hecho cuando:** _..._\n"),
 }
 
 SPEC_BASE = ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
@@ -182,8 +293,10 @@ def test_trazabilidad(base):
     import sdd_trace
     declarados = set(sdd_trace.FINDINGS)
     probados = set(FIXTURES) | {"E-REQ-NO-TASK", "E-REQ-NO-TEST",
-                                "E-REQ-NO-CRITERIA", "W-REQ-NO-TASK"}
-    check(declarados == probados, "los 15 codigos declarados estan cubiertos",
+                                "E-REQ-NO-CRITERIA", "W-REQ-NO-TASK",
+                                "W-TEST-UNSCOPED"}
+    check(declarados == probados,
+          f"los {len(declarados)} codigos declarados estan cubiertos",
           f"sin probar: {sorted(declarados - probados)}")
 
 
@@ -200,18 +313,41 @@ def test_deteccion_pruebas(base):
     (p / "tests").mkdir()
     # El guion bajo es caracter de palabra: \bR001\b NO casa aqui. Regresion.
     (p / "tests" / "test_a.py").write_text(
-        "def test_R001_algo():\n    pass\n", encoding="utf-8")
+        "def test_F001_R001_algo():\n    pass\n", encoding="utf-8")
     (p / "node_modules" / "x" / "tests").mkdir(parents=True)
     (p / "node_modules" / "x" / "tests" / "test_b.py").write_text(
-        "def test_R001_falso():\n    pass\n", encoding="utf-8")
+        "def test_F001_R001_falso():\n    pass\n", encoding="utf-8")
 
     d = json.loads(run("trace", ["--json"], cwd=p).stdout)
     r001 = next(r for r in d["requirements"] if r["id"] == "R001")
-    check(len(r001["tests"]) == 1, "encuentra el ID dentro de test_R001_algo")
+    check(len(r001["tests"]) == 1, "encuentra el ID dentro de test_F001_R001_algo")
     check(not any("node_modules" in t for t in r001["tests"]),
           "ignora node_modules")
     check("E-REQ-NO-TEST" not in {f["code"] for f in d["findings"]},
           "no reporta falta de prueba cuando la hay")
+
+    print("\nIDs con alcance de feature")
+    (p / "tests" / "test_c.py").write_text(
+        "def test_otro():\n    # F001-R002 en comentario\n    pass\n", encoding="utf-8")
+    d = json.loads(run("trace", ["--json"], cwd=p).stdout)
+    r002 = next(r for r in d["requirements"] if r["id"] == "R002")
+    check(r002["tests"] == ["tests/test_c.py::test_otro"], "F001-R002 en comentario cuenta")
+
+    (p / "specs" / "002-y").mkdir()
+    (p / "specs" / "002-y" / "spec.md").write_text(SPEC_BASE, encoding="utf-8")
+    (p / ".sdd" / "current").write_text("002-y\n")
+    d = json.loads(run("trace", ["--json"], cwd=p).stdout)
+    r001 = next(r for r in d["requirements"] if r["id"] == "R001")
+    check(r001["tests"] == [], "la prueba de F001_R001 no cubre el R001 de la feature 002")
+    check("E-REQ-NO-TEST" in {f["code"] for f in d["findings"]},
+          "feature 002 sigue sin prueba para su R001")
+
+    (p / "tests" / "test_d.py").write_text(
+        "def test_R001_sin_prefijo():\n    pass\n", encoding="utf-8")
+    d = json.loads(run("trace", ["--json"], cwd=p).stdout)
+    codes = {f["code"] for f in d["findings"]}
+    check("W-TEST-UNSCOPED" in codes and "E-REQ-NO-TEST" in codes,
+          "R001 sin prefijo no cuenta y avisa con W-TEST-UNSCOPED")
 
 
 def test_contrato_ci(base):
