@@ -23,13 +23,15 @@ Tarea concreta a ejecutar (opcional): `$ARGUMENTS`
    - Si no, la primera con estado `[ ]` cuyas dependencias estén todas en `[x]`.
 
 4. Para cada tarea, en este orden:
-   1. Marca la tarea como `[~]` en `tasks.md`.
+   1. Marca la tarea como `[~]` en `tasks.md`. Cambiar el estado de las tareas
+      no afecta a la aprobación; el campo `Estado` de la cabecera no se toca.
    2. Implementa **solo esa tarea**. No aproveches para arreglar otras cosas que
       veas de paso: eso rompe la trazabilidad y la revisión.
    3. Verifica contra el «hecho cuando» de la tarea y contra los criterios de
       aceptación de los requisitos que referencia. Ejecuta las pruebas si las hay.
-   4. Nombra las pruebas con el ID del requisito
-      (`test_R001_rechaza_token_expirado`). Es lo que hace verificable la
+   4. Nombra las pruebas con el ID del requisito precedido del número de
+      feature (`test_F001_R001_rechaza_token_expirado`, o un comentario
+      `# F001-R001` dentro del test). Es lo que hace verificable la
       trazabilidad; sin ello, `/sdd:trace` dará el requisito por no probado.
    5. Marca la tarea como `[x]` solo si la verificación pasó.
 

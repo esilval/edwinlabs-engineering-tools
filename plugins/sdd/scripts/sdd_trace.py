@@ -28,6 +28,8 @@ FINDINGS = {
     "E-TASK-UNKNOWN-DEP":  "Tarea que depende de una tarea inexistente",
     "E-TASK-DEP-CYCLE":    "Ciclo de dependencias entre tareas",
     "E-DONE-NO-TEST":      "Tarea cerrada cuyos requisitos no tienen prueba",
+    "E-SPEC-TEMPLATE":     "spec.md conserva marcadores de plantilla sin rellenar",
+    "E-TASK-TEMPLATE":     "tasks.md conserva marcadores de plantilla sin rellenar",
     "W-REQ-NO-TASK":       "Requisito SHOULD/COULD sin tarea",
     "W-REQ-NO-EARS":       "Requisito que no usa la forma EARS (falta DEBERA)",
     "W-REQ-VAGUE":         "Requisito con adjetivo sin umbral verificable",
@@ -35,6 +37,7 @@ FINDINGS = {
     "W-DONE-OPEN-DEPS":    "Tarea cerrada con dependencias sin cerrar",
     "W-SPEC-OPEN-QUESTIONS": "La spec tiene preguntas abiertas sin resolver",
     "W-SPEC-NO-UNWANTED":  "La spec no tiene requisitos de comportamiento no deseado",
+    "W-TEST-UNSCOPED":     "Prueba que cita el requisito sin el prefijo de la feature",
 }
 
 VAGUE = [
@@ -66,6 +69,10 @@ TEST_DECL = re.compile(
 # Sin \b: el guion bajo es caracter de palabra, asi que \bR001\b NO casa
 # dentro de test_R001_algo, que es justo la convencion que pedimos.
 REQ_ID = re.compile(r"(?<![A-Za-z0-9])R(\d{2,})(?![0-9])")
+# Referencia con alcance de feature: F002_R001 o F002-R001. Los IDs R001 se
+# reinician en cada feature, asi que solo esta forma identifica un requisito
+# de manera univoca en un repositorio con varias features.
+SCOPED_REQ_ID = re.compile(r"(?<![A-Za-z0-9])F(\d{3,})[_-]R(\d{2,})(?![0-9])")
 TASK_ID = re.compile(r"(?<![A-Za-z0-9])T(\d{2,})(?![0-9])")
 
 
@@ -99,6 +106,93 @@ def section(text, *titles):
         if capturing:
             out.append(line)
     return "\n".join(out)
+
+
+def feature_number(feature):
+    """'002-exportar-csv' -> 2. None si el nombre no empieza por numero."""
+    m = re.match(r"^(\d+)-", feature.name)
+    return int(m.group(1)) if m else None
+
+
+def scoped_ref(feature, rid):
+    """Forma canonica de citar un requisito en una prueba: F002_R001."""
+    num = feature_number(feature)
+    return f"F{num:03d}_{rid}" if num is not None else rid
+
+
+# --------------------------------------------------------------------------
+# Marcadores de plantilla y estado del documento
+# --------------------------------------------------------------------------
+
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+
+# Un texto en cursiva con guion bajo (_..._) en la plantilla es un hueco que
+# hay que sustituir. Las notas que se pueden conservar van en blockquote.
+ITALIC_EDGE = re.compile(
+    r"(?:^|[\s|*(>\[])_(?=[^\s_])|(?<=[^\s_])_(?=$|[\s|.,;:)*\]])"
+)
+INLINE_PLACEHOLDER = re.compile(
+    r"(?<![A-Za-z0-9])_[^_\n]*(?:\.\.\.|\\<)[^_\n]*_(?![A-Za-z0-9])"
+)
+TEMPLATE_VAR = re.compile(r"\{\{[A-Z_]+\}\}")
+_TEMPLATE_CACHE = {}
+
+
+def _squash(line):
+    """Normaliza espacios y relleno de tablas para comparar lineas."""
+    line = re.sub(r"\s*\|\s*", "|", line.strip())
+    return re.sub(r"\s+", " ", line)
+
+
+def template_lines(name):
+    """Lineas de la plantilla que son huecos por rellenar."""
+    if name not in _TEMPLATE_CACHE:
+        lines = set()
+        path = TEMPLATES_DIR / name
+        if path.is_file():
+            for raw in path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if line and not TEMPLATE_VAR.search(line) and ITALIC_EDGE.search(line):
+                    lines.add(_squash(line))
+        _TEMPLATE_CACHE[name] = lines
+    return _TEMPLATE_CACHE[name]
+
+
+def find_placeholders(text, template_name):
+    """[(numero_de_linea, linea)] con huecos de plantilla sin rellenar."""
+    known = template_lines(template_name)
+    out = []
+    for i, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+        if (TEMPLATE_VAR.search(line) or _squash(line) in known
+                or INLINE_PLACEHOLDER.search(line)):
+            out.append((i, line))
+    return out
+
+
+STATUS_ROW = re.compile(
+    r"^(\|\s*(?:Estado|Status)\s*\|\s*)([^|\n]*?)(\s*\|)", re.I | re.M
+)
+APPROVED = {"approved", "aprobado", "aprobada"}
+
+
+def doc_status(text):
+    """Valor del campo Estado de la cabecera, o None si no existe."""
+    m = STATUS_ROW.search(text or "")
+    return m.group(2).strip() if m else None
+
+
+def is_approved(text):
+    words = norm(doc_status(text) or "").strip("`*_ ").split()
+    return bool(words) and words[0].strip("`*_") in APPROVED
+
+
+def set_status(text, value):
+    """Devuelve (texto_nuevo, cambiado?)."""
+    new, n = STATUS_ROW.subn(lambda m: m.group(1) + value + m.group(3), text, count=1)
+    return new, bool(n)
 
 
 # --------------------------------------------------------------------------
@@ -159,6 +253,8 @@ def parse_spec(path):
     return {
         "path": path.name,
         "exists": path.is_file(),
+        "status": doc_status(text),
+        "placeholders": find_placeholders(text, "spec.md"),
         "requirements": [dict(reqs[r], criteria=criteria.get(r, 0)) for r in order],
         "duplicates": duplicates,
         "open_questions": questions,
@@ -174,7 +270,8 @@ FIELD = re.compile(r"^\s*[-*]\s*\*\*\s*(.+?)\s*:?\s*\*\*\s*(.*)$", re.M)
 
 def parse_tasks(path):
     if not path.is_file():
-        return {"path": path.name, "exists": False, "tasks": []}
+        return {"path": path.name, "exists": False, "status": None,
+                "placeholders": [], "tasks": []}
     text = path.read_text(encoding="utf-8", errors="replace")
 
     tasks, seen = [], set()
@@ -212,7 +309,8 @@ def parse_tasks(path):
             "depends_on": sorted({"T" + n for n in TASK_ID.findall(dep_field)}),
             "done_when": fields.get("hecho cuando", fields.get("done when", "")),
         })
-    return {"path": path.name, "exists": True, "tasks": tasks}
+    return {"path": path.name, "exists": True, "status": doc_status(text),
+            "placeholders": find_placeholders(text, "tasks.md"), "tasks": tasks}
 
 
 # --------------------------------------------------------------------------
@@ -227,9 +325,13 @@ def is_test_file(path):
 
 
 def scan_tests(root, extra_globs=None):
-    """Devuelve {req_id: [ "ruta::nombre", ... ]}."""
+    """
+    Devuelve (scoped, bare):
+      scoped: {(numero_feature, req_id): ["ruta::nombre", ...]}  (F002_R001)
+      bare:   {req_id: [...]}  (R001 sin prefijo: ambiguo, no cuenta)
+    """
     from fnmatch import fnmatch
-    evidence = {}
+    scoped, bare = {}, {}
     extra = extra_globs or []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
@@ -248,17 +350,23 @@ def scan_tests(root, extra_globs=None):
                 continue
             lines = content.splitlines()
             for i, line in enumerate(lines):
-                for num in REQ_ID.findall(line):
-                    rid = "R" + num
-                    label = None
-                    for j in range(i, max(-1, i - 25), -1):
-                        d = TEST_DECL.search(lines[j])
-                        if d:
-                            label = next(g for g in d.groups() if g)
-                            break
-                    ref = f"{rel.as_posix()}::{label}" if label else rel.as_posix()
-                    evidence.setdefault(rid, set()).add(ref)
-    return {k: sorted(v) for k, v in evidence.items()}
+                hits = [((int(f), "R" + r), scoped)
+                        for f, r in SCOPED_REQ_ID.findall(line)]
+                hits += [("R" + r, bare)
+                         for r in REQ_ID.findall(SCOPED_REQ_ID.sub(" ", line))]
+                if not hits:
+                    continue
+                label = None
+                for j in range(i, max(-1, i - 25), -1):
+                    d = TEST_DECL.search(lines[j])
+                    if d:
+                        label = next(g for g in d.groups() if g)
+                        break
+                ref = f"{rel.as_posix()}::{label}" if label else rel.as_posix()
+                for key, bucket in hits:
+                    bucket.setdefault(key, set()).add(ref)
+    return ({k: sorted(v) for k, v in scoped.items()},
+            {k: sorted(v) for k, v in bare.items()})
 
 
 # --------------------------------------------------------------------------
@@ -289,7 +397,8 @@ def find_cycles(tasks):
 def analyze(root, feature, config):
     spec = parse_spec(feature / "spec.md")
     tasks_doc = parse_tasks(feature / "tasks.md")
-    evidence = scan_tests(root, (config.get("tests") or {}).get("globs"))
+    scoped, bare = scan_tests(root, (config.get("tests") or {}).get("globs"))
+    fnum = feature_number(feature)
 
     reqs = spec["requirements"]
     req_ids = {r["id"] for r in reqs}
@@ -307,6 +416,13 @@ def analyze(root, feature, config):
             "message": message,
             **extra,
         })
+
+    for ph, code in ((spec["placeholders"], "E-SPEC-TEMPLATE"),
+                     (tasks_doc["placeholders"], "E-TASK-TEMPLATE")):
+        if ph:
+            line, text = ph[0]
+            add(code, f"Quedan {len(ph)} hueco(s) de plantilla sin rellenar; "
+                      f"el primero en la linea {line}: {text[:80]}", count=len(ph))
 
     for rid in spec["duplicates"]:
         add("E-REQ-DUPLICATE", f"El requisito {rid} esta declarado mas de una vez.",
@@ -339,7 +455,8 @@ def analyze(root, feature, config):
     for r in reqs:
         rid = r["id"]
         r_tasks = sorted(set(by_req_tasks.get(rid, [])))
-        r_tests = evidence.get(rid, [])
+        r_tests = scoped.get((fnum, rid), [])
+        r_unscoped = [] if r_tests else bare.get(rid, [])
         must = r["priority"] == "MUST"
         issues = []
 
@@ -352,7 +469,15 @@ def analyze(root, feature, config):
             issues.append("E-REQ-NO-TEST")
             add("E-REQ-NO-TEST",
                 f"{rid} no aparece en ninguna prueba. Nombra un test con el ID "
-                f"(por ejemplo test_{rid}_...) o menciona {rid} en un comentario.",
+                f"de la feature (por ejemplo test_{scoped_ref(feature, rid)}_...) "
+                f"o menciona {scoped_ref(feature, rid)} en un comentario.",
+                requirement=rid)
+        if r_unscoped:
+            issues.append("W-TEST-UNSCOPED")
+            add("W-TEST-UNSCOPED",
+                f"{rid} aparece sin prefijo de feature en {', '.join(r_unscoped[:3])}. "
+                f"No cuenta: R001 existe en cada feature. Si la prueba es de esta, "
+                f"renombrala a test_{scoped_ref(feature, rid)}_...",
                 requirement=rid)
         if must and not r["criteria"]:
             issues.append("E-REQ-NO-CRITERIA")
@@ -376,7 +501,7 @@ def analyze(root, feature, config):
         rows.append({
             "id": rid, "priority": r["priority"], "text": r["text"],
             "criteria": r["criteria"], "tasks": r_tasks, "tests": r_tests,
-            "issues": issues,
+            "unscoped_tests": r_unscoped, "issues": issues,
         })
 
     tests_by_req = {r["id"]: r["tests"] for r in rows}
@@ -416,6 +541,7 @@ def analyze(root, feature, config):
         "schema": "sdd.trace/v1",
         "feature": feature.name,
         "ok": not errors,
+        "status": {"spec": spec["status"], "tasks": tasks_doc["status"]},
         "counts": {
             "requirements": len(rows), "tasks": len(tasks),
             "errors": len(errors), "warnings": len(warnings),

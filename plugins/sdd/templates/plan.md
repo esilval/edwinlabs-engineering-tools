@@ -1,12 +1,16 @@
 # Plan: {{TITLE}}
 
-| Campo | Valor              |
-| ----- | ------------------ |
-| Spec  | `spec.md`          |
-| Fecha | {{DATE}}           |
+| Campo  | Valor              |
+| ------ | ------------------ |
+| Spec   | `spec.md`          |
+| Fecha  | {{DATE}}           |
+| Estado | Draft              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
+>
+> Sustituye todo texto en cursiva; si una sección no aplica, escribe
+> «No aplica.». Solo el usuario cambia el Estado, con `/sdd:approve plan`.
 
 ## Resumen
 

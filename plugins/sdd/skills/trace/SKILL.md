@@ -23,10 +23,13 @@ Muestra la salida completa al usuario. Después:
 
 ## La convención que hace que esto funcione
 
-La evidencia de prueba se detecta por el ID del requisito en el archivo de test:
-en el nombre de la función (`test_R001_rechaza_token_expirado`) o en un
-comentario dentro de ella. Si un requisito no aparece en ningún test, para el
-comprobador no está probado, aunque exista cobertura de código.
+La evidencia de prueba se detecta por el ID del requisito **con el prefijo de
+la feature** en el archivo de test: en el nombre de la función
+(`test_F001_R001_rechaza_token_expirado`) o en un comentario dentro de ella
+(`# F001-R001`). Los `R001` se reinician en cada feature, así que un
+`test_R001_…` sin prefijo es ambiguo y no cuenta (aviso `W-TEST-UNSCOPED`). Si
+un requisito no aparece en ningún test, para el comprobador no está probado,
+aunque exista cobertura de código.
 
 Cuando escribas tests durante `/sdd:implement`, nombra siempre así.
 
