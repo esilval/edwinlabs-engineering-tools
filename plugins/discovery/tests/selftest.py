@@ -640,9 +640,14 @@ PROBADOS = set()
 
 
 def con_codigo(root, code):
-    """Hallazgos de un codigo, registrando que el selftest lo prueba."""
-    PROBADOS.add(code)
-    return [f for f in comprobar(root)["findings"] if f["code"] == code]
+    """
+    Hallazgos de un codigo. Solo cuenta como probado si de verdad se emitio:
+    una prueba que afirma su ausencia no demuestra que sea alcanzable.
+    """
+    out = [f for f in comprobar(root)["findings"] if f["code"] == code]
+    if out:
+        PROBADOS.add(code)
+    return out
 
 
 def codigos(root):
@@ -832,15 +837,23 @@ def test_F001_R012_avisos():
     root = producto_ok("r012-avisos", brief=brief, backlog=backlog)
     sin_objetivo = con_codigo(root, "W-FEATURE-NO-GOAL")
     sin_resultado = con_codigo(root, "W-FEATURE-NO-OUTCOME")
-    sueltas = con_codigo(root, "W-QUESTION-OPEN")
     expect([f["item"] for f in sin_objetivo] == ["B02"], "W-FEATURE-NO-GOAL nombra B02",
            f"{sin_objetivo}")
     expect([f["item"] for f in sin_resultado] == ["B01"], "W-FEATURE-NO-OUTCOME nombra B01",
            f"{sin_resultado}")
-    expect(len(sueltas) == 1 and "1 pregunta" in sueltas[0]["message"],
-           "W-QUESTION-OPEN cuenta la pregunta que no cita objetivo")
-    expect(all(f["severity"] == "warning" for f in sin_objetivo + sin_resultado + sueltas),
-           "los tres son avisos")
+    expect(all(f["severity"] == "warning" for f in sin_objetivo + sin_resultado),
+           "los dos son avisos")
+
+
+def test_F001_R005_aviso_pregunta_sin_objetivo():
+    brief = BRIEF_OK.replace("- [x] (D1§3; G1)", "- [ ] (D1§2) ¿Algo general?\n- [x] (D1§3; G1)")
+    root = producto_ok("r005-aviso", brief=brief)
+    sueltas = con_codigo(root, "W-QUESTION-OPEN")
+    expect(len(sueltas) == 1 and "1 pregunta" in sueltas[0]["message"]
+           and sueltas[0]["severity"] == "warning",
+           "W-QUESTION-OPEN avisa de la pregunta que no cita objetivo")
+    r = run(root, "check", "--check")
+    expect(r.returncode == 0, "con avisos pero sin errores, --check sale con 0", r.stdout)
 
 
 def test_F001_R013_json_schema():
@@ -862,6 +875,9 @@ def test_F001_R013_check_exit():
     expect(run(malo, "check").returncode == 0, "sin --check el informe sale con 0")
     expect(run(malo, "check", "--check").returncode == 1, "--check sale con 1 si hay errores")
     expect(run(bueno, "check", "--check").returncode == 0, "--check sale con 0 si no los hay")
+    r = run(malo, "check", "--chek")
+    expect(r.returncode == 2 and "--chek" in r.stderr,
+           "un argumento desconocido es un error, no un exit 0 silencioso")
 
 
 # ----------------------------------------------------------------- T010
@@ -893,9 +909,11 @@ def test_F001_R014_rechaza_con_errores():
 def test_F001_R014_rechaza_pregunta_sobre_objetivo():
     root = producto_ok("r014-pregunta-approve",
                        brief=BRIEF_OK.replace("- [x] (D1§3; G1)", "- [ ] (D1§3; G1)"))
+    antes = foto(root)
     r = run(root, "approve")
     expect(r.returncode == 1 and "E-QUESTION-OPEN-GOAL" in r.stderr
-           and estado(root, "brief.md") == "Draft", "una pregunta abierta sobre G1 bloquea")
+           and "¿Diario o semanal?" in r.stderr and foto(root) == antes,
+           "una pregunta abierta sobre G1 bloquea, se nombra y no cambia nada", r.stderr)
 
 
 def test_F001_R014_aprueba_coherente():
@@ -931,7 +949,12 @@ def test_F001_R016_reformateo_no_invalida():
     p = root / "product" / "brief.md"
     p.write_text(p.read_text(encoding="utf-8").replace("\n## Usuarios", "\n\n\n## Usuarios")
                  .replace("el dueño ve", "el  dueño  ve"), encoding="utf-8")
-    expect(not con_codigo(root, "W-PRODUCT-NOT-APPROVED"), "reformatear no invalida")
+    b = root / "product" / "backlog.md"
+    b.write_text(b.read_text(encoding="utf-8").replace("\n### B02", "\n\n\n### B02")
+                 .replace("descarga sus movimientos", "descarga  sus   movimientos"),
+                 encoding="utf-8")
+    expect(not con_codigo(root, "W-PRODUCT-NOT-APPROVED"),
+           "reformatear el brief y el backlog no invalida")
 
 
 # ----------------------------------------------------------------- T011
@@ -966,6 +989,10 @@ def test_F001_R015_guard_edit():
     expect(deniega(r) is False, "editar otra parte del backlog no se bloquea")
     r = hook(root, "guard", "Write", {"file_path": "product/sources/nota.md", "content": "x"})
     expect(deniega(r) is False, "otros archivos no le interesan")
+    r = hook(root, "guard", "Write", {"file_path": "product/BACKLOG.md",
+                                      "content": BACKLOG_OK.replace("| Estado | Draft |",
+                                                                    "| Estado | Approved |")})
+    expect(deniega(r) is True, "product/BACKLOG.md en mayusculas tambien se reconoce")
 
 
 def test_F001_R015_guard_bash():
@@ -992,6 +1019,26 @@ def test_F001_R015_auditoria_restaura():
     expect(hook(root, "audit", "Bash", {}, tool_use_id="sin-foto").returncode == 0,
            "sin instantanea no opina")
 
+    # Borrar el brief y recrearlo ya aprobado, en dos comandos.
+    brief = root / "product" / "brief.md"
+    contenido = brief.read_text(encoding="utf-8")
+    hook(root, "guard", "Bash", {"command": "mv product/brief.md /tmp/x"}, tool_use_id="m1")
+    brief.unlink()
+    hook(root, "audit", "Bash", {}, tool_use_id="m1")
+    hook(root, "guard", "Bash", {"command": "python3 recrea.py"}, tool_use_id="m2")
+    brief.write_text(discovery.set_status(contenido, "Approved · 0123456789ab")[0],
+                     encoding="utf-8")
+    r = hook(root, "audit", "Bash", {}, tool_use_id="m2")
+    expect(r.returncode == 2 and estado(root, "brief.md") == "Draft",
+           "un brief borrado y recreado ya aprobado vuelve a Draft", r.stderr)
+
+    hook(root, "guard", "Bash", {"command": "python3 x.py"}, tool_use_id="b1")
+    sellado = discovery.set_status(texto, "Approved · 0123456789ab")[0]
+    backlog.write_text(sellado, encoding="utf-8")
+    r = hook(root, "audit", "Bash", {}, tool_use_id="b1", env_extra={"DISCOVERY_BYPASS": "1"})
+    expect(r.returncode == 0 and estado(root, "backlog.md").startswith("Approved"),
+           "DISCOVERY_BYPASS=1 tambien desactiva la auditoria")
+
 
 def test_F001_R015_sin_product_no_opina():
     root = proyecto("r015-sin-product")
@@ -1003,15 +1050,21 @@ def test_F001_R015_sin_product_no_opina():
     expect(deniega(r) is False, "DISCOVERY_BYPASS=1 lo desactiva")
     r = run(con, "guard", stdin="no soy json")
     expect(r.returncode == 0 and not r.stdout.strip(), "stdin roto: deja pasar")
+    r = run(con, "guard", stdin="[1]")
+    expect(r.returncode == 0 and not r.stdout.strip(), "un payload inesperado: falla abierto")
+    r = hook(root, "guard", "Write", {"file_path": "product/brief.md",
+                                      "content": "| Estado | Approved |\n"})
+    expect(deniega(r) is False, "sin product/ tampoco opina sobre Write")
     hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
     expect(any("Bash" in h["matcher"] and "Edit" in h["matcher"] for h in hooks["PreToolUse"])
            and any(h["matcher"] == "Bash" for h in hooks["PostToolUse"]),
            "hooks.json registra guard y auditoria")
 
 
-def test_zz_todos_los_codigos_se_prueban():
-    # Debe ir la ultima: compara los codigos declarados con los que las
-    # pruebas anteriores verificaron mediante con_codigo().
+def cobertura_de_codigos():
+    # main() la ejecuta despues de todas las pruebas: compara los codigos
+    # declarados con los que las pruebas vieron emitirse mediante con_codigo().
+    print("\ncobertura de codigos de hallazgo")
     declarados = set(discovery.FINDINGS)
     expect(declarados <= PROBADOS, f"los {len(declarados)} codigos declarados se prueban",
            f"sin probar: {sorted(declarados - PROBADOS)}")
@@ -1025,6 +1078,7 @@ def main():
         for nombre, fn in tests:
             print(f"\n{nombre}")
             fn()
+        cobertura_de_codigos()
     finally:
         shutil.rmtree(BASE, ignore_errors=True)
     print()

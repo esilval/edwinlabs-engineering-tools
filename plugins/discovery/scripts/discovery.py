@@ -32,6 +32,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 PRODUCT_DIR = "product"
@@ -767,8 +768,11 @@ def analyze(root):
     findings = []
 
     def add(code, message, **extra):
+        if code not in FINDINGS:
+            # Todo codigo emitido esta en el catalogo: es contrato publico.
+            raise ValueError(f"codigo de hallazgo no declarado: {code}")
         findings.append({"code": code, "severity": "error" if code.startswith("E-") else "warning",
-                         "title": FINDINGS.get(code, code), "message": message, **extra})
+                         "title": FINDINGS[code], "message": message, **extra})
 
     goals = brief["goals"]
     candidates = backlog["candidates"]
@@ -914,6 +918,12 @@ def cmd_check(args):
     Informe legible (siempre exit 0), --json (schema discovery.check/v1) o
     --check (exit 1 si hay errores): lo mismo en local y en CI.
     """
+    unknown = [a for a in args if a not in ("--json", "--check")]
+    if unknown:
+        # En CI, una errata como --chek no debe convertirse en un exit 0.
+        print(f"error: argumento desconocido {' '.join(unknown)}. "
+              "Uso: discovery.py check [--json] [--check]", file=sys.stderr)
+        return 2
     data = analyze(project_root())
     if "--json" in args:
         json.dump(data, sys.stdout, indent=2, ensure_ascii=False)
@@ -965,12 +975,14 @@ def cmd_approve(args):
     Con --skill (lo usa /discovery:approve) todo va a stdout y sale siempre con
     0: el resultado lo lee el modelo como texto, no como codigo de salida.
     """
-    ok, lines = approve(project_root())
+    try:
+        ok, lines = approve(project_root())
+    except Exception as exc:  # noqa: BLE001
+        if "--skill" not in args:
+            raise
+        ok, lines = False, [f"No se pudo aprobar: error inesperado ({exc})."]
     stream = sys.stdout if (ok or "--skill" in args) else sys.stderr
     print("\n".join(lines), file=stream)
-    if ok:
-        print("Siguiente: el handoff de candidatas a sdd (feature aparte) o seguir "
-              "ingiriendo documentos.")
     return 0 if (ok or "--skill" in args) else 1
 
 
@@ -1005,19 +1017,37 @@ def _approvable_target(root, raw_path):
             target = root / target
         target = target.resolve()
         base = product_root(root).resolve()
+        rel = target.relative_to(base)
     except (OSError, ValueError):
         return None, None
+    # Comparacion sin mayusculas: en macOS y Windows `product/BACKLOG.md` es el
+    # mismo archivo que `product/backlog.md`, y resolve() no lo normaliza.
     for name in APPROVABLE:
-        if target == base / name:
-            return name, target
+        if rel.as_posix().casefold() == name.casefold():
+            return name, base / name
     return None, None
 
 
+SNAPSHOT_TTL = 24 * 3600
+
+
 def _snapshot_path(root, payload):
-    import tempfile
     key = payload.get("tool_use_id") or payload.get("session_id") or "nosession"
     digest = hashlib.sha1(f"{root}|{key}".encode("utf-8")).hexdigest()[:20]
     return Path(tempfile.gettempdir()) / "discovery-audit" / f"{digest}.json"
+
+
+def _prune(directory):
+    """Si un comando falla o se rechaza, PostToolUse no llega y la instantanea
+    queda huerfana. Se barren las de mas de un dia."""
+    import time
+    limit = time.time() - SNAPSHOT_TTL
+    try:
+        for old in directory.glob("*.json"):
+            if old.stat().st_mtime < limit:
+                old.unlink()
+    except OSError:
+        pass
 
 
 def _statuses(root):
@@ -1053,7 +1083,8 @@ def cmd_guard(_args):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(_statuses(root)), encoding="utf-8")
         except OSError:
-            pass
+            return 0
+        _prune(path.parent)
         return 0
 
     name, target = _approvable_target(root, tool_input.get("file_path") or "")
@@ -1095,7 +1126,10 @@ def cmd_audit(_args):
     if os.environ.get("DISCOVERY_BYPASS") == "1":
         return 0
     restored = []
-    for name, old in before.items():
+    # Se recorren los dos artefactos, no solo los que existian antes: un
+    # archivo borrado y recreado ya aprobado tambien vuelve a Draft.
+    for name in APPROVABLE:
+        old = before.get(name)
         text = read_product(root, name)
         if text is not None and claims_approval(text) and doc_status(text) != old:
             write_product(root, name, set_status(text, old or "Draft")[0])
