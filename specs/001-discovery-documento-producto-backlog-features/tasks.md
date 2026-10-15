@@ -59,7 +59,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T005 — Skill ingest
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R003, R004
 - **Depende de:** T004
 - **Archivos:** `plugins/discovery/skills/ingest/SKILL.md`
@@ -75,7 +75,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T007 — Preguntas abiertas
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R009
 - **Depende de:** T003, T006
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`
@@ -83,7 +83,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T008 — `check`: errores
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R008, R010, R011, R014
 - **Depende de:** T007
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`

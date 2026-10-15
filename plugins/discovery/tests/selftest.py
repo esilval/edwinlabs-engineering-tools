@@ -406,7 +406,7 @@ BRIEF_OK = """# Brief del producto
 
 ### G1 — Que el comercio sepa cuánto vende
 
-- **Origen:** D1§1, D1§3
+- **Origen:** D1§1, D1§2, D1§3
 - **Descripción:** el dueño ve sus ventas del día sin calcularlas.
 
 ### G2 — Que el comercio use sus datos fuera
@@ -495,8 +495,8 @@ def producto_ok(nombre, brief=BRIEF_OK, backlog=BACKLOG_OK):
 def test_F001_R006_lee_objetivos():
     b = discovery.parse_brief(BRIEF_OK)
     expect([g["id"] for g in b["goals"]] == ["G1", "G2"], "lee G1 y G2")
-    expect(discovery.refs(b["goals"][0]["fields"].get("origen"))["sections"] == ["D1§1", "D1§3"],
-           "cada objetivo cita su origen")
+    expect(discovery.refs(b["goals"][0]["fields"].get("origen"))["sections"]
+           == ["D1§1", "D1§2", "D1§3"], "cada objetivo cita su origen")
     expect(len(b["questions"]) == 1 and not b["questions"][0]["open"]
            and b["questions"][0]["refs"]["goals"] == ["G1"], "lee la pregunta respondida y sus citas")
     root = producto_ok("r006-next-id")
@@ -579,7 +579,7 @@ def preguntas(root):
 BRIEF_CON_PREGUNTAS = BRIEF_OK.replace("""- [x] (D1§3; G1) ¿Diario o semanal?
   - **Respuesta:** diario.
 """, """- [ ] (D1§1; G1) ¿Qué cuenta como venta?
-- [ ] (D1§9; G7) ¿Pregunta con citas rotas?
+- [ ] (D1§9; G7; D9§1) ¿Pregunta con citas rotas?
 - [ ] ¿Pregunta sin origen?
 - [x] (D1§3; G1) ¿Diario o semanal?
   - **Respuesta:** diario, al cerrar la caja,
@@ -594,8 +594,9 @@ def test_F001_R005_lista_abiertas():
     expect(len(q) == 4 and len(abiertas) == 3, "lista 3 abiertas y 1 respondida", f"{q}")
     expect(abiertas[0]["issues"] == [], "una pregunta bien citada no tiene problemas")
     rotas = abiertas[1]["issues"]
-    expect(any("D1§9" in i for i in rotas) and any("G7" in i for i in rotas),
-           "señala la seccion y el objetivo inexistentes", f"{rotas}")
+    expect(any("D1§9" in i for i in rotas) and any("G7" in i for i in rotas)
+           and any("no existe D9" in i for i in rotas),
+           "señala la seccion, el objetivo y el documento inexistentes", f"{rotas}")
     expect(any("sección de origen" in i for i in abiertas[2]["issues"]),
            "señala una pregunta sin seccion de origen")
     texto = run(root, "questions").stdout
@@ -610,6 +611,10 @@ def test_F001_R005_respondida_no_cuenta():
     multilinea = discovery.parse_brief(BRIEF_CON_PREGUNTAS)["questions"][-1]
     expect(multilinea["answer"] == "diario, al cerrar la caja, salvo los domingos.",
            "una respuesta de varias lineas se lee entera", multilinea["answer"])
+    vacia = discovery.parse_brief("## Preguntas\n\n- [x] (D1§1) ¿Algo?\n  - **Respuesta:**\n"
+                                  "    en la linea siguiente.\n")["questions"][0]
+    expect(vacia["answer"] == "en la linea siguiente.",
+           "una respuesta que empieza en la linea siguiente se lee", vacia["answer"])
     vacio = proyecto("r005-sin-brief")
     expect("No hay brief.md" in run(vacio, "questions").stdout, "sin brief lo dice")
 
@@ -623,6 +628,132 @@ def test_F001_R009_pregunta_cita_dos_documentos():
     q = [x for x in preguntas(root) if x["open"]]
     expect(len(q) == 1 and q[0]["refs"]["sections"] == ["D1§2", "D2§1"] and q[0]["issues"] == [],
            "una contradiccion cita las dos secciones y ambas son validas", f"{q}")
+
+
+# ----------------------------------------------------------------- T008
+
+def comprobar(root):
+    return discovery.analyze(root)
+
+
+def codigos(root):
+    return {f["code"] for f in comprobar(root)["findings"]}
+
+
+def test_F001_R011_producto_coherente_sin_errores():
+    root = producto_ok("r011-coherente")
+    d = comprobar(root)
+    errores = [f for f in d["findings"] if f["severity"] == "error"]
+    expect(d["ok"] and not errores, "un producto coherente no da errores", f"{errores}")
+    texto = run(root, "check").stdout
+    expect("OK: sin errores" in texto, "la salida legible lo dice", texto)
+
+
+def test_F001_R011_objetivo_sin_candidata():
+    brief = BRIEF_OK.replace("## Usuarios", "### G3 — Objetivo huérfano\n\n- **Origen:** D1§4\n\n"
+                             "## Usuarios")
+    root = producto_ok("r011-goal", brief=brief)
+    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-GOAL-NO-FEATURE"]
+    expect(len(f) == 1 and "G3" in f[0]["message"], "E-GOAL-NO-FEATURE nombra G3", f"{f}")
+    solo_descartada = BACKLOG_OK.replace("- **Objetivos:** G2\n- **Origen:** D1§4\n- **Problema:** "
+                                         "el dueño copia", "- **Objetivos:** G1\n- **Origen:** "
+                                         "D1§4\n- **Problema:** el dueño copia")
+    root2 = producto_ok("r011-goal-descartada", backlog=solo_descartada)
+    expect("E-GOAL-NO-FEATURE" in codigos(root2),
+           "un objetivo que solo persigue una candidata descartada cuenta como huerfano")
+
+
+def test_F001_R011_seccion_sin_cubrir():
+    brief = BRIEF_OK.replace("D1§1, D1§2, D1§3", "D1§1, D1§3")
+    root = producto_ok("r011-uncovered", brief=brief)
+    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-SOURCE-UNCOVERED"]
+    expect(len(f) == 1 and f[0]["section"] == "D1§2", "E-SOURCE-UNCOVERED nombra D1§2", f"{f}")
+    descartada = brief.replace("- Ninguna.\n\n## Preguntas", "- D1§2 — los usuarios ya se "
+                               "describen en el brief\n\n## Preguntas")
+    discovery.write_product(root, "brief.md", descartada)
+    expect("E-SOURCE-UNCOVERED" not in codigos(root), "un descarte explicito la cubre")
+
+
+def test_F001_R011_referencia_inexistente():
+    backlog = BACKLOG_OK.replace("- **Objetivos:** G1\n", "- **Objetivos:** G1, G9\n", 1)
+    backlog = backlog.replace("- **Origen:** D1§1, D1§3\n", "- **Origen:** D1§1, D1§3, D4§1\n", 1)
+    backlog = backlog.replace("- **Depende de:** B01", "- **Depende de:** B01, B42")
+    root = producto_ok("r011-refs", backlog=backlog)
+    msgs = [x["message"] for x in comprobar(root)["findings"] if x["code"] == "E-REF-UNKNOWN"]
+    expect(any("G9" in m for m in msgs) and any("D4§1" in m for m in msgs)
+           and any("B42" in m for m in msgs), "un error por cada cita rota", f"{msgs}")
+
+
+def test_F001_R011_dependencia_circular():
+    backlog = BACKLOG_OK.replace("### B01 — Resumen diario de ventas\n\n- **Estado:** candidata\n"
+                                 "- **Objetivos:** G1\n- **Origen:** D1§1, D1§3\n",
+                                 "### B01 — Resumen diario de ventas\n\n- **Estado:** candidata\n"
+                                 "- **Objetivos:** G1\n- **Origen:** D1§1, D1§3\n", 1)
+    backlog = backlog.replace("- **Fuera:** comparativas entre días.\n- **Depende de:** —",
+                              "- **Fuera:** comparativas entre días.\n- **Depende de:** B02")
+    root = producto_ok("r011-ciclo", backlog=backlog)
+    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-BACKLOG-DEP-CYCLE"]
+    expect(f and "B01" in f[0]["message"] and "B02" in f[0]["message"],
+           "E-BACKLOG-DEP-CYCLE nombra B01 y B02", f"{f}")
+
+
+def test_F001_R011_documento_modificado():
+    root = producto_ok("r011-modificado")
+    p = next((root / "product" / "sources").glob("D1-*.md"))
+    p.write_text(p.read_text(encoding="utf-8").replace("Un resumen diario", "Un resumen semanal"),
+                 encoding="utf-8")
+    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-SOURCE-MODIFIED"]
+    expect(len(f) == 1 and f[0]["document"] == "D1", "E-SOURCE-MODIFIED nombra D1", f"{f}")
+
+
+def test_F001_R008_hueco_en_ids():
+    backlog = BACKLOG_OK.replace("### B02 — Exportar movimientos", "### B04 — Exportar movimientos")
+    backlog = backlog.replace("- **Depende de:** B02", "- **Depende de:** B04")
+    root = producto_ok("r008-hueco", backlog=backlog)
+    msgs = [x["message"] for x in comprobar(root)["findings"] if x["code"] == "E-BACKLOG-ID-GAP"]
+    expect(any("B02" in m for m in msgs), "E-BACKLOG-ID-GAP señala que falta B02", f"{msgs}")
+    repetido = BACKLOG_OK.replace("### B03 —", "### B02 —")
+    discovery.write_product(root, "backlog.md", repetido)
+    msgs = [x["message"] for x in comprobar(root)["findings"] if x["code"] == "E-BACKLOG-ID-GAP"]
+    expect(any("repetid" in m and "B2" in m.replace("B02", "B2") for m in msgs),
+           "y un ID repetido", f"{msgs}")
+
+
+def test_F001_R010_candidata_redactada_como_requisito():
+    backlog = BACKLOG_OK.replace("el dueño ve el total del día al cerrar.",
+                                 "el sistema DEBERÁ mostrar el total del día.")
+    root = producto_ok("r010-requisito", backlog=backlog)
+    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-BACKLOG-REQUIREMENT"]
+    expect(len(f) == 1 and f[0]["item"] == "B01", "E-BACKLOG-REQUIREMENT nombra B01", f"{f}")
+
+
+def test_F001_R010_comandos_no_tocan_specs():
+    root = producto_ok("r010-specs")
+    (root / "specs").mkdir()
+    (root / "specs" / "constitution.md").write_text("# C\n", encoding="utf-8")
+    antes = sorted((p.name, p.read_bytes()) for p in (root / "specs").rglob("*") if p.is_file())
+    ingerir(root, "otro.md", "# Otro\n\n## Algo\n")
+    for args in (("questions",), ("check",), ("next-id", "B"), ("next-id", "G")):
+        run(root, *args)
+    despues = sorted((p.name, p.read_bytes()) for p in (root / "specs").rglob("*") if p.is_file())
+    expect(antes == despues, "ingest, questions, check y next-id no tocan specs/")
+
+
+def test_F001_R014_pregunta_abierta_sobre_objetivo():
+    root = producto_ok("r014-pregunta", brief=BRIEF_OK.replace("- [x] (D1§3; G1)", "- [ ] (D1§3; G1)"))
+    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-QUESTION-OPEN-GOAL"]
+    expect(len(f) == 1 and "G1" in f[0]["message"], "E-QUESTION-OPEN-GOAL nombra G1", f"{f}")
+
+
+def test_F001_R014_huecos_de_plantilla():
+    plantilla = (PLUGIN / "templates" / "backlog.md").read_text(encoding="utf-8")
+    root = producto_ok("r014-plantilla", backlog=plantilla)
+    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-PRODUCT-TEMPLATE"]
+    expect(len(f) == 1 and f[0]["file"] == "backlog.md", "E-PRODUCT-TEMPLATE en backlog.md", f"{f}")
+    plantilla_brief = (PLUGIN / "templates" / "brief.md").read_text(encoding="utf-8")
+    discovery.write_product(root, "brief.md", plantilla_brief)
+    expect(any(x["file"] == "brief.md" for x in comprobar(root)["findings"]
+               if x["code"] == "E-PRODUCT-TEMPLATE"), "y en brief.md")
 
 
 # --------------------------------------------------------------------------

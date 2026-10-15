@@ -15,6 +15,7 @@ Subcomandos:
                       secciones numeradas para citarlas (D2§4.2).
   next-id G|B         Siguiente objetivo (G4) o candidata (B07) libre.
   questions [--json]  Preguntas del brief: abiertas, respondidas y citas rotas.
+  check               Coherencia del producto: citas, cobertura, numeracion.
 """
 
 import datetime
@@ -522,19 +523,24 @@ def parse_items(text, prefix):
 
 def parse_brief(text):
     goals = parse_items(section(text, "objetivos", "goals"), "G")
-    questions = []
+    questions, in_answer = [], False
     for line in section(text, "preguntas", "questions").splitlines():
         m = QUESTION.match(line)
         if m:
             questions.append({"open": m.group(1) == " ", "text": m.group(2).strip(),
                               "refs": refs(m.group(2)), "answer": ""})
+            in_answer = False
             continue
         answer = ITEM_FIELD.match(line)
         if answer and questions and norm(answer.group(1)) in ("respuesta", "answer"):
             questions[-1]["answer"] = answer.group(2).strip()
-        elif questions and questions[-1]["answer"] and line.startswith("    ") and line.strip():
-            # Continuacion sangrada de una respuesta de varias lineas.
-            questions[-1]["answer"] += " " + line.strip()
+            in_answer = True
+        elif in_answer and line.startswith("    ") and line.strip():
+            # Continuacion sangrada de la respuesta, tambien si la linea
+            # `**Respuesta:**` iba vacia.
+            questions[-1]["answer"] = (questions[-1]["answer"] + " " + line.strip()).strip()
+        elif line.strip():
+            in_answer = False
     discarded = refs(section(text, "secciones descartadas", "descartes"))["sections"]
     return {"goals": goals, "questions": questions, "discarded": discarded}
 
@@ -642,11 +648,214 @@ def cmd_questions(args):
 
 
 # --------------------------------------------------------------------------
+# Comprobacion de coherencia
+# --------------------------------------------------------------------------
+
+# Catalogo de hallazgos. Es contrato publico (schema discovery.check/v1): no
+# renombrar codigos existentes; anadir es aditivo.
+FINDINGS = {
+    "E-GOAL-NO-FEATURE": "Objetivo sin ninguna candidata que lo persiga",
+    "E-SOURCE-UNCOVERED": "Sección de documento sin objetivo, candidata ni descarte",
+    "E-REF-UNKNOWN": "Cita a un documento, sección, objetivo o candidata inexistentes",
+    "E-BACKLOG-DEP-CYCLE": "Dependencias circulares entre candidatas",
+    "E-SOURCE-MODIFIED": "Documento editado después de ingerirse",
+    "E-BACKLOG-ID-GAP": "Numeración rota: hueco o ID repetido en documentos, objetivos o candidatas",
+    "E-BACKLOG-REQUIREMENT": "Objetivo o candidata redactado como requisito",
+    "E-QUESTION-OPEN-GOAL": "Pregunta abierta que afecta a un objetivo",
+    "E-PRODUCT-TEMPLATE": "Brief o backlog con huecos de plantilla sin rellenar",
+}
+
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+ITALIC_EDGE = re.compile(r"(?:^|[\s|*(>\[])_(?=[^\s_])|(?<=[^\s_])_(?=$|[\s|.,;:)*\]])")
+INLINE_PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9])_[^_\n]*(?:\.\.\.|\\<)[^_\n]*_(?![A-Za-z0-9])")
+REQUIREMENT_WORDS = re.compile(r"\b(?:debera|deberan|shall)\b")
+
+
+def template_lines(name):
+    """Lineas de la plantilla que son huecos por rellenar (texto en cursiva)."""
+    path = TEMPLATES_DIR / name
+    if not path.is_file():
+        return set()
+    return {_squash(line) for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and ITALIC_EDGE.search(line.strip())}
+
+
+def find_placeholders(text, template_name):
+    known = template_lines(template_name)
+    return [(i, raw.strip()) for i, raw in enumerate((text or "").splitlines(), 1)
+            if raw.strip() and (_squash(raw) in known or INLINE_PLACEHOLDER.search(raw))]
+
+
+def _related(a, b):
+    """True si la seccion a es b, la contiene o esta contenida en ella."""
+    return a == b or a.startswith(b + ".") or b.startswith(a + ".")
+
+
+def _cycles(graph):
+    state, found = {}, []
+
+    def visit(node, path):
+        if state.get(node) == "done":
+            return
+        if state.get(node) == "open":
+            found.append(path[path.index(node):] + [node])
+            return
+        state[node] = "open"
+        for nxt in graph.get(node, []):
+            visit(nxt, path + [nxt])
+        state[node] = "done"
+
+    for node in sorted(graph):
+        visit(node, [node])
+    return found
+
+
+def _id_gaps(ids, label):
+    """Mensajes por huecos o repetidos en una serie de IDs ('G', 'B', 'D')."""
+    nums = [int(i[1:]) for i in ids]
+    out = []
+    repeated = sorted({n for n in nums if nums.count(n) > 1})
+    if repeated:
+        out.append(f"{label} repetidos: " + ", ".join(f"{ids[0][0]}{n}" for n in repeated))
+    missing = sorted(set(range(1, max(nums, default=0) + 1)) - set(nums))
+    if missing:
+        width = 2 if ids and ids[0].startswith("B") else 1
+        out.append(f"faltan {label}: " + ", ".join(f"{ids[0][0]}{n:0{width}d}" for n in missing)
+                   + ". Un elemento se descarta, no se borra.")
+    return out
+
+
+def analyze(root):
+    product = load_product(root)
+    docs, brief, backlog = product["documents"], product["brief"], product["backlog"]
+    findings = []
+
+    def add(code, message, **extra):
+        findings.append({"code": code, "severity": "error" if code.startswith("E-") else "warning",
+                         "title": FINDINGS.get(code, code), "message": message, **extra})
+
+    goals = brief["goals"]
+    candidates = backlog["candidates"]
+    live = [c for c in candidates if c["state"] != "descartada"]
+
+    # E-SOURCE-MODIFIED
+    for did, d in docs.items():
+        stored = d["fields"].get("Huella")
+        if stored and stored != text_digest(source_content(d["text"])):
+            add("E-SOURCE-MODIFIED", f"{did} se editó después de ingerirlo. Los documentos no se "
+                "editan: restaura el archivo y trae el cambio como documento nuevo.", document=did)
+
+    # E-REF-UNKNOWN: origen de objetivos y candidatas, objetivos, dependencias, preguntas
+    def check_refs(where, text):
+        for broken in broken_refs(product, refs(text)):
+            add("E-REF-UNKNOWN", f"{where} cita {broken}.")
+
+    for g in goals:
+        check_refs(f"{g['id']} (Origen)", g["fields"].get("origen", ""))
+    for c in candidates:
+        for field in ("objetivos", "origen", "depende de"):
+            check_refs(f"{c['id']} ({field.capitalize()})", c["fields"].get(field, ""))
+    for q in brief["questions"]:
+        check_refs(f"La pregunta «{q['text'][:60]}»", q["text"])
+    check_refs("Secciones descartadas", " ".join(brief["discarded"]))
+
+    # E-GOAL-NO-FEATURE
+    pursued = {g for c in live for g in refs(c["fields"].get("objetivos", ""))["goals"]}
+    for g in goals:
+        if g["id"] not in pursued:
+            add("E-GOAL-NO-FEATURE", f"{g['id']} ({g['title']}) no lo persigue ninguna candidata "
+                "viva.", goal=g["id"])
+
+    # E-SOURCE-UNCOVERED
+    cited = set(brief["discarded"])
+    for g in goals:
+        cited |= set(refs(g["fields"].get("origen", ""))["sections"])
+    for c in live:
+        cited |= set(refs(c["fields"].get("origen", ""))["sections"])
+    if product["brief_text"] is not None or product["backlog_text"] is not None:
+        for did, d in docs.items():
+            for sec in d["sections"]:
+                ref = f"{did}§{sec}"
+                if not any(c.split("§")[0] == did and _related(sec, c.split("§")[1])
+                           for c in cited):
+                    add("E-SOURCE-UNCOVERED", f"{ref} no lo cita ningún objetivo ni candidata y "
+                        "no está descartada.", section=ref)
+
+    # E-BACKLOG-DEP-CYCLE
+    graph = {c["id"]: refs(c["fields"].get("depende de", ""))["candidates"] for c in candidates}
+    for cycle in _cycles(graph):
+        add("E-BACKLOG-DEP-CYCLE", "Dependencias circulares: " + " -> ".join(cycle))
+
+    # E-BACKLOG-ID-GAP
+    for ids, label in ((list(docs), "documentos"), ([g["id"] for g in goals], "objetivos"),
+                       ([c["id"] for c in candidates], "candidatas")):
+        for message in _id_gaps(ids, label):
+            add("E-BACKLOG-ID-GAP", message[0].upper() + message[1:])
+
+    # E-BACKLOG-REQUIREMENT
+    for item in goals + candidates:
+        body = norm(item["title"] + " " + " ".join(item["fields"].values()))
+        if REQUIREMENT_WORDS.search(body):
+            add("E-BACKLOG-REQUIREMENT", f"{item['id']} está redactado como requisito "
+                "(«DEBERÁ»). Aquí va problema y resultado; los requisitos los escribe "
+                "/sdd:specify.", item=item["id"])
+
+    # E-QUESTION-OPEN-GOAL
+    for q in brief["questions"]:
+        if q["open"] and q["refs"]["goals"]:
+            add("E-QUESTION-OPEN-GOAL", f"Pregunta abierta sobre {', '.join(q['refs']['goals'])}: "
+                f"{q['text'][:100]}. Ciérrala con /discovery:clarify.")
+
+    # E-PRODUCT-TEMPLATE
+    for name, text in ((BRIEF, product["brief_text"]), (BACKLOG, product["backlog_text"])):
+        holes = find_placeholders(text, name)
+        if holes:
+            line, sample = holes[0]
+            add("E-PRODUCT-TEMPLATE", f"{name} conserva {len(holes)} hueco(s) de plantilla; el "
+                f"primero en la línea {line}: {sample[:70]}", file=name)
+
+    errors = [f for f in findings if f["severity"] == "error"]
+    return {
+        "schema": "discovery.check/v1",
+        "ok": not errors,
+        "counts": {"documents": len(docs), "goals": len(goals), "candidates": len(candidates),
+                   "questions_open": sum(1 for q in brief["questions"] if q["open"]),
+                   "errors": len(errors), "warnings": len(findings) - len(errors)},
+        "documents": {did: {"sections": d["sections"], "original": d["fields"].get("Original")}
+                      for did, d in docs.items()},
+        "goals": [g["id"] for g in goals],
+        "candidates": [{"id": c["id"], "state": c["state"]} for c in candidates],
+        "questions": [{"text": q["text"], "open": q["open"]} for q in brief["questions"]],
+        "findings": findings,
+    }
+
+
+def report(data):
+    c = data["counts"]
+    out = [f"Producto: {c['documents']} documento(s), {c['goals']} objetivo(s), "
+           f"{c['candidates']} candidata(s), {c['questions_open']} pregunta(s) abierta(s)"]
+    for sev, label in (("error", "ERRORES"), ("warning", "AVISOS")):
+        items = [f for f in data["findings"] if f["severity"] == sev]
+        if items:
+            out.append(f"\n  {label} ({len(items)})")
+            out += [f"    [{f['code']}] {f['message']}" for f in items]
+    out.append("\n  OK: sin errores." if data["ok"] else f"\n  FALLA: {c['errors']} error(es).")
+    return "\n".join(out)
+
+
+def cmd_check(args):
+    data = analyze(project_root())
+    print(report(data))
+    return 0
+
+
+# --------------------------------------------------------------------------
 
 COMMANDS = {
     "ingest": cmd_ingest,
     "next-id": cmd_next_id,
     "questions": cmd_questions,
+    "check": cmd_check,
 }
 
 
