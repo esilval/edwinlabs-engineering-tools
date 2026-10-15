@@ -682,7 +682,7 @@ def analyze(root, feature, config):
             issues.append("W-TEST-UNSCOPED")
             add("W-TEST-UNSCOPED",
                 f"{rid} aparece sin prefijo de feature en {', '.join(r_unscoped[:3])}. "
-                f"No cuenta: R001 existe en cada feature. Si la prueba es de esta, "
+                f"No cuenta: {rid} existe en cada feature. Si la prueba es de esta, "
                 f"renombrala a test_{scoped_ref(feature, rid)}_...",
                 requirement=rid)
         if must and not r["criteria"]:

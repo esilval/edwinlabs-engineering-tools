@@ -646,6 +646,40 @@ def test_bash(base):
     check(audita(p, "t6").returncode == 0, 'gate:"off": no audita')
 
 
+# ------------------------------------------- feature 002: arreglos de sdd
+
+def expect(ok, nombre, detalle=""):
+    """Como check; con este nombre la trazabilidad lo reconoce como asercion."""
+    return check(ok, nombre, detalle)
+
+
+def repo_con_feature(base, nombre, spec=SPEC_BASE, archivos=None):
+    """Repo de prueba con la feature 001-x activa y los archivos dados."""
+    p = base / nombre
+    (p / "specs" / "001-x").mkdir(parents=True)
+    (p / ".sdd").mkdir()
+    (p / ".sdd" / "current").write_text("001-x\n")
+    (p / "specs" / "001-x" / "spec.md").write_text(spec, encoding="utf-8")
+    for rel, texto in (archivos or {}).items():
+        (p / rel).parent.mkdir(parents=True, exist_ok=True)
+        (p / rel).write_text(texto, encoding="utf-8")
+    return p
+
+
+def traza(cwd):
+    return json.loads(run("trace", ["--json"], cwd=cwd).stdout)
+
+
+def test_F002_R003_aviso_nombra_el_requisito(base):
+    print("\nF002 · R003: el aviso sin prefijo nombra el requisito real")
+    spec = SPEC_BASE.replace("| R002 | SHOULD |", "| R004 | MUST |")
+    p = repo_con_feature(base, "f002-r003", spec=spec, archivos={
+        "tests/test_x.py": "def test_R004_x():\n    assert True\n"})
+    avisos = [f["message"] for f in traza(p)["findings"] if f["code"] == "W-TEST-UNSCOPED"]
+    expect(len(avisos) == 1 and "No cuenta: R004 existe" in avisos[0]
+           and "R001 existe" not in avisos[0], "el aviso nombra R004, no R001", f"{avisos}")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -655,6 +689,7 @@ def main():
         test_contrato_ci(base)
         test_degenerados(base)
         test_bash(base)
+        test_F002_R003_aviso_nombra_el_requisito(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
