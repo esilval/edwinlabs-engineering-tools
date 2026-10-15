@@ -23,5 +23,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: La compuerta y la trazabilidad funcionan
-        run: python3 plugins/sdd/tests/selftest.py
+      - name: El selftest de cada plugin pasa
+        run: |
+          set -e
+          for t in plugins/*/tests/selftest.py; do
+            echo "::group::$t"
+            python3 "$t"
+            echo "::endgroup::"
+          done

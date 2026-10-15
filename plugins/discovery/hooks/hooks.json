@@ -1,0 +1,33 @@
+{
+  "description": "Protege la aprobacion del producto: solo el usuario la concede",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/discovery.py", "guard"],
+            "timeout": 10,
+            "statusMessage": "Comprobando la aprobacion del producto"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/discovery.py", "audit"],
+            "timeout": 10,
+            "statusMessage": "Auditando la aprobacion del producto"
+          }
+        ]
+      }
+    ]
+  }
+}

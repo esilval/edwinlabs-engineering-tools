@@ -294,8 +294,9 @@ debería ser una lista legible por máquina. `sdd.py trace` ya cubre buena parte
 
 ## 7. Reserva de códigos de hallazgo
 
-Los códigos de `sdd_trace.py` son contrato público. Para que las fases futuras
-no colisionen, este es el reparto de prefijos:
+Los códigos de `sdd_trace.py` y de los demás plugins de la serie son contrato
+público. Para que no colisionen, este es el reparto de prefijos, común a todos
+los plugins del marketplace:
 
 | Prefijo | Dominio | Estado |
 | ------- | ------- | ------ |
@@ -310,6 +311,13 @@ no colisionen, este es el reparto de prefijos:
 | `*-DEP-*` | dependencias y ADRs | fase 5 |
 | `*-TDD-*` | orden rojo-verde | fase 6 |
 | `*-SEC-*` | secretos y cumplimiento | fases 1 y 6+ |
+| `*-GOAL-*` | objetivos del brief (plugin `discovery`) | en uso |
+| `*-SOURCE-*` | documentos de producto (plugin `discovery`) | en uso |
+| `*-REF-*` | citas entre artefactos de producto (plugin `discovery`) | en uso |
+| `*-BACKLOG-*` | backlog de candidatas (plugin `discovery`) | en uso |
+| `*-FEATURE-*` | candidatas individuales (plugin `discovery`) | en uso |
+| `*-QUESTION-*` | preguntas del brief (plugin `discovery`) | en uso |
+| `*-PRODUCT-*` | el producto en conjunto (plugin `discovery`) | en uso |
 
 **Política de compatibilidad del schema `sdd.trace/v1`:** añadir códigos nuevos
 es aditivo y no rompe a un consumidor que filtre por `severity`. Renombrar o
