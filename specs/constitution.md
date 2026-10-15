@@ -79,7 +79,7 @@ que alguien se acuerde, y eso hay que saberlo.
 | Sintaxis compatible con Python 3.8 | mecánica | `scripts/validate.py --strict` compila todo `.py` en CI con 3.8 | cumple |
 | Estructura de marketplace, plugins, skills, agentes y hooks | mecánica | `scripts/validate.py --strict` en CI | cumple |
 | Hooks con `timeout` | mecánica | `validate.py --strict` (el aviso falla en modo estricto) | cumple |
-| Selftest de cada plugin en CI | mecánica | `.github/workflows/validate.yml`; hoy enumera los plugins a mano. Pendiente de automatizar: `validate.py` exige `tests/selftest.py` | 1 de 1 plugins |
+| Selftest de cada plugin en CI | mecánica | `.github/workflows/validate.yml` recorre `plugins/*/tests/selftest.py`. Pendiente de automatizar: que `validate.py` exija `tests/selftest.py` en cada plugin | 2 de 2 plugins |
 | Todo código de hallazgo alcanzable | mecánica | el selftest compara los declarados con los probados | cumple en `sdd` |
 | Solo biblioteca estándar | mecánica | pendiente de automatizar: comprobar los `import` en `validate.py` | cumple |
 | Hooks en forma exec | mecánica | pendiente de automatizar en `validate.py` | cumple |

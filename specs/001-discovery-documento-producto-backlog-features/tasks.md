@@ -27,7 +27,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T001 — Esqueleto del plugin y CI
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R010
 - **Depende de:** —
 - **Archivos:** `plugins/discovery/.claude-plugin/plugin.json`, `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`, `plugins/discovery/README.md`, `.claude-plugin/marketplace.json`, `.github/workflows/validate.yml`, `specs/constitution.md`

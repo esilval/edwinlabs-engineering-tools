@@ -1,0 +1,8 @@
+{
+  "name": "discovery",
+  "displayName": "Product Discovery",
+  "description": "De documento de producto a backlog de features: ingest -> clarify -> decompose -> check -> approve, con trazabilidad documento -> objetivo -> feature candidata.",
+  "author": { "name": "Edwin Silva" },
+  "license": "MIT",
+  "keywords": ["discovery", "product", "backlog", "sdd", "spec-driven"]
+}

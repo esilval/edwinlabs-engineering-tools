@@ -12,7 +12,24 @@
       "description": "Desarrollo orientado a especificaciones: constitution -> specify -> clarify -> plan -> tasks -> implement, con compuerta que impide escribir codigo sin especificacion y trazabilidad requisito -> tarea -> prueba.",
       "source": "./plugins/sdd",
       "category": "development",
-      "keywords": ["sdd", "spec-driven", "workflow", "guardrail"]
+      "keywords": [
+        "sdd",
+        "spec-driven",
+        "workflow",
+        "guardrail"
+      ]
+    },
+    {
+      "name": "discovery",
+      "description": "De documento de producto a backlog de features: ingest -> clarify -> decompose -> check -> approve, con trazabilidad documento -> objetivo -> feature candidata.",
+      "source": "./plugins/discovery",
+      "category": "development",
+      "keywords": [
+        "discovery",
+        "product",
+        "backlog",
+        "spec-driven"
+      ]
     }
   ]
 }
