@@ -18,7 +18,20 @@ con documentos que llegan a lo largo del tiempo.
 /discovery:approve              # tú apruebas brief y backlog
 ```
 
-Todas las skills las lanza el usuario (`disable-model-invocation`).
+Todas las skills las lanza el usuario (`disable-model-invocation`). Por debajo
+usan `scripts/discovery.py`, que también se puede llamar a mano:
+
+| Subcomando | Qué hace | Salida |
+| ---------- | -------- | ------ |
+| `ingest <archivo> [--original <pdf>]` | Añade un documento como `Dn` | 0, o 1 si se rechaza |
+| `next-id G\|B` | Siguiente objetivo o candidata libre | 0 |
+| `questions [--json]` | Preguntas del brief y sus citas rotas | 0 |
+| `check [--json] [--check]` | Coherencia del producto | 0; 1 con `--check` y errores; 2 si un argumento es desconocido |
+| `approve [--skill]` | Aprueba brief y backlog | 0, o 1 si se niega; con `--skill`, siempre 0 |
+| `guard`, `audit` | Hooks de la aprobación (leen JSON por stdin) | — |
+
+La raíz del proyecto sale de `CLAUDE_PROJECT_DIR` o, si no está, del
+directorio de trabajo.
 
 ## Artefactos
 
@@ -65,8 +78,47 @@ discovery.py check --check   # exit 1 si hay algún error
 | `W-QUESTION-OPEN` | Preguntas abiertas que no afectan a ningún objetivo |
 | `W-PRODUCT-NOT-APPROVED` | Brief o backlog sin aprobar, o cambiados tras aprobarse |
 
-Los códigos son contrato público: añadir es aditivo; renombrar, quitar o
-cambiar la forma de un campo exige `discovery.check/v2`. Una sección cuenta como
+### Schema `discovery.check/v1`
+
+```json
+{
+  "schema": "discovery.check/v1",
+  "ok": false,
+  "counts": {"documents": 2, "goals": 3, "candidates": 5, "questions_open": 1,
+             "errors": 1, "warnings": 2},
+  "documents": {"D1": {"sections": ["1", "1.1", "2"], "original": "vision.md"}},
+  "goals": ["G1", "G2", "G3"],
+  "candidates": [{"id": "B01", "state": "candidata"}],
+  "questions": [{"text": "(D1§2; G1) ¿…?", "open": true}],
+  "findings": [{"code": "E-SOURCE-UNCOVERED", "severity": "error",
+                "title": "…", "message": "…", "section": "D1§2"}]
+}
+```
+
+Cada hallazgo lleva siempre `code`, `severity` (`error` o `warning`), `title`
+y `message`; según el código añade `document`, `section`, `goal`, `item` o
+`file`. Los códigos son contrato público: añadir es aditivo; renombrar, quitar
+o cambiar la forma de un campo exige `discovery.check/v2`. Un consumidor que
+enumere códigos debe fijar la versión.
+
+### En CI
+
+El mismo script que usan las skills, con el repositorio de producto como
+directorio de trabajo:
+
+```yaml
+- name: Coherencia del producto
+  env:
+    CLAUDE_PROJECT_DIR: ${{ github.workspace }}
+  run: |
+    python3 .discovery-plugin/scripts/discovery.py check | tee -a "$GITHUB_STEP_SUMMARY"
+    python3 .discovery-plugin/scripts/discovery.py check --check
+```
+
+`.discovery-plugin/` es donde el workflow obtiene el plugin: un checkout de
+este marketplace, un submódulo o una copia vendorizada. Solo `--check` debe
+tumbar el PR (exit 1 con errores); un argumento mal escrito sale con 2, nunca
+con 0. Una sección cuenta como
 cubierta si se cita ella, una que la contiene o una contenida en ella, desde el
 Origen de un objetivo o de una candidata viva, o desde los descartes.
 

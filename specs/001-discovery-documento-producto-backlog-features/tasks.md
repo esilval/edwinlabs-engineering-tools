@@ -131,7 +131,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T014 — Documentación y reserva de prefijos
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R011, R012, R013
 - **Depende de:** T013
 - **Archivos:** `plugins/discovery/README.md`, `README.md`, `plugins/sdd/docs/standards-roadmap.md`
