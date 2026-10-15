@@ -178,8 +178,12 @@ SUPPORTED = TEXT_FORMATS | {".docx", ".pdf"}
 # Lo que va despues de esta marca es el contenido del documento; lo de antes,
 # la cabecera que escribe ingest. La huella de R011 cubre solo el contenido.
 CONTENT_MARK = "<!-- discovery:contenido -->"
-HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-NUMBERED = re.compile(r"^#{1,6}\s+(\d+(?:\.\d+)*)\s")
+# La secuencia de cierre (`## Titulo ##`) solo cuenta si va precedida de
+# espacio, como en CommonMark: `## Soporte C#` conserva su `#`.
+HEADING = re.compile(r"^(#{1,6})\s+(.*?)(?:\s+#+)?\s*$")
+# Numeracion que el documento ya traia ("1.", "2.3", "IV."): se sustituye por
+# la de discovery para no acabar con "## 1 1. Intro".
+OWN_NUMBER = re.compile(r"^(?:\d+(?:\.\d+)*\.?|[IVXLC]+\.)\s+")
 FIELD_ROW = re.compile(r"^\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|\s*$", re.M)
 
 
@@ -228,44 +232,50 @@ def number_sections(text):
     """
     Devuelve (texto con los encabezados numerados, titulo o None, numeros).
 
-    Un unico encabezado del nivel mas alto, si es el primero, es el titulo del
-    documento: no es seccion y no se numera. El resto se numera por niveles
-    (1, 1.1, 1.1.1). Sin encabezados, el documento entero es la seccion 1.
+    Si el documento tiene un unico H1 y es su primer encabezado, es el titulo:
+    no es seccion y no se numera. El resto se numera por anidamiento real
+    (1, 1.1, 1.1.1): la profundidad la da la pila de niveles abiertos, asi que
+    un nivel que se salta o un encabezado profundo al principio no producen
+    ceros. Sin encabezados, el documento entero es la seccion 1.
     """
     lines = text.splitlines()
-    heads = [(i, len(HEADING.match(lines[i]).group(1)), HEADING.match(lines[i]).group(2))
-             for i in _outside_fences(lines) if HEADING.match(lines[i])]
+    heads = []
+    for i in _outside_fences(lines):
+        m = HEADING.match(lines[i])
+        if m:
+            heads.append((i, len(m.group(1)), m.group(2)))
     if not heads:
         return text, None, ["1"]
 
     title = None
-    top = min(level for _i, level, _t in heads)
-    if sum(1 for _i, level, _t in heads if level == top) == 1 and heads[0][1] == top:
+    if heads[0][1] == 1 and sum(1 for _i, level, _t in heads if level == 1) == 1:
         title = heads[0][2]
         heads = heads[1:]
     if not heads:
         return text, title, ["1"]
 
-    levels = sorted({level for _i, level, _t in heads})
-    counters, numbers = [], []
+    stack, counters, numbers = [], [], []
     for i, level, words in heads:
-        depth = levels.index(level) + 1
+        while stack and stack[-1] >= level:
+            stack.pop()
+        stack.append(level)
+        depth = len(stack)
         counters = counters[:depth] + [0] * (depth - len(counters))
         counters[depth - 1] += 1
-        counters = counters[:depth]
-        number = ".".join(str(n) for n in counters)
+        number = ".".join(str(n) for n in counters[:depth])
         numbers.append(number)
-        lines[i] = f"{'#' * level} {number} {words}"
+        lines[i] = f"{'#' * level} {number} {OWN_NUMBER.sub('', words)}"
     return "\n".join(lines) + ("\n" if text.endswith("\n") else ""), title, numbers
 
 
 def sections(text):
-    """Numeros de seccion de un documento ingerido ('1', '4.2'…)."""
-    content = source_content(text)
-    lines = content.splitlines()
-    found = [NUMBERED.match(lines[i]).group(1) for i in _outside_fences(lines)
-             if NUMBERED.match(lines[i])]
-    return found or ["1"]
+    """
+    Numeros de seccion de un documento ingerido ('1', '4.2'…). Se leen de la
+    cabecera, que los registra ingest: deducirlos de los encabezados confundiria
+    un titulo como '# 2025 Vision' con una seccion.
+    """
+    listed = header_fields(text).get("Secciones", "")
+    return [s.strip() for s in listed.split(",") if s.strip()] or ["1"]
 
 
 def slugify(text, max_words=5):
@@ -281,8 +291,8 @@ def ingest_text(root, content, original_name, original_digest, today=None):
     for num, path in sorted(existing.items()):
         fields = header_fields(path.read_text(encoding="utf-8", errors="replace"))
         if fields.get("Huella original") == original_digest:
-            raise Rejected(f"El documento es idéntico a D{num} ({fields.get('Original', path.name)}); "
-                           "no se ingiere de nuevo.")
+            raise Rejected(f"El documento es idéntico a D{num} "
+                           f"({fields.get('Original', path.name)}); no se ingiere de nuevo.")
 
     number = max(existing) + 1 if existing else 1
     numbered, title, numbers = number_sections(content)
@@ -295,7 +305,8 @@ def ingest_text(root, content, original_name, original_digest, today=None):
         f"| Original | {original_name} |\n"
         f"| Ingesta | {(today or datetime.date.today()).isoformat()} |\n"
         f"| Huella original | {original_digest} |\n"
-        f"| Huella | {text_digest(body)} |\n\n"
+        f"| Huella | {text_digest(body)} |\n"
+        f"| Secciones | {', '.join(numbers)} |\n\n"
         "> Documento ingerido por discovery. No se edita: un cambio entra como\n"
         "> documento nuevo. Las secciones se citan como "
         f"{did}§<número>.\n\n"

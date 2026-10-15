@@ -209,6 +209,34 @@ def test_F001_R001_h1_unico_es_titulo():
            "con dos H1 no hay titulo: ambos son secciones")
 
 
+def test_F001_R001_titulo_numerico_no_es_seccion():
+    root = proyecto("r001-titulo-numerico")
+    ingerir(root, "plan.md", "# 2025 Visión\n\n## Problema\n\n## Usuarios\n")
+    expect(discovery.sections(guardado(root, "D1")) == ["1", "2"],
+           "un titulo que empieza por numero no es seccion",
+           f"{discovery.sections(guardado(root, 'D1'))}")
+    ingerir(root, "solo.md", "# 2026 Plan\n\nTexto sin mas encabezados.\n")
+    expect(discovery.sections(guardado(root, "D2")) == ["1"],
+           "titulo numerico y nada mas: una sola seccion")
+
+
+def test_F001_R001_casos_de_numeracion():
+    root = proyecto("r001-casos")
+    ingerir(root, "a.md", "## Resumen\n\n### A\n\n### B\n")
+    expect(discovery.sections(guardado(root, "D1")) == ["1", "1.1", "1.2"],
+           "sin H1 no hay titulo: el primer nivel tambien es seccion")
+    ingerir(root, "b.md", "## Intro\n\n# Cuerpo\n\n## Detalle\n")
+    expect(discovery.sections(guardado(root, "D2")) == ["1", "2", "2.1"],
+           "un encabezado profundo al principio no produce ceros",
+           f"{discovery.sections(guardado(root, 'D2'))}")
+    ingerir(root, "c.md", "# Doc\n\n## 1. Intro\n\n## Soporte C#\n\n## Cierre ##\n")
+    guardo = guardado(root, "D3")
+    expect("## 1 Intro" in guardo and "## 1 1." not in guardo,
+           "la numeracion propia del documento se sustituye")
+    expect("## 2 Soporte C#" in guardo, "un # final sin espacio delante se conserva")
+    expect("## 3 Cierre\n" in guardo, "la secuencia de cierre con espacio se quita")
+
+
 def test_F001_R001_sin_encabezados_es_una_seccion():
     root = proyecto("r001-plano")
     r, out = ingerir(root, "nota.md", "Solo un parrafo sin encabezados.\n")

@@ -43,7 +43,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T003 — Ingesta de Markdown
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002, R003
 - **Depende de:** T002
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`
