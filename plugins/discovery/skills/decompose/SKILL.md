@@ -35,9 +35,15 @@ cuando la feature arranque.
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/discovery.py" next-id B
    ```
 
-   Los objetivos y candidatas que ya existen conservan su ID. Nada se borra:
-   una candidata que deja de tener sentido pasa a `**Estado:** descartada
-   (motivo)`. Un ID nunca se reutiliza.
+   - Si acabas de copiar una plantilla, su bloque de ejemplo **es** el primero:
+     rellena `G1` y `B01` en su sitio. `next-id` solo para los siguientes.
+   - `next-id` lee el archivo y no reserva nada: ejecútalo **antes de cada**
+     objetivo o candidata nuevos, después de haber escrito el anterior. No
+     numeres a mano a partir de un ID.
+   - Los objetivos y candidatas que ya existen conservan su ID. Nada se borra:
+     una candidata que deja de tener sentido pasa a `**Estado:** descartada
+     (motivo)`. Un ID nunca se reutiliza.
+   - Borra la pregunta de ejemplo de la plantilla del brief si sigue ahí.
 
 4. **Brief.** Objetivos (`### G1 — …` con `**Origen:**` y
    `**Descripción:**`), usuarios, glosario, restricciones e **invariantes
@@ -64,13 +70,16 @@ cuando la feature arranque.
    `## Secciones descartadas` con su motivo. Nada se queda en silencio.
 
 7. **Contradicciones.** Si un documento contradice a otro, no elijas: registra
-   la pregunta en el brief citando las dos secciones (`(D1§3 contra D2§1)`) y
-   sigue con lo que no depende de ella.
+   la pregunta en el brief citando las dos secciones y, si afecta a un
+   objetivo, también el objetivo (`(D1§3 contra D2§1; G2)`), para que bloquee la
+   aprobación hasta resolverse. Sigue con lo que no depende de ella.
 
 ## Límites
 
-- No redactes requisitos: nada de «el sistema DEBERÁ…». `check` lo marca como
-  error (`E-BACKLOG-REQUIREMENT`).
+- No redactes requisitos: nada de «el sistema DEBERÁ…». En objetivos y
+  candidatas, `check` lo marca como error (`E-BACKLOG-REQUIREMENT`); en
+  usuarios, glosario, restricciones e invariantes no lo comprueba nadie, así
+  que vigílalo tú.
 - No edites `product/sources/`, `specs/` ni la constitución.
 - No cambies el campo Estado. Si el brief o el backlog estaban aprobados,
   cualquier cambio exige que el usuario los vuelva a aprobar.
