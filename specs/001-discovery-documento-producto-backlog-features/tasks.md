@@ -35,7 +35,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T002 — Huella y campo Estado
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R002, R011, R016
 - **Depende de:** T001
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`

@@ -72,6 +72,61 @@ def test_cli_sin_subcomando():
            "sin subcomando: exit 2 y ayuda", f"{r.returncode} {r.stderr[:80]}")
 
 
+# ----------------------------------------------------------------- T002
+
+BACKLOG_APROBADO = """# Backlog
+
+| Campo  | Valor |
+| ------ | ----- |
+| Estado | Draft |
+
+## Candidatas
+
+### B01 — Exportar movimientos
+
+- **Resultado observable:** el usuario descarga sus movimientos.
+"""
+
+
+def _aprobar(texto):
+    sellado, ok = discovery.set_status(texto, f"Approved · {discovery.content_digest(texto)}")
+    assert ok
+    return sellado
+
+
+def test_F001_R016_huella_ignora_formato():
+    a = "# T\n\nUna  linea\n\n\n| a |  b |\n"
+    b = "# T\nUna linea\n|a|b|\n"
+    expect(discovery.text_digest(a) == discovery.text_digest(b),
+           "espacios, lineas en blanco y relleno de tablas no cambian la huella")
+    sellado = _aprobar(BACKLOG_APROBADO)
+    expect(discovery.is_approved(sellado) and not discovery.is_stale(sellado),
+           "recien aprobado: aprobado y no cambiado")
+    reformateado = sellado.replace("\n\n### B01", "\n\n\n### B01").replace("el usuario", "el  usuario")
+    expect(not discovery.is_stale(reformateado), "reformatear tras aprobar no invalida")
+
+
+def test_F001_R016_huella_detecta_cambio():
+    sellado = _aprobar(BACKLOG_APROBADO)
+    cambiado = sellado.replace("descarga sus movimientos", "descarga sus facturas")
+    expect(discovery.is_stale(cambiado), "cambiar palabras tras aprobar invalida")
+    expect(discovery.content_digest(sellado) == discovery.content_digest(
+        discovery.set_status(sellado, "Draft")[0]),
+        "la huella no depende del propio campo Estado")
+    expect(discovery.doc_status("# B\n\n## Tabla\n\n| Estado | Approved |\n") is None,
+           "una fila Estado fuera de la cabecera no cuenta")
+    expect(not discovery.is_approved(discovery.set_status(sellado, "Draft")[0]),
+           "Draft no es aprobado")
+
+
+def test_F001_R002_huella_de_texto_igual_con_otro_formato():
+    # F001-R002: la deteccion de duplicados compara esta huella
+    expect(discovery.text_digest("# Vision\n\nTexto.\n") == discovery.text_digest("# Vision\nTexto.\n"),
+           "el mismo contenido con otro formato tiene la misma huella")
+    expect(discovery.text_digest("# Vision\nTexto.\n") != discovery.text_digest("# Vision\nOtro.\n"),
+           "contenido distinto, huella distinta")
+
+
 # --------------------------------------------------------------------------
 
 def main():
