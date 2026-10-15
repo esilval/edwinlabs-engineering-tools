@@ -646,6 +646,231 @@ def test_bash(base):
     check(audita(p, "t6").returncode == 0, 'gate:"off": no audita')
 
 
+# ------------------------------------------- feature 002: arreglos de sdd
+
+def expect(ok, nombre, detalle=""):
+    """Como check; con este nombre la trazabilidad lo reconoce como asercion."""
+    return check(ok, nombre, detalle)
+
+
+def repo_con_feature(base, nombre, spec=SPEC_BASE, archivos=None):
+    """Repo de prueba con la feature 001-x activa y los archivos dados."""
+    p = base / nombre
+    (p / "specs" / "001-x").mkdir(parents=True)
+    (p / ".sdd").mkdir()
+    (p / ".sdd" / "current").write_text("001-x\n")
+    (p / "specs" / "001-x" / "spec.md").write_text(spec, encoding="utf-8")
+    for rel, texto in (archivos or {}).items():
+        (p / rel).parent.mkdir(parents=True, exist_ok=True)
+        (p / rel).write_text(texto, encoding="utf-8")
+    return p
+
+
+def traza(cwd):
+    return json.loads(run("trace", ["--json"], cwd=cwd).stdout)
+
+
+def test_F002_R003_aviso_nombra_el_requisito(base):
+    print("\nF002 · R003: el aviso sin prefijo nombra el requisito real")
+    spec = SPEC_BASE.replace("| R002 | SHOULD |", "| R004 | MUST |")
+    p = repo_con_feature(base, "f002-r003", spec=spec, archivos={
+        "tests/test_x.py": "def test_R004_x():\n    assert True\n"})
+    avisos = [f["message"] for f in traza(p)["findings"] if f["code"] == "W-TEST-UNSCOPED"]
+    expect(len(avisos) == 1 and "No cuenta: R004 existe" in avisos[0]
+           and "R001" not in avisos[0], "el aviso nombra R004, no R001", f"{avisos}")
+
+
+def evidencia(cwd, rid):
+    return next(r for r in traza(cwd)["requirements"] if r["id"] == rid)["tests"]
+
+
+FIXTURE_PY = '''import sdd
+
+FIXTURE = "def test_F001_R001_algo():\\n    assert x\\n"
+MULTILINEA = """
+def test_F001_R002_falso():
+    assert y
+"""
+
+
+def test_que_usa_los_fixtures():
+    assert FIXTURE and MULTILINEA
+'''
+
+
+def test_F002_R010_fixture_en_cadena_no_cuenta(base):
+    print("\nF002 · R010: en Python, un fixture en una cadena no es una prueba")
+    p = repo_con_feature(base, "f002-r001-fixture", archivos={"tests/test_f.py": FIXTURE_PY})
+    expect(evidencia(p, "R001") == [], "una cadena de una linea no cuenta",
+           f"{evidencia(p, 'R001')}")
+    expect(evidencia(p, "R002") == [], "una cadena de varias lineas tampoco",
+           f"{evidencia(p, 'R002')}")
+
+
+def test_F002_R010_cita_en_texto_no_cuenta(base):
+    print("\nF002 · R010: en Python, una cita dentro de un texto no cuenta")
+    p = repo_con_feature(base, "f002-r001-texto", archivos={"tests/test_t.py": (
+        "def test_otro():\n    msg = 'ver F001-R002 en la spec'\n    assert msg\n")})
+    expect(evidencia(p, "R002") == [], "F001-R002 entre comillas no cuenta",
+           f"{evidencia(p, 'R002')}")
+
+
+def test_F002_R002_nombre_y_comentario_cuentan(base):
+    print("\nF002 · R002: nombre y comentario siguen contando")
+    p = repo_con_feature(base, "f002-r002", archivos={"tests/test_ok.py": (
+        "def test_F001_R001_ok():\n    assert login() == 'ok'\n\n\n"
+        "def test_otro():\n    # F001-R002\n    assert True  # con 'una cadena' en la linea\n")})
+    expect(evidencia(p, "R001") == ["tests/test_ok.py::test_F001_R001_ok"],
+           "el nombre de la prueba cuenta", f"{evidencia(p, 'R001')}")
+    expect(evidencia(p, "R002") == ["tests/test_ok.py::test_otro"],
+           "un comentario en el cuerpo cuenta", f"{evidencia(p, 'R002')}")
+
+
+def test_F002_R002_python_invalido_no_revienta(base):
+    print("\nF002 · R002: un archivo Python que no se tokeniza no rompe nada")
+    p = repo_con_feature(base, "f002-r002-invalido", archivos={"tests/test_roto.py": (
+        "def test_otro():\n    a = 'F001-R002'\n    assert '''sin cerrar\n")})
+    r = run("trace", ["--json"], cwd=p)
+    expect(r.returncode == 0, "trace no revienta", r.stderr)
+    expect(evidencia(p, "R002") == ["tests/test_roto.py::test_otro"],
+           "se usa el texto tal cual, como antes: la cita en la cadena vuelve a contar",
+           f"{evidencia(p, 'R002')}")
+
+
+def test_F002_R002_salto_de_pagina(base):
+    print("\nF002 · R002: un salto de pagina no desalinea la vista de codigo")
+    p = repo_con_feature(base, "f002-r002-ff", archivos={"tests/test_ff.py": (
+        "\x0c\ndef test_F001_R001_ok():\n    s = 'F001-R002 en texto'\n    assert s\n")})
+    expect(evidencia(p, "R001") == ["tests/test_ff.py::test_F001_R001_ok"],
+           "el nombre de la prueba sigue contando", f"{evidencia(p, 'R001')}")
+    expect(evidencia(p, "R002") == [], "y la cita en el texto sigue sin contar",
+           f"{evidencia(p, 'R002')}")
+
+
+OTROS_LENGUAJES = {
+    "tests/a.test.js": (
+        "describe('login', () => {\n"
+        "  it('caduca', () => {\n"
+        "    /*\n"
+        "     * Doesn't retry: F001-R001 it's the token case\n"
+        "     */\n"
+        "    expect(login('x')).toBe(false);\n  });\n"
+        "  it.only('F001_R002 solo esta', () => { expect(1).toBe(1); });\n"
+        "  test.each([[1]])('F001_R001 caso %s', (n) => { expect(n).toBe(1); });\n"
+        "});\n"),
+    # Un dato en una cadena: fuera de Python sigue contando (consecuencia de R010).
+    "tests/datos.test.js": (
+        "const FIXTURE = \"it('F001_R002 dato', () => { expect(1).toBe(1) })\";\n"),
+    "spec/pagos_spec.rb": (
+        "describe 'pagos' do\n"
+        "  xit 'F001_R001 pendiente' do\n    expect(1).to eq(1)\n  end\n"
+        "  scenario 'F001_R002 rechaza' do\n"
+        "    # it's F001-R001, the user's charge\n    expect(1).to eq(1)\n  end\nend\n"),
+    "test/login.bats": "@test \"F001_R001 login\" {\n  run login\n  [ \"$status\" -eq 0 ]\n}\n",
+    "src/test/kotlin/LoginTest.kt": (
+        "@Test fun `F001_R002 rechaza el token`() { assertEquals(1, login()) }\n"),
+    "LoginTests.cs": ("[Fact(DisplayName = \"F001_R001 caduca\")]\n"
+                      "public void Caduca() { Assert.Equal(1, Login()); }\n"),
+    "src/test/scala/LoginSpec.scala": (
+        "\"login\" should \"F001_R002 rechazar\" in { assert(login() == 1) }\n"),
+    "login_test.go": (
+        "func TestLogin(t *testing.T) {\n"
+        "\tcases := []struct{ name string }{{\"F001_R002 caducado\"}}\n"
+        "\tfor _, tc := range cases {\n"
+        "\t\tt.Run(tc.name, func(t *testing.T) { if login() != 1 { t.Errorf(\"x\") } })\n\t}\n"
+        "\tt.Run(\"F001_R001 subcaso\", func(t *testing.T) {})\n}\n"),
+    "src/test/java/PagosTest.java": (
+        "@DisplayName(\"F001-R002 cobra a fin de mes\")\n"
+        "void cobra() { assertEquals(1, cobro()); }\n"),
+}
+
+# Evidencia exacta, etiquetas incluidas: la misma que daba sdd_trace.py antes de
+# la feature 002 sobre estos archivos (verificado contra 23b5c1e).
+ESPERADO = {
+    "R001": ["LoginTests.cs", "login_test.go::TestLogin", "spec/pagos_spec.rb",
+             "test/login.bats", "tests/a.test.js::caduca"],
+    "R002": ["login_test.go::TestLogin", "spec/pagos_spec.rb", "src/test/java/PagosTest.java",
+             "src/test/kotlin/LoginTest.kt", "src/test/scala/LoginSpec.scala",
+             "tests/a.test.js::caduca", "tests/datos.test.js::F001_R002 dato"],
+}
+
+
+def test_F002_R010_otros_lenguajes_como_antes(base):
+    print("\nF002 · R010: fuera de Python las citas cuentan como antes")
+    spec = SPEC_BASE.replace("| R002 | SHOULD |", "| R002 | MUST |")
+    p = repo_con_feature(base, "f002-r010-otros", spec=spec, archivos=OTROS_LENGUAJES)
+    for rid, esperada in ESPERADO.items():
+        encontrados = evidencia(p, rid)
+        expect(encontrados == esperada, f"la evidencia de {rid} es exactamente la de antes",
+               f"{encontrados}")
+
+
+MENCIONES = [
+    "git commit -q -m 'sdd: la compuerta ya no bloquea sdd.py approve ni set_status(x)'",
+    'gh pr create --title t --body "Corrige: python3 sdd.py approve y set_status(texto, v)"',
+    "cat > notas.md <<'EOF'\npython3 plugins/sdd/scripts/sdd.py approve\nEOF",
+    'echo "para aprobar: python3 sdd.py approve"',
+    "grep -rn 'sdd.py approve' plugins/sdd/README.md",
+    "git commit -m 'la compuerta ya no bloquea `python3 sdd.py approve`'",
+    "gh pr create --title t --body 'Ahora `sdd.py approve` solo se bloquea si se ejecuta'",
+    "git commit -m 'cita $(python3 sdd.py approve) en texto'",
+]
+
+EJECUCIONES = [
+    "python3 sdd.py approve",
+    "python3 /x/plugins/sdd/scripts/sdd.py approve plan",
+    'python3 "$HOME/plugins/sdd/scripts/sdd.py" approve',
+    "cd plugins/sdd && python3 scripts/sdd.py approve",
+    "ls; FOO=1 python3 sdd.py approve tasks",
+    "echo `python3 sdd.py approve`",
+    'echo "$(python3 sdd.py approve)"',
+    'git commit -m "$(python3 /x/sdd.py approve plan)"',
+    "x=$(cd y && python3 sdd.py approve)",
+    "python3 sdd.py approve; echo $'it\\'s'",
+]
+
+
+def test_F002_R004_mencion_no_bloquea(base):
+    print("\nF002 · R004: mencionar la aprobacion no bloquea")
+    p = repo_con_feature(base, "f002-r004")
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_bash
+    for cmd in MENCIONES:
+        expect(not sdd_bash.invokes_approve(cmd), f"no es ejecucion: {cmd.splitlines()[0][:50]!r}")
+        expect(not bash_bloquea(p, cmd), f"la compuerta no bloquea: {cmd.splitlines()[0][:50]!r}")
+    expect(not sdd_bash.invokes_approve('echo "sin cerrar'),
+           "un comando que no se analiza y no contiene la orden: no")
+
+
+def test_F002_R005_ejecucion_bloquea(base):
+    print("\nF002 · R005: ejecutar sdd.py approve sigue bloqueado")
+    p = repo_con_feature(base, "f002-r005")
+    for cmd in EJECUCIONES:
+        expect(bash_bloquea(p, cmd), f"bloquea: {cmd!r}")
+
+
+def test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base):
+    print("\nF002 · R006: la auditoria revierte lo que la compuerta ya no bloquea")
+    if shutil.which("git") is None:
+        print("  (sin git: omitida)")
+        return
+    p = repo_con_feature(base, "f002-r006")
+    spec = p / "specs" / "001-x" / "spec.md"
+    spec.write_text("# S\n\n| Campo | Valor |\n| - | - |\n| Estado | Draft |\n\n## R\n\n"
+                    + SPEC_BASE, encoding="utf-8")
+    git = ["git", "-C", str(p), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(git + ["init", "-q"], check=True)
+    subprocess.run(git + ["add", "."], check=True)
+    subprocess.run(git + ["commit", "-qm", "init"], check=True)
+    opaco = "bash -c 'python3 plugins/sdd/scripts/sdd.py approve'"
+    expect(not bash_bloquea(p, opaco, "r006"), "la compuerta deja pasar un bash -c")
+    spec.write_text(spec.read_text(encoding="utf-8").replace(
+        "| Estado | Draft |", "| Estado | Approved · 0123456789ab |"), encoding="utf-8")
+    r = audita(p, "r006")
+    expect(r.returncode == 2 and "| Estado | Draft |" in spec.read_text(encoding="utf-8"),
+           "y la auditoria devuelve el Estado a Draft", r.stderr)
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -655,6 +880,16 @@ def main():
         test_contrato_ci(base)
         test_degenerados(base)
         test_bash(base)
+        test_F002_R003_aviso_nombra_el_requisito(base)
+        test_F002_R010_fixture_en_cadena_no_cuenta(base)
+        test_F002_R010_cita_en_texto_no_cuenta(base)
+        test_F002_R002_nombre_y_comentario_cuentan(base)
+        test_F002_R002_python_invalido_no_revienta(base)
+        test_F002_R002_salto_de_pagina(base)
+        test_F002_R010_otros_lenguajes_como_antes(base)
+        test_F002_R004_mencion_no_bloquea(base)
+        test_F002_R005_ejecucion_bloquea(base)
+        test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

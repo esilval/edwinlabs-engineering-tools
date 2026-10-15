@@ -42,8 +42,9 @@ HEREDOC = re.compile(
     re.S,
 )
 
-APPROVE_CALL = re.compile(r"sdd\.py['\"]?\s+approve\b|\bset_status\s*\(")
 APPROVAL_WORD = re.compile(r"approved|aprobad[oa]", re.I)
+# Solo para comandos que no se pueden analizar por palabras.
+APPROVE_TEXT = re.compile(r"sdd\.py['\"]?\s+approve\b")
 
 
 # --------------------------------------------------------------------------
@@ -162,8 +163,89 @@ def write_targets(command):
 
 
 def invokes_approve(command):
-    """True si el comando intenta aprobar una fase por su cuenta."""
-    return bool(APPROVE_CALL.search(command or ""))
+    """
+    True si el comando **ejecuta** `sdd.py approve`: en algun segmento, una
+    palabra cuyo nombre de archivo es sdd.py seguida de la palabra approve.
+
+    Una mencion no cuenta: un mensaje de commit, la descripcion de un PR o el
+    cuerpo de un heredoc son una sola palabra entre comillas, o se descartan
+    antes de analizar. Lo que esta compuerta no puede ver (un script, un
+    `bash -c` o un interprete con el codigo en linea) lo revierte la auditoria
+    de PostToolUse. Un comando que no se puede analizar se deniega solo si su
+    texto contiene la orden.
+    """
+    command = _strip_heredocs(command or "")
+    # Lo que va dentro de $(…) o de `…` se ejecuta, aunque este entre comillas
+    # dobles: se analiza como un comando aparte.
+    if any(invokes_approve(inner) for inner in _substitutions(command)):
+        return True
+    try:
+        tokens = _tokens(command)
+    except ValueError:
+        # Algo que el analizador no entiende y bash si ($'…', comillas raras):
+        # se busca la orden en el texto, como la compuerta anterior. Si no, un
+        # trozo ilegible bastaria para colar una aprobacion.
+        return bool(APPROVE_TEXT.search(command))
+    for seg, _redirects in _segments(tokens):
+        words = _command_words(seg)
+        for word, nxt in zip(words, words[1:]):
+            if os.path.basename(word) == "sdd.py" and nxt == "approve":
+                return True
+    return False
+
+
+def _substitutions(command):
+    """
+    Contenido de las sustituciones de comandos `…` y $(…) que bash ejecutaria.
+    Se recorre el comando respetando las comillas: dentro de comillas simples
+    no hay sustitucion (es la forma habitual de citar una orden en un mensaje),
+    y una \\$( o \\` escapada tampoco lo es. Dentro de comillas dobles si.
+    """
+    found, i, n, single = [], 0, len(command), False
+    while i < n:
+        ch = command[i]
+        if single:
+            if ch == "'":
+                single = False
+            i += 1
+            continue
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            # Una comilla simple dentro de comillas dobles es un caracter mas;
+            # basta con no tratarla: el analisis por palabras va despues.
+            if command.count('"', 0, i) % 2 == 0:
+                single = True
+            i += 1
+            continue
+        if ch == "`":
+            j = i + 1
+            while j < n and command[j] != "`":
+                j += 2 if command[j] == "\\" else 1
+            if j >= n:
+                break
+            found.append(command[i + 1:j])
+            i = j + 1
+            continue
+        if command.startswith("$(", i) and not command.startswith("$((", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if command[j] == "\\":
+                    j += 2
+                    continue
+                if command[j] == "(":
+                    depth += 1
+                elif command[j] == ")":
+                    depth -= 1
+                j += 1
+            if depth:
+                break
+            found.append(command[i + 2:j - 1])
+            i = j
+            continue
+        i += 1
+    return found
 
 
 def mentions_approval(command):

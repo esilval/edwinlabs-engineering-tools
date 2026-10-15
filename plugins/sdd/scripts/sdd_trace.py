@@ -405,6 +405,49 @@ def is_test_file(path):
     return any(norm(part) in TEST_DIRS for part in path.parts[:-1])
 
 
+def code_view(content, suffix):
+    """
+    Lineas del archivo con el contenido de los textos literales en blanco,
+    mismas lineas y columnas. Las citas y las declaraciones de prueba se buscan
+    aqui: una cadena "def test_F001_R001_x()" escrita como dato en un test no
+    es una prueba (R010 de la feature 002). Nombres y comentarios se conservan.
+
+    Python se tokeniza, que conoce las cadenas de varias lineas; si no se puede
+    tokenizar, se devuelve el texto tal cual. En los demas lenguajes la vista es
+    el texto tal cual: un analizador hecho a mano perdia citas reales en formas
+    habituales de nombrar o comentar pruebas (R010 de la feature 002).
+    """
+    lines = content.splitlines()
+    if suffix != ".py":
+        return lines
+    import tokenize
+    string_types = {tokenize.STRING}
+    for name in ("FSTRING_MIDDLE", "TSTRING_MIDDLE"):  # f-strings 3.12+, t-strings 3.14+
+        if hasattr(tokenize, name):
+            string_types.add(getattr(tokenize, name))
+    chars = [list(line) for line in lines]
+    # Se tokenizan las mismas lineas que devuelve splitlines(): asi las filas de
+    # los tokens coinciden aunque el archivo tenga saltos de pagina (\x0c) u
+    # otros separadores que splitlines() corta y tokenize no.
+    feed = iter([line + "\n" for line in lines])
+    try:
+        for tok in tokenize.generate_tokens(lambda: next(feed, "")):
+            if tok.type not in string_types:
+                continue
+            (srow, scol), (erow, ecol) = tok.start, tok.end
+            for row in range(srow, erow + 1):
+                if row - 1 >= len(chars):
+                    break
+                line = chars[row - 1]
+                start = scol if row == srow else 0
+                end = ecol if row == erow else len(line)
+                for c in range(start, min(end, len(line))):
+                    line[c] = " "
+    except (tokenize.TokenError, SyntaxError, IndentationError, ValueError):
+        return lines
+    return ["".join(line) for line in chars]
+
+
 def scan_tests(root, extra_globs=None):
     """
     Devuelve (scoped, bare):
@@ -431,7 +474,8 @@ def scan_tests(root, extra_globs=None):
             if "R" not in content:
                 continue
             lines = content.splitlines()
-            for i, line in enumerate(lines):
+            view = code_view(content, path.suffix.lower())
+            for i, line in enumerate(view):
                 hits = [((int(f), "R" + r), scoped)
                         for f, r in SCOPED_REQ_ID.findall(line)]
                 hits += [("R" + r, bare)
@@ -440,7 +484,7 @@ def scan_tests(root, extra_globs=None):
                     continue
                 label, kind = None, "ok"
                 for j in range(i, max(-1, i - 25), -1):
-                    d = TEST_DECL.search(lines[j])
+                    d = TEST_DECL.search(view[j])
                     if d:
                         label = next(g for g in d.groups() if g)
                         kind = test_body_kind(lines, j, path.suffix.lower())
@@ -682,7 +726,7 @@ def analyze(root, feature, config):
             issues.append("W-TEST-UNSCOPED")
             add("W-TEST-UNSCOPED",
                 f"{rid} aparece sin prefijo de feature en {', '.join(r_unscoped[:3])}. "
-                f"No cuenta: R001 existe en cada feature. Si la prueba es de esta, "
+                f"No cuenta: {rid} existe en cada feature. Si la prueba es de esta, "
                 f"renombrala a test_{scoped_ref(feature, rid)}_...",
                 requirement=rid)
         if must and not r["criteria"]:
