@@ -51,7 +51,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T004 — Conversión de Word y registro del original · P
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R004
 - **Depende de:** T003
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`
@@ -59,7 +59,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T005 — Skill ingest
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R001, R003, R004
 - **Depende de:** T004
 - **Archivos:** `plugins/discovery/skills/ingest/SKILL.md`
