@@ -461,6 +461,50 @@ def test_F001_R006_lee_objetivos():
     expect(run(root, "next-id", "G").stdout.strip() == "G3", "next-id G = G3")
 
 
+BRIEF_TRAMPA = """# Brief del producto
+
+| Campo  | Valor |
+| ------ | ----- |
+| Estado | Draft |
+
+## Objetivos
+
+### G1 — Responder preguntas de clientes
+
+- **Origen:** D1§1
+
+### G2 — Reducir descartes
+
+- **Origen:** D1§2
+
+## Secciones descartadas
+
+- D1§4 — fuera del alcance acordado
+
+## Preguntas
+
+- [ ] (D1§2; G2) ¿Qué cuenta como descarte?
+- [x] (D1§1) ¿Por email o chat?
+  - **Respuesta:** por chat.
+"""
+
+
+def test_F001_R006_secciones_no_se_confunden():
+    b = discovery.parse_brief(BRIEF_TRAMPA)
+    expect([g["id"] for g in b["goals"]] == ["G1", "G2"],
+           "un objetivo con «preguntas» o «descartes» en el titulo sigue siendo objetivo")
+    expect(b["discarded"] == ["D1§4"], "lee el descarte real, no el origen de G2",
+           f"{b['discarded']}")
+    abiertas = [q for q in b["questions"] if q["open"]]
+    expect(len(b["questions"]) == 2 and len(abiertas) == 1
+           and abiertas[0]["refs"]["goals"] == ["G2"],
+           "lee la pregunta abierta sobre G2", f"{b['questions']}")
+    expect(b["questions"][1]["answer"] == "por chat.", "lee la respuesta junto a su pregunta")
+    estado = discovery.parse_backlog(
+        "## Candidatas\n\n### B01 — X\n\n- **Estado:** `descartada`\n")["candidates"][0]
+    expect(estado["state"] == "descartada", "el estado ignora el formato de codigo")
+
+
 def test_F001_R007_lee_candidata_completa():
     c = discovery.parse_backlog(BACKLOG_OK)["candidates"]
     expect([x["id"] for x in c] == ["B01", "B02", "B03"], "lee B01, B02, B03")

@@ -435,7 +435,6 @@ def cmd_ingest(args):
 
 BRIEF = "brief.md"
 BACKLOG = "backlog.md"
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 ITEM_HEAD = re.compile(r"^#{2,5}\s*(?=([GB]\d+)\b)", re.M)
 ITEM_FIELD = re.compile(r"^\s*[-*]\s*\*\*\s*(.+?)\s*:?\s*\*\*\s*(.*)$", re.M)
@@ -452,18 +451,24 @@ def read_product(root, name):
 
 
 def section(text, *titles):
-    """Cuerpo de una seccion markdown por su titulo (sin acentos ni mayusculas)."""
-    wanted = {norm(t) for t in titles}
-    out, level, capturing = [], None, False
+    """
+    Cuerpo de una seccion de nivel 2 (`## Titulo`) cuyo titulo, sin acentos ni
+    mayusculas, es uno de `titles` o empieza por el (`## Invariantes propuestos
+    para la constitucion` encaja con 'invariantes'). Solo nivel 2: un objetivo
+    `### G1 — Responder preguntas` nunca se confunde con `## Preguntas`.
+    """
+    wanted = [norm(t) for t in titles]
+    out, capturing = [], False
     for line in (text or "").splitlines():
-        m = re.match(r"^(#{1,6})\s+(.*)$", line)
-        if m:
-            depth, title = len(m.group(1)), norm(m.group(2)).strip()
-            if capturing and depth <= level:
+        m = re.match(r"^(#{1,6})\s+(.*?)\s*$", line)
+        if m and len(m.group(1)) <= 2:
+            if capturing:
                 break
-            if not capturing and any(w in title for w in wanted):
-                capturing, level = True, depth
-                continue
+            title = norm(m.group(2))
+            if len(m.group(1)) == 2 and any(title == w or title.startswith(w + " ")
+                                            for w in wanted):
+                capturing = True
+            continue
         if capturing:
             out.append(line)
     return "\n".join(out)
@@ -512,7 +517,11 @@ def parse_brief(text):
         m = QUESTION.match(line)
         if m:
             questions.append({"open": m.group(1) == " ", "text": m.group(2).strip(),
-                              "refs": refs(m.group(2))})
+                              "refs": refs(m.group(2)), "answer": ""})
+            continue
+        answer = ITEM_FIELD.match(line)
+        if answer and questions and norm(answer.group(1)) in ("respuesta", "answer"):
+            questions[-1]["answer"] = answer.group(2).strip()
     discarded = refs(section(text, "secciones descartadas", "descartes"))["sections"]
     return {"goals": goals, "questions": questions, "discarded": discarded}
 
@@ -520,7 +529,8 @@ def parse_brief(text):
 def parse_backlog(text):
     candidates = parse_items(section(text, "candidatas", "candidates"), "B")
     for c in candidates:
-        c["state"] = norm(c["fields"].get("estado", "candidata")).split(" ")[0] or "candidata"
+        raw = norm(c["fields"].get("estado", "")).replace("`", "").replace("_", "")
+        c["state"] = (raw.split() or ["candidata"])[0]
     return {"candidates": candidates}
 
 
