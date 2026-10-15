@@ -20,9 +20,12 @@ Muestra la salida completa al usuario. Después:
    | Código | Lo corrige |
    | ------ | ---------- |
    | `E-SOURCE-MODIFIED` | Restaurar el documento; un cambio entra como documento nuevo con `/discovery:ingest` |
-   | `E-PRODUCT-TEMPLATE`, `E-SOURCE-UNCOVERED`, `E-GOAL-NO-FEATURE`, `E-REF-UNKNOWN`, `E-BACKLOG-REQUIREMENT`, `E-BACKLOG-DEP-CYCLE` | `/discovery:decompose` |
+   | `E-PRODUCT-TEMPLATE`, `E-SOURCE-UNCOVERED`, `E-GOAL-NO-FEATURE`, `E-BACKLOG-REQUIREMENT`, `E-BACKLOG-DEP-CYCLE` | `/discovery:decompose` |
+   | `E-REF-UNKNOWN` | `/discovery:decompose`; si la cita rota está en una pregunta, `/discovery:clarify` |
    | `E-QUESTION-OPEN-GOAL` | `/discovery:clarify` |
-   | `E-BACKLOG-ID-GAP` | Recuperar lo borrado y descartarlo en vez de borrarlo |
+   | `E-BACKLOG-ID-GAP`, hueco en objetivos o candidatas | Recuperar lo borrado y descartarlo en vez de borrarlo |
+   | `E-BACKLOG-ID-GAP`, ID repetido | Fusionar los dos elementos o dar al segundo un ID nuevo con `next-id` |
+   | `E-BACKLOG-ID-GAP`, hueco o repetido en documentos | Restaurar el documento borrado, o quitar la copia duplicada de `product/sources/` |
 
 2. Agrupa los **avisos** (`W-`): no bloquean la aprobación.
 
@@ -33,8 +36,8 @@ Muestra la salida completa al usuario. Después:
 ## En CI
 
 ```bash
-python3 discovery.py check --json    # schema discovery.check/v1
-python3 discovery.py check --check   # sale con 1 si hay errores
+python3 <ruta del plugin>/scripts/discovery.py check --json    # schema discovery.check/v1
+python3 <ruta del plugin>/scripts/discovery.py check --check   # sale con 1 si hay errores
 ```
 
 Si no hay errores, el siguiente paso es que el usuario revise el producto y

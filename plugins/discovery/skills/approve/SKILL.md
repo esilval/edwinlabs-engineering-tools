@@ -24,11 +24,15 @@ Resultado:
    cambio posterior en el brief o el backlog lo deja sin aprobar hasta que el
    usuario vuelva a ejecutar `/discovery:approve`.
 
-3. Si se negó, **no edites nada para forzarlo**. Explica qué falta, en el orden
-   del script, y qué lo corrige:
+3. Si se negó, **no edites nada para forzarlo**. Explica qué falta y qué lo
+   corrige:
    - falta el brief o el backlog → `/discovery:decompose`;
-   - errores de comprobación → los de `/discovery:check`;
-   - una pregunta abierta sobre un objetivo → `/discovery:clarify`.
+   - errores de comprobación → los explica `/discovery:check`. Una pregunta
+     abierta sobre un objetivo (`E-QUESTION-OPEN-GOAL`) se cierra con
+     `/discovery:clarify`;
+   - falta la fila `| Estado | … |` en la cabecera → restaurarla desde la
+     plantilla, sin aprobar, y volver a ejecutar `/discovery:approve`;
+   - error inesperado → muéstralo al usuario tal cual.
 
 ## Límite
 
