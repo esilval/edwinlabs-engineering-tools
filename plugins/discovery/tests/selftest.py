@@ -569,6 +569,62 @@ def test_F001_R008_next_id_no_reutiliza():
     expect(run(vacio, "next-id", "X").returncode == 1, "prefijo desconocido: error")
 
 
+# ----------------------------------------------------------------- T007
+
+def preguntas(root):
+    r = run(root, "questions", "--json")
+    return json.loads(r.stdout) if r.returncode == 0 else None
+
+
+BRIEF_CON_PREGUNTAS = BRIEF_OK.replace("""- [x] (D1§3; G1) ¿Diario o semanal?
+  - **Respuesta:** diario.
+""", """- [ ] (D1§1; G1) ¿Qué cuenta como venta?
+- [ ] (D1§9; G7) ¿Pregunta con citas rotas?
+- [ ] ¿Pregunta sin origen?
+- [x] (D1§3; G1) ¿Diario o semanal?
+  - **Respuesta:** diario, al cerrar la caja,
+    salvo los domingos.
+""")
+
+
+def test_F001_R005_lista_abiertas():
+    root = producto_ok("r005-abiertas", brief=BRIEF_CON_PREGUNTAS)
+    q = preguntas(root)
+    abiertas = [x for x in q if x["open"]]
+    expect(len(q) == 4 and len(abiertas) == 3, "lista 3 abiertas y 1 respondida", f"{q}")
+    expect(abiertas[0]["issues"] == [], "una pregunta bien citada no tiene problemas")
+    rotas = abiertas[1]["issues"]
+    expect(any("D1§9" in i for i in rotas) and any("G7" in i for i in rotas),
+           "señala la seccion y el objetivo inexistentes", f"{rotas}")
+    expect(any("sección de origen" in i for i in abiertas[2]["issues"]),
+           "señala una pregunta sin seccion de origen")
+    texto = run(root, "questions").stdout
+    expect("Preguntas abiertas: 3" in texto and "D1§9" in texto, "salida legible", texto)
+
+
+def test_F001_R005_respondida_no_cuenta():
+    root = producto_ok("r005-respondida")
+    q = preguntas(root)
+    expect(len(q) == 1 and not q[0]["open"], "la respondida no figura como abierta")
+    expect(q[0]["answer"] == "diario.", "conserva la respuesta")
+    multilinea = discovery.parse_brief(BRIEF_CON_PREGUNTAS)["questions"][-1]
+    expect(multilinea["answer"] == "diario, al cerrar la caja, salvo los domingos.",
+           "una respuesta de varias lineas se lee entera", multilinea["answer"])
+    vacio = proyecto("r005-sin-brief")
+    expect("No hay brief.md" in run(vacio, "questions").stdout, "sin brief lo dice")
+
+
+def test_F001_R009_pregunta_cita_dos_documentos():
+    root = producto_ok("r009-contradiccion")
+    ingerir(root, "acceso.md", "# Acceso\n\n## Usuarios\n\nAcceso anónimo.\n")
+    brief = BRIEF_OK.replace("- [x] (D1§3; G1)", "- [ ] (D1§2 contra D2§1) ¿Registrados o "
+                             "anónimos?\n- [x] (D1§3; G1)")
+    discovery.write_product(root, "brief.md", brief)
+    q = [x for x in preguntas(root) if x["open"]]
+    expect(len(q) == 1 and q[0]["refs"]["sections"] == ["D1§2", "D2§1"] and q[0]["issues"] == [],
+           "una contradiccion cita las dos secciones y ambas son validas", f"{q}")
+
+
 # --------------------------------------------------------------------------
 
 def main():

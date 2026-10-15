@@ -14,6 +14,7 @@ Subcomandos:
                       Anade un documento al producto como Dn, con sus
                       secciones numeradas para citarlas (D2§4.2).
   next-id G|B         Siguiente objetivo (G4) o candidata (B07) libre.
+  questions [--json]  Preguntas del brief: abiertas, respondidas y citas rotas.
 """
 
 import datetime
@@ -531,6 +532,9 @@ def parse_brief(text):
         answer = ITEM_FIELD.match(line)
         if answer and questions and norm(answer.group(1)) in ("respuesta", "answer"):
             questions[-1]["answer"] = answer.group(2).strip()
+        elif questions and questions[-1]["answer"] and line.startswith("    ") and line.strip():
+            # Continuacion sangrada de una respuesta de varias lineas.
+            questions[-1]["answer"] += " " + line.strip()
     discarded = refs(section(text, "secciones descartadas", "descartes"))["sections"]
     return {"goals": goals, "questions": questions, "discarded": discarded}
 
@@ -561,10 +565,88 @@ def cmd_next_id(args):
 
 
 # --------------------------------------------------------------------------
+# El producto entero y sus citas
+# --------------------------------------------------------------------------
+
+def load_product(root):
+    """Documentos, brief y backlog leidos de product/."""
+    documents = {}
+    for num, path in sorted(source_files(root).items()):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        documents[f"D{num}"] = {"path": path, "text": text,
+                                "fields": header_fields(text), "sections": sections(text)}
+    brief_text = read_product(root, BRIEF)
+    backlog_text = read_product(root, BACKLOG)
+    return {
+        "documents": documents,
+        "brief_text": brief_text,
+        "backlog_text": backlog_text,
+        "brief": parse_brief(brief_text or ""),
+        "backlog": parse_backlog(backlog_text or ""),
+    }
+
+
+def broken_refs(product, cited):
+    """Citas de `cited` (salida de refs) que no existen en el producto."""
+    docs = product["documents"]
+    goals = {g["id"] for g in product["brief"]["goals"]}
+    cands = {c["id"] for c in product["backlog"]["candidates"]}
+    broken = []
+    for ref in cited["sections"]:
+        did, sec = ref.split("§")
+        if did not in docs:
+            broken.append(f"{ref} (no existe {did})")
+        elif sec not in docs[did]["sections"]:
+            broken.append(f"{ref} (no existe la sección {sec} en {did})")
+    for did in cited["documents"]:
+        if did not in docs and not any(b.startswith(did + "§") for b in broken):
+            broken.append(f"{did} (no existe)")
+    broken += [f"{g} (no existe)" for g in cited["goals"] if g not in goals]
+    broken += [f"{b} (no existe)" for b in cited["candidates"] if b not in cands]
+    return broken
+
+
+def question_report(product):
+    """Preguntas del brief con los problemas de cada una."""
+    out = []
+    for q in product["brief"]["questions"]:
+        issues = broken_refs(product, q["refs"])
+        if not q["refs"]["sections"]:
+            issues.append("no cita ninguna sección de origen (Dn§x)")
+        out.append(dict(q, issues=issues))
+    return out
+
+
+def cmd_questions(args):
+    product = load_product(project_root())
+    report = question_report(product)
+    if "--json" in args:
+        json.dump(report, sys.stdout, indent=2, ensure_ascii=False)
+        sys.stdout.write("\n")
+        return 0
+    if product["brief_text"] is None:
+        print("No hay brief.md todavía: las preguntas se registran en él.")
+        return 0
+    open_q = [q for q in report if q["open"]]
+    print(f"Preguntas abiertas: {len(open_q)} · respondidas: {len(report) - len(open_q)}")
+    for q in open_q:
+        print(f"  - {q['text']}")
+        for issue in q["issues"]:
+            print(f"      ! {issue}")
+    bad_closed = [q for q in report if not q["open"] and q["issues"]]
+    for q in bad_closed:
+        print(f"  (respondida) {q['text']}")
+        for issue in q["issues"]:
+            print(f"      ! {issue}")
+    return 0
+
+
+# --------------------------------------------------------------------------
 
 COMMANDS = {
     "ingest": cmd_ingest,
     "next-id": cmd_next_id,
+    "questions": cmd_questions,
 }
 
 
