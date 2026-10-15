@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-10-15  |
-| Estado | Approved · 1e5b66ab5ad8       |
+| Estado | Approved · 313435d87c74       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -27,15 +27,15 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T001 — Esqueleto del plugin y CI
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R010
 - **Depende de:** —
 - **Archivos:** `plugins/discovery/.claude-plugin/plugin.json`, `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`, `plugins/discovery/README.md`, `.claude-plugin/marketplace.json`, `.github/workflows/validate.yml`, `specs/constitution.md`
-- **Hecho cuando:** `python3 scripts/validate.py --strict` da 2 plugins sin errores; `discovery.py` sin subcomando sale con 2 y muestra la ayuda; el ayudante de rutas rechaza escribir fuera de `product/` (`test_F001_R010_escritura_solo_en_product` pasa); el workflow ejecuta todo `plugins/*/tests/selftest.py`; la fila «Selftest de cada plugin en CI» de la constitución describe el recorrido automático y su suelo pasa a «2 de 2 plugins».
+- **Hecho cuando:** `python3 scripts/validate.py` da 2 plugins con 0 errores y como único aviso `[discovery] sin skills`, que desaparece en T005 (la rama no se fusiona antes de T005, porque el modo `--strict` del CI falla hasta entonces); `discovery.py` sin subcomando sale con 2 y muestra la ayuda; el ayudante de rutas rechaza escribir fuera de `product/` (`test_F001_R010_escritura_solo_en_product` pasa); el workflow ejecuta todo `plugins/*/tests/selftest.py`; la fila «Selftest de cada plugin en CI» de la constitución describe el recorrido automático y su suelo pasa a «2 de 2 plugins».
 
 ### T002 — Huella y campo Estado
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R002, R011, R016
 - **Depende de:** T001
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`
@@ -43,7 +43,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T003 — Ingesta de Markdown
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R001, R002, R003
 - **Depende de:** T002
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`
