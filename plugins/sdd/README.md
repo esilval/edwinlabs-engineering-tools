@@ -98,8 +98,9 @@ Cada artefacto lleva `| Estado | Draft |` en la cabecera. Solo
 - La skill solo la puede lanzar el usuario (`disable-model-invocation`).
 - La aprobación la ejecuta Claude Code al cargar la skill, con la inyección
   `` !`…` ``, así que no pasa por la herramienta Bash. Por eso el hook puede
-  denegar **cualquier** `sdd.py approve` que lance el modelo sin bloquear al
-  usuario.
+  denegar la **ejecución** de `sdd.py approve` por parte del modelo sin
+  bloquear al usuario. Mencionar la orden (en un mensaje de commit, la
+  descripción de un PR o un texto que se escribe a un archivo) no se bloquea.
 - Aprueba siempre la siguiente fase pendiente. El orden spec → plan → tasks
   hace que no haya otra aprobable, así que no necesita argumento.
 - Se niega si el artefacto no está completo.
@@ -131,7 +132,11 @@ Write y Edit declaran el archivo que tocan; Bash no. Para que `sed -i` o
    los archivos que va a escribir —redirecciones, `tee`, `sed -i`, `perl -i`,
    `cp`, `mv`, `install`, `ln`, `rm`, `touch`, `truncate`, `dd of=`— y los
    evalúa contra la compuerta igual que un Write. Las rutas relativas se
-   resuelven contra el `cwd` del comando.
+   resuelven contra el `cwd` del comando. La aprobación se reconoce por las
+   palabras del comando: el script `sdd.py` seguido de `approve`, también
+   encadenado (`&&`, `;`) o dentro de una sustitución `$(…)` o con comillas
+   invertidas que se ejecute. Lo que va entre comillas simples o en un heredoc
+   es texto. Si el comando no se puede analizar, se busca la orden en su texto.
 2. **Auditoría** (`PostToolUse`). Lo que el analizador no puede ver
    (`python -c`, un script, una variable) se detecta comparando `git status`
    antes y después del comando:
@@ -149,6 +154,14 @@ Límites:
   Añade a `exempt` lo que deba poder cambiar durante la especificación.
 - Las instantáneas se guardan en el directorio temporal del sistema, una por
   llamada (`tool_use_id`), y se barren al cabo de un día.
+- La prevención no ve una aprobación lanzada por un script, `bash -c "…"`, una
+  tubería a `sh` o un heredoc sin comillas que la ejecute: eso lo revierte la
+  auditoría.
+- **La auditoría solo vigila la feature activa.** Un comando que cambie
+  `.sdd/current`, apruebe otra feature y vuelva a dejar el puntero no se
+  detecta. Pendiente de una feature propia.
+- Un `\$(…)` escapado que contenga la orden se bloquea aunque no se ejecute:
+  peca de prudente.
 
 **Escapes**, en orden de contundencia:
 
@@ -186,6 +199,12 @@ def test_otro_caso():
     # F001-R002
     ...
 ```
+
+Una cita dentro de un **texto** no cuenta, tampoco en un docstring: un
+`"def test_F001_R001_x(): …"` escrito como dato en un test no es una prueba.
+Fuera de Python, se conservan los comentarios y la cadena que nombra una prueba
+(primer argumento de `it(…)`, `test.each(…)(…)`, `t.Run(…)`, `@DisplayName(…)`,
+o `it '…' do` en Ruby); el resto de cadenas no cuenta.
 
 El prefijo es obligatorio porque cada feature numera sus requisitos desde
 `R001`. Sin él, la prueba de una feature cubriría en silencio el requisito

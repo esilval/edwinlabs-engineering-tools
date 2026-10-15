@@ -853,6 +853,28 @@ def test_F002_R005_ejecucion_bloquea(base):
         expect(bash_bloquea(p, cmd), f"bloquea: {cmd!r}")
 
 
+def test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base):
+    print("\nF002 · R006: la auditoria revierte lo que la compuerta ya no bloquea")
+    if shutil.which("git") is None:
+        print("  (sin git: omitida)")
+        return
+    p = repo_con_feature(base, "f002-r006", spec=SPEC_BASE + "\n")
+    spec = p / "specs" / "001-x" / "spec.md"
+    spec.write_text("# S\n\n| Campo | Valor |\n| - | - |\n| Estado | Draft |\n\n## R\n\n"
+                    + SPEC_BASE, encoding="utf-8")
+    git = ["git", "-C", str(p), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(git + ["init", "-q"], check=True)
+    subprocess.run(git + ["add", "."], check=True)
+    subprocess.run(git + ["commit", "-qm", "init"], check=True)
+    opaco = "bash -c 'python3 plugins/sdd/scripts/sdd.py approve'"
+    expect(not bash_bloquea(p, opaco, "r006"), "la compuerta deja pasar un bash -c")
+    spec.write_text(spec.read_text(encoding="utf-8").replace(
+        "| Estado | Draft |", "| Estado | Approved · 0123456789ab |"), encoding="utf-8")
+    r = audita(p, "r006")
+    expect(r.returncode == 2 and "| Estado | Draft |" in spec.read_text(encoding="utf-8"),
+           "y la auditoria devuelve el Estado a Draft", r.stderr)
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -873,6 +895,7 @@ def main():
         test_F002_R001_cadena_js_no_cuenta(base)
         test_F002_R004_mencion_no_bloquea(base)
         test_F002_R005_ejecucion_bloquea(base)
+        test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
