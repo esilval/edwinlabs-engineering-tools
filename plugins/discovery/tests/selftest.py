@@ -809,6 +809,76 @@ def test_F001_R013_check_exit():
     expect(run(bueno, "check", "--check").returncode == 0, "--check sale con 0 si no los hay")
 
 
+# ----------------------------------------------------------------- T010
+
+def estado(root, nombre):
+    return discovery.doc_status((root / "product" / nombre).read_text(encoding="utf-8"))
+
+
+def test_F001_R014_rechaza_sin_artefactos():
+    root = proyecto("r014-sin-artefactos")
+    ingerir(root, "vision.md", DOC_VISION)
+    discovery.write_product(root, "brief.md", BRIEF_OK)
+    antes = foto(root)
+    r = run(root, "approve")
+    expect(r.returncode == 1 and "backlog.md" in r.stderr and foto(root) == antes,
+           "sin backlog.md no aprueba, lo dice y no crea nada", r.stderr)
+    r = run(proyecto("r014-vacio"), "approve")
+    expect(r.returncode == 1 and "brief.md" in r.stderr, "un producto vacío no se aprueba")
+
+
+def test_F001_R014_rechaza_con_errores():
+    root = producto_ok("r014-errores", brief=BRIEF_OK.replace("D1§1, D1§2, D1§3", "D1§1, D1§3"))
+    antes = foto(root)
+    r = run(root, "approve")
+    expect(r.returncode == 1 and "E-SOURCE-UNCOVERED" in r.stderr and foto(root) == antes,
+           "con errores no aprueba nada y los lista", r.stderr)
+
+
+def test_F001_R014_rechaza_pregunta_sobre_objetivo():
+    root = producto_ok("r014-pregunta-approve",
+                       brief=BRIEF_OK.replace("- [x] (D1§3; G1)", "- [ ] (D1§3; G1)"))
+    r = run(root, "approve")
+    expect(r.returncode == 1 and "E-QUESTION-OPEN-GOAL" in r.stderr
+           and estado(root, "brief.md") == "Draft", "una pregunta abierta sobre G1 bloquea")
+
+
+def test_F001_R014_aprueba_coherente():
+    root = producto_ok("r014-aprueba")
+    r = run(root, "approve")
+    expect(r.returncode == 0, "aprueba un producto coherente", r.stderr)
+    for nombre in ("brief.md", "backlog.md"):
+        texto = (root / "product" / nombre).read_text(encoding="utf-8")
+        expect(discovery.is_approved(texto) and not discovery.is_stale(texto),
+               f"{nombre} queda como Approved · <huella>", estado(root, nombre))
+    expect(not con_codigo(root, "W-PRODUCT-NOT-APPROVED"), "check ya no avisa de aprobacion")
+    expect("ya estaban aprobados" in run(root, "approve").stdout, "aprobar dos veces no cambia nada")
+    r = run(producto_ok("r014-skill", brief=BRIEF_OK.replace("D1§1, D1§2, D1§3", "D1§1, D1§3")),
+            "approve", "--skill")
+    expect(r.returncode == 0 and "No se puede aprobar" in r.stdout,
+           "approve --skill sale con 0 y escribe todo en stdout")
+
+
+def test_F001_R016_cambio_invalida():
+    root = producto_ok("r016-cambio")
+    run(root, "approve")
+    p = root / "product" / "backlog.md"
+    p.write_text(p.read_text(encoding="utf-8").replace("descarga sus movimientos",
+                                                       "descarga sus facturas"), encoding="utf-8")
+    f = con_codigo(root, "W-PRODUCT-NOT-APPROVED")
+    expect(len(f) == 1 and f[0]["file"] == "backlog.md" and "cambió" in f[0]["message"],
+           "un cambio de palabras tras aprobar figura como no aprobado", f"{f}")
+
+
+def test_F001_R016_reformateo_no_invalida():
+    root = producto_ok("r016-reformateo")
+    run(root, "approve")
+    p = root / "product" / "brief.md"
+    p.write_text(p.read_text(encoding="utf-8").replace("\n## Usuarios", "\n\n\n## Usuarios")
+                 .replace("el dueño ve", "el  dueño  ve"), encoding="utf-8")
+    expect(not con_codigo(root, "W-PRODUCT-NOT-APPROVED"), "reformatear no invalida")
+
+
 def test_zz_todos_los_codigos_se_prueban():
     # Debe ir la ultima: compara los codigos declarados con los que las
     # pruebas anteriores verificaron mediante con_codigo().

@@ -99,7 +99,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T010 — `approve` y deriva tras aprobar
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R014, R016
 - **Depende de:** T009
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`

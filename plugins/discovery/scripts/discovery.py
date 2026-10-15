@@ -19,6 +19,8 @@ Subcomandos:
                       Coherencia del producto: citas, cobertura, numeracion.
                       --json emite discovery.check/v1; --check sale con 1 si
                       hay errores (para CI).
+  approve [--skill]   Aprueba brief y backlog si check no da errores. Solo
+                      lo lanza el usuario, con /discovery:approve.
 """
 
 import datetime
@@ -669,6 +671,7 @@ FINDINGS = {
     "W-FEATURE-NO-GOAL": "Candidata que no persigue ningún objetivo",
     "W-FEATURE-NO-OUTCOME": "Candidata sin resultado observable",
     "W-QUESTION-OPEN": "Preguntas abiertas que no afectan a ningún objetivo",
+    "W-PRODUCT-NOT-APPROVED": "Brief o backlog sin aprobar, o cambiados después de aprobarse",
 }
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -833,6 +836,16 @@ def analyze(root):
     if loose:
         add("W-QUESTION-OPEN", f"Quedan {len(loose)} pregunta(s) abierta(s) que no citan ningún "
             "objetivo. Si afectan a uno, cítalo: (D1§2; G2).")
+    for name, text in ((BRIEF, product["brief_text"]), (BACKLOG, product["backlog_text"])):
+        if text is None:
+            continue
+        if is_stale(text):
+            add("W-PRODUCT-NOT-APPROVED", f"{name} cambió después de aprobarse: la aprobación "
+                "era sobre otra versión. El usuario lo revisa y ejecuta /discovery:approve.",
+                file=name)
+        elif not is_approved(text):
+            add("W-PRODUCT-NOT-APPROVED", f"{name} no está aprobado. Lo aprueba el usuario con "
+                "/discovery:approve.", file=name)
 
     errors = [f for f in findings if f["severity"] == "error"]
     return {
@@ -878,12 +891,64 @@ def cmd_check(args):
 
 
 # --------------------------------------------------------------------------
+# Aprobacion: solo la lanza el usuario, con /discovery:approve
+# --------------------------------------------------------------------------
+
+def approve(root):
+    """
+    Sella brief.md y backlog.md con 'Approved · <huella>' si el producto no
+    tiene errores (R014). Devuelve (ok, lineas_de_mensaje).
+    """
+    missing = [n for n in (BRIEF, BACKLOG) if read_product(root, n) is None]
+    if missing:
+        return False, [f"No se puede aprobar: falta {' y '.join(missing)}. "
+                       "Lo produce /discovery:decompose."]
+
+    data = analyze(root)
+    errors = [f for f in data["findings"] if f["severity"] == "error"]
+    if errors:
+        return False, (["No se puede aprobar: la comprobación da errores."]
+                       + [f"  [{f['code']}] {f['message']}" for f in errors])
+
+    texts = {n: read_product(root, n) for n in (BRIEF, BACKLOG)}
+    if all(is_approved(t) and not is_stale(t) for t in texts.values()):
+        return True, ["Brief y backlog ya estaban aprobados."]
+
+    sealed = {}
+    for name, text in texts.items():
+        stamp = f"Approved · {content_digest(text)}"
+        new, changed = set_status(text, stamp)
+        if not changed:
+            return False, [f"{name} no tiene la fila '| Estado | ... |' en la cabecera. "
+                           "Añádela y vuelve a aprobar."]
+        sealed[name] = (new, stamp)
+    for name, (new, _stamp) in sealed.items():
+        write_product(root, name, new)
+    return True, [f"{name} aprobado ({stamp})." for name, (_n, stamp) in sealed.items()]
+
+
+def cmd_approve(args):
+    """
+    Con --skill (lo usa /discovery:approve) todo va a stdout y sale siempre con
+    0: el resultado lo lee el modelo como texto, no como codigo de salida.
+    """
+    ok, lines = approve(project_root())
+    stream = sys.stdout if (ok or "--skill" in args) else sys.stderr
+    print("\n".join(lines), file=stream)
+    if ok:
+        print("Siguiente: el handoff de candidatas a sdd (feature aparte) o seguir "
+              "ingiriendo documentos.")
+    return 0 if (ok or "--skill" in args) else 1
+
+
+# --------------------------------------------------------------------------
 
 COMMANDS = {
     "ingest": cmd_ingest,
     "next-id": cmd_next_id,
     "questions": cmd_questions,
     "check": cmd_check,
+    "approve": cmd_approve,
 }
 
 
