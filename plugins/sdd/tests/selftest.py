@@ -729,11 +729,48 @@ def test_F002_R002_nombre_y_comentario_cuentan(base):
 def test_F002_R002_python_invalido_no_revienta(base):
     print("\nF002 · R002: un archivo Python que no se tokeniza no rompe nada")
     p = repo_con_feature(base, "f002-r002-invalido", archivos={"tests/test_roto.py": (
-        "def test_F001_R001_x(:\n    assert '''sin cerrar\n")})
+        "def test_otro():\n    a = 'F001-R002'\n    assert '''sin cerrar\n")})
     r = run("trace", ["--json"], cwd=p)
     expect(r.returncode == 0, "trace no revienta", r.stderr)
-    expect(evidencia(p, "R001") == ["tests/test_roto.py::test_F001_R001_x"],
-           "se usa el texto tal cual, como antes", f"{evidencia(p, 'R001')}")
+    expect(evidencia(p, "R002") == ["tests/test_roto.py::test_otro"],
+           "se usa el texto tal cual, como antes: la cita en la cadena vuelve a contar",
+           f"{evidencia(p, 'R002')}")
+
+
+def test_F002_R002_salto_de_pagina(base):
+    print("\nF002 · R002: un salto de pagina no desalinea la vista de codigo")
+    p = repo_con_feature(base, "f002-r002-ff", archivos={"tests/test_ff.py": (
+        "\x0c\ndef test_F001_R001_ok():\n    s = 'F001-R002 en texto'\n    assert s\n")})
+    expect(evidencia(p, "R001") == ["tests/test_ff.py::test_F001_R001_ok"],
+           "el nombre de la prueba sigue contando", f"{evidencia(p, 'R001')}")
+    expect(evidencia(p, "R002") == [], "y la cita en el texto sigue sin contar",
+           f"{evidencia(p, 'R002')}")
+
+
+def test_F002_R002_titulo_js_cuenta(base):
+    print("\nF002 · R002: el titulo de una prueba JS o Ruby sigue contando")
+    p = repo_con_feature(base, "f002-r002-js", archivos={
+        "tests/login.spec.ts": ("describe('login', () => {\n"
+                                "  it('F001_R001 rechaza el token caducado', () => {\n"
+                                "    expect(login('x')).toBe(false);\n  });\n});\n"),
+        "spec/pagos_spec.rb": ("describe 'pagos' do\n  it 'F001-R002 cobra a fin de mes' do\n"
+                               "    expect(cobro).to eq(1)\n  end\nend\n"),
+    })
+    expect(evidencia(p, "R001") == ["tests/login.spec.ts::F001_R001 rechaza el token caducado"],
+           "it('…') en TypeScript cuenta", f"{evidencia(p, 'R001')}")
+    expect(evidencia(p, "R002") != [], "it '…' do en Ruby cuenta", f"{evidencia(p, 'R002')}")
+
+
+def test_F002_R001_cadena_js_no_cuenta(base):
+    print("\nF002 · R001: una cadena en JS que no es titulo no cuenta")
+    p = repo_con_feature(base, "f002-r001-js", archivos={"tests/fix.test.js": (
+        "const FIXTURE = \"it('F001_R001 falso', () => {})\";\n"
+        "test('usa el fixture', () => {\n"
+        "  const nota = `ver F001-R002`;\n  expect(FIXTURE).toBeTruthy();\n});\n")})
+    expect(evidencia(p, "R001") == [], "un it('…') dentro de una cadena no cuenta",
+           f"{evidencia(p, 'R001')}")
+    expect(evidencia(p, "R002") == [], "una plantilla `…` con la cita no cuenta",
+           f"{evidencia(p, 'R002')}")
 
 
 MENCIONES = [
@@ -750,6 +787,10 @@ EJECUCIONES = [
     'python3 "$HOME/plugins/sdd/scripts/sdd.py" approve',
     "cd plugins/sdd && python3 scripts/sdd.py approve",
     "ls; FOO=1 python3 sdd.py approve tasks",
+    "echo `python3 sdd.py approve`",
+    'echo "$(python3 sdd.py approve)"',
+    'git commit -m "$(python3 /x/sdd.py approve plan)"',
+    "x=$(cd y && python3 sdd.py approve)",
 ]
 
 
@@ -785,6 +826,9 @@ def main():
         test_F002_R001_cita_en_texto_no_cuenta(base)
         test_F002_R002_nombre_y_comentario_cuentan(base)
         test_F002_R002_python_invalido_no_revienta(base)
+        test_F002_R002_salto_de_pagina(base)
+        test_F002_R002_titulo_js_cuenta(base)
+        test_F002_R001_cadena_js_no_cuenta(base)
         test_F002_R004_mencion_no_bloquea(base)
         test_F002_R005_ejecucion_bloquea(base)
     finally:

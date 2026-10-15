@@ -405,6 +405,26 @@ def is_test_file(path):
     return any(norm(part) in TEST_DIRS for part in path.parts[:-1])
 
 
+QUOTED = re.compile(r"""(["'`])(?:\\.|(?!\1).)*\1""")
+# Titulo de una prueba con nombre de texto: it("…"), test('…'), describe(`…`)
+# en JS/TS, o `it '…' do` en Ruby. Es la forma normal de nombrar una prueba y
+# se conserva en la vista de codigo.
+TEST_TITLE = re.compile(
+    r"""\b(?:it|test|describe|context|specify)\s*\(?\s*(["'`])(?:\\.|(?!\1).)*\1""")
+
+
+def _blank_quotes(line):
+    """Vacia los textos entre comillas de una linea, salvo el titulo de una prueba."""
+    keep = [m.span() for m in TEST_TITLE.finditer(line)]
+
+    def blank(m):
+        if any(s <= m.start() and m.end() <= e for s, e in keep):
+            return m.group(0)
+        return " " * len(m.group(0))
+
+    return QUOTED.sub(blank, line)
+
+
 def code_view(content, suffix):
     """
     Lineas del archivo con el contenido de los textos literales en blanco,
@@ -412,20 +432,26 @@ def code_view(content, suffix):
     aqui: una cadena "def test_F001_R001_x()" escrita como dato en un test no
     es una prueba (R001 de la feature 002). Nombres y comentarios se conservan.
 
-    Python se tokeniza, que conoce las cadenas de varias lineas. Si no se puede
-    tokenizar, o el lenguaje es otro, se devuelve el texto tal cual.
+    Python se tokeniza, que conoce las cadenas de varias lineas; si no se puede
+    tokenizar, se devuelve el texto tal cual. En los demas lenguajes se vacian
+    por linea los textos entre comillas, salvo el titulo de una prueba
+    (it("…"), test('…'), `it '…' do`).
     """
     lines = content.splitlines()
     if suffix != ".py":
-        return lines
-    import io
+        return [_blank_quotes(line) for line in lines]
     import tokenize
     string_types = {tokenize.STRING}
-    if hasattr(tokenize, "FSTRING_MIDDLE"):  # Python 3.12+: f-strings por partes
-        string_types.add(tokenize.FSTRING_MIDDLE)
+    for name in ("FSTRING_MIDDLE", "TSTRING_MIDDLE"):  # f-strings 3.12+, t-strings 3.14+
+        if hasattr(tokenize, name):
+            string_types.add(getattr(tokenize, name))
     chars = [list(line) for line in lines]
+    # Se tokenizan las mismas lineas que devuelve splitlines(): asi las filas de
+    # los tokens coinciden aunque el archivo tenga saltos de pagina (\x0c) u
+    # otros separadores que splitlines() corta y tokenize no.
+    feed = iter([line + "\n" for line in lines])
     try:
-        for tok in tokenize.generate_tokens(io.StringIO(content).readline):
+        for tok in tokenize.generate_tokens(lambda: next(feed, "")):
             if tok.type not in string_types:
                 continue
             (srow, scol), (erow, ecol) = tok.start, tok.end

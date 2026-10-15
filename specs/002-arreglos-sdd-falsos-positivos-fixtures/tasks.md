@@ -35,7 +35,7 @@ Todas las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T002 — Vista de código para archivos de prueba Python
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd_trace.py`, `plugins/sdd/tests/selftest.py`
@@ -43,7 +43,7 @@ Todas las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T003 — Vista de código para otros lenguajes
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R001, R002
 - **Depende de:** T002
 - **Archivos:** `plugins/sdd/scripts/sdd_trace.py`, `plugins/sdd/tests/selftest.py`

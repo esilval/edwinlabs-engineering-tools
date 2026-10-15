@@ -171,8 +171,13 @@ def invokes_approve(command):
     `bash -c` o un interprete con el codigo en linea) lo revierte la auditoria
     de PostToolUse. Un comando que no se puede analizar no se deniega.
     """
+    command = _strip_heredocs(command or "")
+    # Lo que va dentro de $(…) o de `…` se ejecuta, aunque este entre comillas
+    # dobles: se analiza como un comando aparte.
+    if any(invokes_approve(inner) for inner in _substitutions(command)):
+        return True
     try:
-        tokens = _tokens(_strip_heredocs(command or ""))
+        tokens = _tokens(command)
     except ValueError:
         return False
     for seg, _redirects in _segments(tokens):
@@ -181,6 +186,22 @@ def invokes_approve(command):
             if os.path.basename(word) == "sdd.py" and nxt == "approve":
                 return True
     return False
+
+
+def _substitutions(command):
+    """Contenido de las sustituciones de comandos `…` y $(…), sin anidar."""
+    found = re.findall(r"`([^`]*)`", command)
+    depth, start = 0, None
+    for i, ch in enumerate(command):
+        if command.startswith("$(", i) and not command.startswith("$((", i):
+            if depth == 0:
+                start = i + 2
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                found.append(command[start:i])
+    return found
 
 
 def mentions_approval(command):
