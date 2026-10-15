@@ -15,7 +15,10 @@ Subcomandos:
                       secciones numeradas para citarlas (D2§4.2).
   next-id G|B         Siguiente objetivo (G4) o candidata (B07) libre.
   questions [--json]  Preguntas del brief: abiertas, respondidas y citas rotas.
-  check               Coherencia del producto: citas, cobertura, numeracion.
+  check [--json] [--check]
+                      Coherencia del producto: citas, cobertura, numeracion.
+                      --json emite discovery.check/v1; --check sale con 1 si
+                      hay errores (para CI).
 """
 
 import datetime
@@ -663,6 +666,9 @@ FINDINGS = {
     "E-BACKLOG-REQUIREMENT": "Objetivo o candidata redactado como requisito",
     "E-QUESTION-OPEN-GOAL": "Pregunta abierta que afecta a un objetivo",
     "E-PRODUCT-TEMPLATE": "Brief o backlog con huecos de plantilla sin rellenar",
+    "W-FEATURE-NO-GOAL": "Candidata que no persigue ningún objetivo",
+    "W-FEATURE-NO-OUTCOME": "Candidata sin resultado observable",
+    "W-QUESTION-OPEN": "Preguntas abiertas que no afectan a ningún objetivo",
 }
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -814,6 +820,20 @@ def analyze(root):
             add("E-PRODUCT-TEMPLATE", f"{name} conserva {len(holes)} hueco(s) de plantilla; el "
                 f"primero en la línea {line}: {sample[:70]}", file=name)
 
+    # Avisos: no bloquean la aprobacion
+    for c in live:
+        if not refs(c["fields"].get("objetivos", ""))["goals"]:
+            add("W-FEATURE-NO-GOAL", f"{c['id']} no persigue ningún objetivo: o sobra, o falta "
+                "el objetivo en el brief.", item=c["id"])
+        outcome = c["fields"].get("resultado observable", "").strip(" —-_")
+        if not outcome:
+            add("W-FEATURE-NO-OUTCOME", f"{c['id']} no tiene resultado observable: suele ser una "
+                "capa técnica disfrazada de feature.", item=c["id"])
+    loose = [q for q in brief["questions"] if q["open"] and not q["refs"]["goals"]]
+    if loose:
+        add("W-QUESTION-OPEN", f"Quedan {len(loose)} pregunta(s) abierta(s) que no citan ningún "
+            "objetivo. Si afectan a uno, cítalo: (D1§2; G2).")
+
     errors = [f for f in findings if f["severity"] == "error"]
     return {
         "schema": "discovery.check/v1",
@@ -844,9 +864,17 @@ def report(data):
 
 
 def cmd_check(args):
+    """
+    Informe legible (siempre exit 0), --json (schema discovery.check/v1) o
+    --check (exit 1 si hay errores): lo mismo en local y en CI.
+    """
     data = analyze(project_root())
-    print(report(data))
-    return 0
+    if "--json" in args:
+        json.dump(data, sys.stdout, indent=2, ensure_ascii=False)
+        sys.stdout.write("\n")
+    else:
+        print(report(data))
+    return 1 if ("--check" in args and not data["ok"]) else 0
 
 
 # --------------------------------------------------------------------------

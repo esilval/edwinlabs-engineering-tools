@@ -91,7 +91,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T009 — `check`: avisos, JSON y modo CI
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R012, R013
 - **Depende de:** T008
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`

@@ -636,6 +636,15 @@ def comprobar(root):
     return discovery.analyze(root)
 
 
+PROBADOS = set()
+
+
+def con_codigo(root, code):
+    """Hallazgos de un codigo, registrando que el selftest lo prueba."""
+    PROBADOS.add(code)
+    return [f for f in comprobar(root)["findings"] if f["code"] == code]
+
+
 def codigos(root):
     return {f["code"] for f in comprobar(root)["findings"]}
 
@@ -653,7 +662,7 @@ def test_F001_R011_objetivo_sin_candidata():
     brief = BRIEF_OK.replace("## Usuarios", "### G3 — Objetivo huérfano\n\n- **Origen:** D1§4\n\n"
                              "## Usuarios")
     root = producto_ok("r011-goal", brief=brief)
-    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-GOAL-NO-FEATURE"]
+    f = con_codigo(root, "E-GOAL-NO-FEATURE")
     expect(len(f) == 1 and "G3" in f[0]["message"], "E-GOAL-NO-FEATURE nombra G3", f"{f}")
     solo_descartada = BACKLOG_OK.replace("- **Objetivos:** G2\n- **Origen:** D1§4\n- **Problema:** "
                                          "el dueño copia", "- **Objetivos:** G1\n- **Origen:** "
@@ -666,7 +675,7 @@ def test_F001_R011_objetivo_sin_candidata():
 def test_F001_R011_seccion_sin_cubrir():
     brief = BRIEF_OK.replace("D1§1, D1§2, D1§3", "D1§1, D1§3")
     root = producto_ok("r011-uncovered", brief=brief)
-    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-SOURCE-UNCOVERED"]
+    f = con_codigo(root, "E-SOURCE-UNCOVERED")
     expect(len(f) == 1 and f[0]["section"] == "D1§2", "E-SOURCE-UNCOVERED nombra D1§2", f"{f}")
     descartada = brief.replace("- Ninguna.\n\n## Preguntas", "- D1§2 — los usuarios ya se "
                                "describen en el brief\n\n## Preguntas")
@@ -679,7 +688,7 @@ def test_F001_R011_referencia_inexistente():
     backlog = backlog.replace("- **Origen:** D1§1, D1§3\n", "- **Origen:** D1§1, D1§3, D4§1\n", 1)
     backlog = backlog.replace("- **Depende de:** B01", "- **Depende de:** B01, B42")
     root = producto_ok("r011-refs", backlog=backlog)
-    msgs = [x["message"] for x in comprobar(root)["findings"] if x["code"] == "E-REF-UNKNOWN"]
+    msgs = [x["message"] for x in con_codigo(root, "E-REF-UNKNOWN")]
     expect(any("G9" in m for m in msgs) and any("D4§1" in m for m in msgs)
            and any("B42" in m for m in msgs), "un error por cada cita rota", f"{msgs}")
 
@@ -692,7 +701,7 @@ def test_F001_R011_dependencia_circular():
     backlog = backlog.replace("- **Fuera:** comparativas entre días.\n- **Depende de:** —",
                               "- **Fuera:** comparativas entre días.\n- **Depende de:** B02")
     root = producto_ok("r011-ciclo", backlog=backlog)
-    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-BACKLOG-DEP-CYCLE"]
+    f = con_codigo(root, "E-BACKLOG-DEP-CYCLE")
     expect(f and "B01" in f[0]["message"] and "B02" in f[0]["message"],
            "E-BACKLOG-DEP-CYCLE nombra B01 y B02", f"{f}")
 
@@ -702,7 +711,7 @@ def test_F001_R011_documento_modificado():
     p = next((root / "product" / "sources").glob("D1-*.md"))
     p.write_text(p.read_text(encoding="utf-8").replace("Un resumen diario", "Un resumen semanal"),
                  encoding="utf-8")
-    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-SOURCE-MODIFIED"]
+    f = con_codigo(root, "E-SOURCE-MODIFIED")
     expect(len(f) == 1 and f[0]["document"] == "D1", "E-SOURCE-MODIFIED nombra D1", f"{f}")
 
 
@@ -710,11 +719,11 @@ def test_F001_R008_hueco_en_ids():
     backlog = BACKLOG_OK.replace("### B02 — Exportar movimientos", "### B04 — Exportar movimientos")
     backlog = backlog.replace("- **Depende de:** B02", "- **Depende de:** B04")
     root = producto_ok("r008-hueco", backlog=backlog)
-    msgs = [x["message"] for x in comprobar(root)["findings"] if x["code"] == "E-BACKLOG-ID-GAP"]
+    msgs = [x["message"] for x in con_codigo(root, "E-BACKLOG-ID-GAP")]
     expect(any("B02" in m for m in msgs), "E-BACKLOG-ID-GAP señala que falta B02", f"{msgs}")
     repetido = BACKLOG_OK.replace("### B03 —", "### B02 —")
     discovery.write_product(root, "backlog.md", repetido)
-    msgs = [x["message"] for x in comprobar(root)["findings"] if x["code"] == "E-BACKLOG-ID-GAP"]
+    msgs = [x["message"] for x in con_codigo(root, "E-BACKLOG-ID-GAP")]
     expect(any("repetid" in m and "B2" in m.replace("B02", "B2") for m in msgs),
            "y un ID repetido", f"{msgs}")
 
@@ -723,7 +732,7 @@ def test_F001_R010_candidata_redactada_como_requisito():
     backlog = BACKLOG_OK.replace("el dueño ve el total del día al cerrar.",
                                  "el sistema DEBERÁ mostrar el total del día.")
     root = producto_ok("r010-requisito", backlog=backlog)
-    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-BACKLOG-REQUIREMENT"]
+    f = con_codigo(root, "E-BACKLOG-REQUIREMENT")
     expect(len(f) == 1 and f[0]["item"] == "B01", "E-BACKLOG-REQUIREMENT nombra B01", f"{f}")
 
 
@@ -741,19 +750,71 @@ def test_F001_R010_comandos_no_tocan_specs():
 
 def test_F001_R014_pregunta_abierta_sobre_objetivo():
     root = producto_ok("r014-pregunta", brief=BRIEF_OK.replace("- [x] (D1§3; G1)", "- [ ] (D1§3; G1)"))
-    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-QUESTION-OPEN-GOAL"]
+    f = con_codigo(root, "E-QUESTION-OPEN-GOAL")
     expect(len(f) == 1 and "G1" in f[0]["message"], "E-QUESTION-OPEN-GOAL nombra G1", f"{f}")
 
 
 def test_F001_R014_huecos_de_plantilla():
     plantilla = (PLUGIN / "templates" / "backlog.md").read_text(encoding="utf-8")
     root = producto_ok("r014-plantilla", backlog=plantilla)
-    f = [x for x in comprobar(root)["findings"] if x["code"] == "E-PRODUCT-TEMPLATE"]
+    f = con_codigo(root, "E-PRODUCT-TEMPLATE")
     expect(len(f) == 1 and f[0]["file"] == "backlog.md", "E-PRODUCT-TEMPLATE en backlog.md", f"{f}")
     plantilla_brief = (PLUGIN / "templates" / "brief.md").read_text(encoding="utf-8")
     discovery.write_product(root, "brief.md", plantilla_brief)
     expect(any(x["file"] == "brief.md" for x in comprobar(root)["findings"]
                if x["code"] == "E-PRODUCT-TEMPLATE"), "y en brief.md")
+
+
+# ----------------------------------------------------------------- T009
+
+def test_F001_R012_avisos():
+    backlog = BACKLOG_OK.replace("- **Objetivos:** G2\n- **Origen:** D1§4\n- **Problema:** el dueño "
+                                 "copia", "- **Objetivos:** —\n- **Origen:** D1§4\n- **Problema:** "
+                                 "el dueño copia")
+    backlog = backlog.replace("- **Resultado observable:** el dueño ve el total del día al cerrar.",
+                              "- **Resultado observable:** —")
+    brief = BRIEF_OK.replace("- [x] (D1§3; G1)", "- [ ] (D1§2) ¿Algo general?\n- [x] (D1§3; G1)")
+    root = producto_ok("r012-avisos", brief=brief, backlog=backlog)
+    sin_objetivo = con_codigo(root, "W-FEATURE-NO-GOAL")
+    sin_resultado = con_codigo(root, "W-FEATURE-NO-OUTCOME")
+    sueltas = con_codigo(root, "W-QUESTION-OPEN")
+    expect([f["item"] for f in sin_objetivo] == ["B02"], "W-FEATURE-NO-GOAL nombra B02",
+           f"{sin_objetivo}")
+    expect([f["item"] for f in sin_resultado] == ["B01"], "W-FEATURE-NO-OUTCOME nombra B01",
+           f"{sin_resultado}")
+    expect(len(sueltas) == 1 and "1 pregunta" in sueltas[0]["message"],
+           "W-QUESTION-OPEN cuenta la pregunta que no cita objetivo")
+    expect(all(f["severity"] == "warning" for f in sin_objetivo + sin_resultado + sueltas),
+           "los tres son avisos")
+
+
+def test_F001_R013_json_schema():
+    root = producto_ok("r013-json", brief=BRIEF_OK.replace("D1§1, D1§2, D1§3", "D1§1, D1§3"))
+    r = run(root, "check", "--json")
+    d = json.loads(r.stdout)
+    expect(r.returncode == 0 and d["schema"] == "discovery.check/v1", "schema versionado")
+    expect(set(d) >= {"schema", "ok", "counts", "documents", "goals", "candidates",
+                      "questions", "findings"}, "claves del contrato", f"{sorted(d)}")
+    expect(d["findings"] and all({"code", "severity", "title", "message"} <= set(f)
+                                 for f in d["findings"]),
+           "cada hallazgo lleva code, severity, title y message")
+    expect(d["ok"] is False and d["counts"]["errors"] >= 1, "ok refleja los errores")
+
+
+def test_F001_R013_check_exit():
+    malo = producto_ok("r013-exit-malo", brief=BRIEF_OK.replace("D1§1, D1§2, D1§3", "D1§1, D1§3"))
+    bueno = producto_ok("r013-exit-bueno")
+    expect(run(malo, "check").returncode == 0, "sin --check el informe sale con 0")
+    expect(run(malo, "check", "--check").returncode == 1, "--check sale con 1 si hay errores")
+    expect(run(bueno, "check", "--check").returncode == 0, "--check sale con 0 si no los hay")
+
+
+def test_zz_todos_los_codigos_se_prueban():
+    # Debe ir la ultima: compara los codigos declarados con los que las
+    # pruebas anteriores verificaron mediante con_codigo().
+    declarados = set(discovery.FINDINGS)
+    expect(declarados <= PROBADOS, f"los {len(declarados)} codigos declarados se prueban",
+           f"sin probar: {sorted(declarados - PROBADOS)}")
 
 
 # --------------------------------------------------------------------------
