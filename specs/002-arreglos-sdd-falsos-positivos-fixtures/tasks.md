@@ -43,7 +43,7 @@ Todas las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T003 — Fuera de Python, el texto tal cual (redefinida tras retirar R001)
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R010, R002
 - **Depende de:** T002
 - **Archivos:** `plugins/sdd/scripts/sdd_trace.py`, `plugins/sdd/tests/selftest.py`, `plugins/sdd/README.md`
@@ -67,7 +67,7 @@ Todas las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T006 — Cierre sobre el caso real
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R010, R002
 - **Depende de:** T003, T005
 - **Archivos:** —

@@ -784,12 +784,14 @@ OTROS_LENGUAJES = {
         "void cobra() { assertEquals(1, cobro()); }\n"),
 }
 
+# Evidencia exacta, etiquetas incluidas: la misma que daba sdd_trace.py antes de
+# la feature 002 sobre estos archivos (verificado contra 23b5c1e).
 ESPERADO = {
-    "R001": ["tests/a.test.js", "spec/pagos_spec.rb", "test/login.bats", "LoginTests.cs",
-             "login_test.go"],
-    "R002": ["tests/a.test.js", "tests/datos.test.js", "spec/pagos_spec.rb",
+    "R001": ["LoginTests.cs", "login_test.go::TestLogin", "spec/pagos_spec.rb",
+             "test/login.bats", "tests/a.test.js::caduca"],
+    "R002": ["login_test.go::TestLogin", "spec/pagos_spec.rb", "src/test/java/PagosTest.java",
              "src/test/kotlin/LoginTest.kt", "src/test/scala/LoginSpec.scala",
-             "login_test.go", "src/test/java/PagosTest.java"],
+             "tests/a.test.js::caduca", "tests/datos.test.js::F001_R002 dato"],
 }
 
 
@@ -797,11 +799,10 @@ def test_F002_R010_otros_lenguajes_como_antes(base):
     print("\nF002 · R010: fuera de Python las citas cuentan como antes")
     spec = SPEC_BASE.replace("| R002 | SHOULD |", "| R002 | MUST |")
     p = repo_con_feature(base, "f002-r010-otros", spec=spec, archivos=OTROS_LENGUAJES)
-    for rid, archivos in ESPERADO.items():
+    for rid, esperada in ESPERADO.items():
         encontrados = evidencia(p, rid)
-        for archivo in archivos:
-            expect(any(t == archivo or t.startswith(archivo + "::") for t in encontrados),
-                   f"{rid} sigue contando en {archivo}", f"{encontrados}")
+        expect(encontrados == esperada, f"la evidencia de {rid} es exactamente la de antes",
+               f"{encontrados}")
 
 
 MENCIONES = [
