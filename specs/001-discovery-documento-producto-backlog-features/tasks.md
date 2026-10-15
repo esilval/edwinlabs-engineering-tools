@@ -123,7 +123,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T013 — Skills check y approve
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R011, R014, R015
 - **Depende de:** T010, T011
 - **Archivos:** `plugins/discovery/skills/check/SKILL.md`, `plugins/discovery/skills/approve/SKILL.md`
