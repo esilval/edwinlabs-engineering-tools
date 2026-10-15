@@ -139,6 +139,109 @@ def test_huella_de_texto():
            "contenido distinto, huella distinta")
 
 
+# ----------------------------------------------------------------- T003
+
+def foto(root):
+    """Contenido de product/, para comprobar que un rechazo no cambia nada."""
+    base = root / "product"
+    if not base.exists():
+        return None
+    return {str(p.relative_to(base)): p.read_bytes() for p in sorted(base.rglob("*")) if p.is_file()}
+
+
+def doc(root, nombre, texto):
+    p = root / "entrada" / nombre
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(texto, encoding="utf-8")
+    return p
+
+
+def ingerir(root, nombre, texto):
+    r = run(root, "ingest", str(doc(root, nombre, texto)))
+    return r, (json.loads(r.stdout) if r.returncode == 0 else None)
+
+
+def guardado(root, did):
+    return next((root / "product" / "sources").glob(f"{did}-*.md")).read_text(encoding="utf-8")
+
+
+def test_F001_R001_ids_correlativos():
+    root = proyecto("r001-ids")
+    ids = [ingerir(root, f"{n}.md", f"# {n}\n\n## Parte\n\n{n} texto.\n")[1]["document"]
+           for n in ("vision", "pagos", "informes")]
+    expect(ids == ["D1", "D2", "D3"], "D1, D2, D3 en orden de ingesta", f"{ids}")
+    nombres = sorted(p.name for p in (root / "product" / "sources").iterdir())
+    expect(nombres == ["D1-vision.md", "D2-pagos.md", "D3-informes.md"],
+           "un archivo por documento en product/sources", f"{nombres}")
+    cabecera = discovery.header_fields(guardado(root, "D2"))
+    expect(cabecera.get("Documento") == "D2" and cabecera.get("Original") == "pagos.md"
+           and len(cabecera.get("Huella original", "")) == 12
+           and len(cabecera.get("Huella", "")) == 12 and cabecera.get("Ingesta"),
+           "cabecera con documento, original, ingesta y las dos huellas", f"{cabecera}")
+
+
+def test_F001_R001_numeracion_anidada():
+    root = proyecto("r001-anidada")
+    texto = ("# Producto\n\nIntro.\n\n## Usuarios\n\n### Comercios\n\n### Clientes\n\n"
+             "#### Empresas\n\n## Pagos\n\n### Recurrentes\n\n```\n## no es seccion\n```\n")
+    r, out = ingerir(root, "producto.md", texto)
+    expect(r.returncode == 0, "ingesta correcta", r.stderr)
+    guardo = guardado(root, out["document"])
+    expect(discovery.sections(guardo) == ["1", "1.1", "1.2", "1.2.1", "2", "2.1"],
+           "secciones 1, 1.1, 1.2, 1.2.1, 2, 2.1", f"{discovery.sections(guardo)}")
+    for linea in ("## 1 Usuarios", "### 1.2 Clientes",
+                  "#### 1.2.1 Empresas", "### 2.1 Recurrentes"):
+        expect(linea in guardo, f"encabezado reescrito: {linea}")
+    expect("## no es seccion" in guardo, "un encabezado dentro de un bloque de codigo no se numera")
+
+
+def test_F001_R001_h1_unico_es_titulo():
+    root = proyecto("r001-titulo")
+    r, out = ingerir(root, "vision.md", "# Visión\n\n## Problema\n\n## Usuarios\n")
+    guardo = guardado(root, "D1")
+    expect(out["title"] == "Visión" and "\n# Visión\n" in guardo,
+           "el H1 unico es el titulo y queda sin numero")
+    expect(discovery.sections(guardo) == ["1", "2"], "las secciones bajo el titulo empiezan en 1",
+           f"{discovery.sections(guardo)}")
+    root2 = proyecto("r001-dos-h1")
+    ingerir(root2, "notas.md", "# Uno\n\ntexto\n\n# Dos\n\ntexto\n")
+    expect(discovery.sections(guardado(root2, "D1")) == ["1", "2"],
+           "con dos H1 no hay titulo: ambos son secciones")
+
+
+def test_F001_R001_sin_encabezados_es_una_seccion():
+    root = proyecto("r001-plano")
+    r, out = ingerir(root, "nota.md", "Solo un parrafo sin encabezados.\n")
+    expect(r.returncode == 0 and discovery.sections(guardado(root, "D1")) == ["1"],
+           "un documento sin encabezados es la seccion 1")
+
+
+def test_F001_R002_duplicado_rechazado():
+    root = proyecto("r002-duplicado")
+    ingerir(root, "vision.md", "# Visión\n\n## Problema\n\nTexto.\n")
+    antes = foto(root)
+    r, _ = ingerir(root, "copia-con-otro-nombre.md", "# Visión\n## Problema\nTexto.\n")
+    expect(r.returncode == 1 and "D1" in r.stderr and "vision.md" in r.stderr,
+           "rechaza el duplicado nombrando D1 y su original", r.stderr)
+    expect(foto(root) == antes, "el producto no cambia")
+    r, out = ingerir(root, "otra.md", "# Visión\n\n## Problema\n\nOtro texto.\n")
+    expect(r.returncode == 0 and out["document"] == "D2", "un contenido distinto sí entra")
+
+
+def test_F001_R003_formato_no_admitido():
+    root = proyecto("r003-formato")
+    for nombre in ("datos.xlsx", "captura.png", "notas.txt"):
+        p = root / "entrada" / nombre
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"\x00\x01binario")
+        r = run(root, "ingest", str(p))
+        expect(r.returncode == 1 and "Markdown" in r.stderr and "Word" in r.stderr
+               and "PDF" in r.stderr, f"rechaza {nombre} listando los formatos admitidos", r.stderr)
+    expect(foto(root) is None, "el producto no se crea ni cambia")
+    r = run(root, "ingest", str(root / "entrada" / "no-existe.md"))
+    expect(r.returncode == 1 and foto(root) is None, "un archivo inexistente se rechaza sin cambios")
+
+
 # --------------------------------------------------------------------------
 
 def main():
