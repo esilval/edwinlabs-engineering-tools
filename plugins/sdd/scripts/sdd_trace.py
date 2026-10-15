@@ -405,24 +405,52 @@ def is_test_file(path):
     return any(norm(part) in TEST_DIRS for part in path.parts[:-1])
 
 
-QUOTED = re.compile(r"""(["'`])(?:\\.|(?!\1).)*\1""")
-# Titulo de una prueba con nombre de texto: it("…"), test('…'), describe(`…`)
-# en JS/TS, o `it '…' do` en Ruby. Es la forma normal de nombrar una prueba y
-# se conserva en la vista de codigo.
-TEST_TITLE = re.compile(
-    r"""\b(?:it|test|describe|context|specify)\s*\(?\s*(["'`])(?:\\.|(?!\1).)*\1""")
+HASH_COMMENT = {".rb", ".sh", ".bash"}
+# Lo que precede a una cadena que es el primer argumento de una llamada:
+# it(, it.only(, test.each([…])(, t.Run(, @DisplayName(.
+CALL_OPEN = re.compile(r"[\w$\])]\s*\(\s*$")
+# Titulo de una prueba de Ruby sin parentesis: it '…' do, describe "…" do.
+RUBY_TITLE = re.compile(r"(?:^|[\s;{])(?:it|describe|context|specify|test)\s+$")
 
 
-def _blank_quotes(line):
-    """Vacia los textos entre comillas de una linea, salvo el titulo de una prueba."""
-    keep = [m.span() for m in TEST_TITLE.finditer(line)]
+def _is_title(line, start):
+    """True si la cadena que empieza en `start` nombra una prueba."""
+    before = line[:start]
+    return bool(CALL_OPEN.search(before) or RUBY_TITLE.search(before))
 
-    def blank(m):
-        if any(s <= m.start() and m.end() <= e for s, e in keep):
-            return m.group(0)
-        return " " * len(m.group(0))
 
-    return QUOTED.sub(blank, line)
+def _blank_quotes(line, suffix):
+    """
+    Vacia las cadenas de una linea que no nombran una prueba. Recorre la linea
+    distinguiendo comentarios (`//`, `/* … */`, y `#` en Ruby y shell), que se
+    conservan enteros aunque lleven apostrofos, de cadenas ("…", '…', `…`).
+    Una cadena se conserva si es el primer argumento de una llamada o el titulo
+    de una prueba de Ruby; las demas se vacian.
+    """
+    out, i, n = list(line), 0, len(line)
+    hash_comment = suffix in HASH_COMMENT
+    while i < n:
+        ch = line[i]
+        if hash_comment and ch == "#":
+            break
+        if not hash_comment and line.startswith("//", i):
+            break
+        if not hash_comment and line.startswith("/*", i):
+            end = line.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+            continue
+        if ch in "\"'`":
+            j = i + 1
+            while j < n and line[j] != ch:
+                j += 2 if line[j] == "\\" else 1
+            if j >= n:
+                break  # cadena sin cerrar en esta linea: el resto se deja igual
+            if not _is_title(line, i):
+                out[i:j + 1] = " " * (j + 1 - i)
+            i = j + 1
+            continue
+        i += 1
+    return "".join(out)
 
 
 def code_view(content, suffix):
@@ -434,12 +462,12 @@ def code_view(content, suffix):
 
     Python se tokeniza, que conoce las cadenas de varias lineas; si no se puede
     tokenizar, se devuelve el texto tal cual. En los demas lenguajes se vacian
-    por linea los textos entre comillas, salvo el titulo de una prueba
-    (it("…"), test('…'), `it '…' do`).
+    por linea las cadenas que no nombran una prueba (ver _blank_quotes); los
+    comentarios se conservan.
     """
     lines = content.splitlines()
     if suffix != ".py":
-        return [_blank_quotes(line) for line in lines]
+        return [_blank_quotes(line, suffix) for line in lines]
     import tokenize
     string_types = {tokenize.STRING}
     for name in ("FSTRING_MIDDLE", "TSTRING_MIDDLE"):  # f-strings 3.12+, t-strings 3.14+

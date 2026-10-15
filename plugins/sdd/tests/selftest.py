@@ -758,7 +758,43 @@ def test_F002_R002_titulo_js_cuenta(base):
     })
     expect(evidencia(p, "R001") == ["tests/login.spec.ts::F001_R001 rechaza el token caducado"],
            "it('…') en TypeScript cuenta", f"{evidencia(p, 'R001')}")
-    expect(evidencia(p, "R002") != [], "it '…' do en Ruby cuenta", f"{evidencia(p, 'R002')}")
+    # TEST_DECL no reconoce `it '…' do`: la evidencia de Ruby va sin etiqueta.
+    expect(evidencia(p, "R002") == ["spec/pagos_spec.rb"], "it '…' do en Ruby cuenta",
+           f"{evidencia(p, 'R002')}")
+
+    formas = repo_con_feature(base, "f002-r002-formas", spec=SPEC_BASE.replace(
+        "| R002 | SHOULD |", "| R002 | MUST |"), archivos={
+        "tests/a.test.js": ("it.only('F001_R001 solo esta', () => {\n  expect(1).toBe(1);\n});\n"
+                            "test.each([[1]])('F001_R002 caso %s', (n) => {\n"
+                            "  expect(n).toBe(1);\n});\n"),
+        "pagos_test.go": ("func TestPagos(t *testing.T) {\n"
+                          "\tt.Run(\"F001_R001 subcaso\", func(t *testing.T) {\n"
+                          "\t\tif cobro() != 1 { t.Errorf(\"mal\") }\n\t})\n}\n"),
+        "src/test/java/PagosTest.java": ("@DisplayName(\"F001-R002 cobra a fin de mes\")\n"
+                                         "void cobra() { assertEquals(1, cobro()); }\n"),
+    })
+    r1, r2 = evidencia(formas, "R001"), evidencia(formas, "R002")
+    # TEST_DECL no reconoce it.only( como declaracion: cuenta sin etiqueta, como antes.
+    expect(any(t.startswith("tests/a.test.js") for t in r1), "it.only('…') cuenta", f"{r1}")
+    expect(any("tests/a.test.js" in t for t in r2), "test.each(…)('…') cuenta", f"{r2}")
+    expect(any("pagos_test.go" in t for t in r1), "t.Run(\"…\") de Go cuenta", f"{r1}")
+    expect(any("PagosTest.java" in t for t in r2), "@DisplayName(\"…\") de JUnit cuenta", f"{r2}")
+
+
+def test_F002_R002_comentario_con_apostrofo_cuenta(base):
+    print("\nF002 · R002: un comentario con apostrofos sigue contando")
+    p = repo_con_feature(base, "f002-r002-apostrofo", archivos={
+        "tests/token.test.js": ("test('caduca', () => {\n"
+                                "  // don't retry: F001-R001 it's the expired token case\n"
+                                "  expect(login('x')).toBe(false);\n});\n"),
+        "spec/pagos_spec.rb": ("describe 'pagos' do\n  it 'cobra' do\n"
+                               "    # it's F001-R002, the user's monthly charge\n"
+                               "    expect(cobro).to eq(1)\n  end\nend\n"),
+    })
+    expect(evidencia(p, "R001") == ["tests/token.test.js::caduca"],
+           "// con apostrofos en JS cuenta", f"{evidencia(p, 'R001')}")
+    expect(evidencia(p, "R002") == ["spec/pagos_spec.rb"],
+           "# con apostrofos en Ruby cuenta", f"{evidencia(p, 'R002')}")
 
 
 def test_F002_R001_cadena_js_no_cuenta(base):
@@ -833,6 +869,7 @@ def main():
         test_F002_R002_python_invalido_no_revienta(base)
         test_F002_R002_salto_de_pagina(base)
         test_F002_R002_titulo_js_cuenta(base)
+        test_F002_R002_comentario_con_apostrofo_cuenta(base)
         test_F002_R001_cadena_js_no_cuenta(base)
         test_F002_R004_mencion_no_bloquea(base)
         test_F002_R005_ejecucion_bloquea(base)
