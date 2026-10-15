@@ -13,6 +13,7 @@ Subcomandos:
   ingest <archivo> [--original <archivo>]
                       Anade un documento al producto como Dn, con sus
                       secciones numeradas para citarlas (D2§4.2).
+  next-id G|B         Siguiente objetivo (G4) o candidata (B07) libre.
 """
 
 import datetime
@@ -345,9 +346,122 @@ def cmd_ingest(args):
 
 
 # --------------------------------------------------------------------------
+# Brief y backlog: product/brief.md, product/backlog.md
+# --------------------------------------------------------------------------
+
+BRIEF = "brief.md"
+BACKLOG = "backlog.md"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+
+ITEM_HEAD = re.compile(r"^#{2,5}\s*(?=([GB]\d+)\b)", re.M)
+ITEM_FIELD = re.compile(r"^\s*[-*]\s*\*\*\s*(.+?)\s*:?\s*\*\*\s*(.*)$", re.M)
+DOC_REF = re.compile(r"(?<![A-Za-z0-9])D(\d+)§(\d+(?:\.\d+)*)")
+DOC_ONLY_REF = re.compile(r"(?<![A-Za-z0-9])D(\d+)(?![\d§])")
+GOAL_REF = re.compile(r"(?<![A-Za-z0-9])G(\d+)(?![0-9])")
+CAND_REF = re.compile(r"(?<![A-Za-z0-9])B(\d{2,})(?![0-9])")
+QUESTION = re.compile(r"^\s*[-*]\s*\[([ xX])\]\s*(.*)$")
+
+
+def read_product(root, name):
+    path = product_root(root) / name
+    return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
+
+
+def section(text, *titles):
+    """Cuerpo de una seccion markdown por su titulo (sin acentos ni mayusculas)."""
+    wanted = {norm(t) for t in titles}
+    out, level, capturing = [], None, False
+    for line in (text or "").splitlines():
+        m = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if m:
+            depth, title = len(m.group(1)), norm(m.group(2)).strip()
+            if capturing and depth <= level:
+                break
+            if not capturing and any(w in title for w in wanted):
+                capturing, level = True, depth
+                continue
+        if capturing:
+            out.append(line)
+    return "\n".join(out)
+
+
+def refs(text):
+    """Citas que contiene un texto: secciones Dn§x, documentos, objetivos, candidatas."""
+    text = text or ""
+    return {
+        "sections": sorted({f"D{d}§{s}" for d, s in DOC_REF.findall(text)}),
+        "documents": sorted({f"D{d}" for d in DOC_ONLY_REF.findall(text)}
+                            | {f"D{d}" for d, _s in DOC_REF.findall(text)}),
+        "goals": sorted({f"G{g}" for g in GOAL_REF.findall(text)}, key=lambda g: int(g[1:])),
+        "candidates": sorted({f"B{b}" for b in CAND_REF.findall(text)}),
+    }
+
+
+def parse_items(text, prefix):
+    """
+    Objetivos (prefix 'G') o candidatas ('B') declarados como encabezado
+    '### G1 — titulo', con campos '- **Campo:** valor'. Devuelve una lista en
+    orden de aparicion, con los IDs repetidos marcados.
+    """
+    items, seen = [], set()
+    blocks = ITEM_HEAD.split(text or "")
+    # split con grupo: [antes, id1, bloque1, id2, bloque2, ...]
+    for i in range(1, len(blocks) - 1, 2):
+        iid, block = blocks[i], blocks[i + 1]
+        if not iid.startswith(prefix):
+            continue
+        head, _, rest = block.partition("\n")
+        title = re.sub(rf"^{iid}\s*[—–:-]?\s*", "", head).strip()
+        # El bloque termina en el siguiente encabezado de cualquier nivel.
+        rest = re.split(r"^#{1,6}\s", rest, maxsplit=1, flags=re.M)[0]
+        fields = {norm(k): v.strip() for k, v in ITEM_FIELD.findall(rest)}
+        items.append({"id": iid, "title": title, "fields": fields,
+                      "duplicate": iid in seen})
+        seen.add(iid)
+    return items
+
+
+def parse_brief(text):
+    goals = parse_items(section(text, "objetivos", "goals"), "G")
+    questions = []
+    for line in section(text, "preguntas", "questions").splitlines():
+        m = QUESTION.match(line)
+        if m:
+            questions.append({"open": m.group(1) == " ", "text": m.group(2).strip(),
+                              "refs": refs(m.group(2))})
+    discarded = refs(section(text, "secciones descartadas", "descartes"))["sections"]
+    return {"goals": goals, "questions": questions, "discarded": discarded}
+
+
+def parse_backlog(text):
+    candidates = parse_items(section(text, "candidatas", "candidates"), "B")
+    for c in candidates:
+        c["state"] = norm(c["fields"].get("estado", "candidata")).split(" ")[0] or "candidata"
+    return {"candidates": candidates}
+
+
+def next_id(root, prefix):
+    """Siguiente ID libre: maximo + 1, contando descartadas. Nunca se recicla."""
+    if prefix == "G":
+        used = [int(g["id"][1:]) for g in parse_brief(read_product(root, BRIEF) or "")["goals"]]
+        return f"G{max(used, default=0) + 1}"
+    used = [int(c["id"][1:]) for c in parse_backlog(read_product(root, BACKLOG) or "")["candidates"]]
+    return f"B{max(used, default=0) + 1:02d}"
+
+
+def cmd_next_id(args):
+    if len(args) != 1 or args[0].upper() not in ("G", "B"):
+        print("uso: discovery.py next-id G|B", file=sys.stderr)
+        return 1
+    print(next_id(project_root(), args[0].upper()))
+    return 0
+
+
+# --------------------------------------------------------------------------
 
 COMMANDS = {
     "ingest": cmd_ingest,
+    "next-id": cmd_next_id,
 }
 
 

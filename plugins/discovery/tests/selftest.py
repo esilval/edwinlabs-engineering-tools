@@ -242,6 +242,156 @@ def test_F001_R003_formato_no_admitido():
     expect(r.returncode == 1 and foto(root) is None, "un archivo inexistente se rechaza sin cambios")
 
 
+# ----------------------------------------------------------------- T006
+
+DOC_VISION = """# Visión
+
+## Problema
+
+Los comercios no saben cuánto venden cada día.
+
+## Usuarios
+
+Dueños de comercios pequeños.
+
+## Informes
+
+Un resumen diario de ventas.
+
+## Exportación
+
+Bajar los movimientos a una hoja de cálculo.
+"""
+
+BRIEF_OK = """# Brief del producto
+
+| Campo  | Valor |
+| ------ | ----- |
+| Estado | Draft |
+
+## Objetivos
+
+### G1 — Que el comercio sepa cuánto vende
+
+- **Origen:** D1§1, D1§3
+- **Descripción:** el dueño ve sus ventas del día sin calcularlas.
+
+### G2 — Que el comercio use sus datos fuera
+
+- **Origen:** D1§4
+- **Descripción:** los movimientos salen a otras herramientas.
+
+## Usuarios
+
+- Dueños de comercios pequeños (D1§2)
+
+## Glosario
+
+- **Movimiento:** una venta o una devolución (D1§1)
+
+## Restricciones
+
+- Ninguna en los documentos.
+
+## Invariantes propuestos para la constitución
+
+- Ninguno en los documentos.
+
+## Secciones descartadas
+
+- Ninguna.
+
+## Preguntas
+
+- [x] (D1§3; G1) ¿Diario o semanal?
+  - **Respuesta:** diario.
+"""
+
+BACKLOG_OK = """# Backlog del producto
+
+| Campo  | Valor |
+| ------ | ----- |
+| Estado | Draft |
+
+## Candidatas
+
+### B01 — Resumen diario de ventas
+
+- **Estado:** candidata
+- **Objetivos:** G1
+- **Origen:** D1§1, D1§3
+- **Problema:** el dueño no sabe cuánto vendió hoy, cada día.
+- **Resultado observable:** el dueño ve el total del día al cerrar.
+- **Dentro:** total del día y número de ventas.
+- **Fuera:** comparativas entre días.
+- **Depende de:** —
+
+### B02 — Exportar movimientos
+
+- **Estado:** candidata
+- **Objetivos:** G2
+- **Origen:** D1§4
+- **Problema:** el dueño copia a mano sus ventas para su gestor.
+- **Resultado observable:** el dueño descarga sus movimientos en un archivo.
+- **Dentro:** movimientos de un rango de fechas.
+- **Fuera:** envío automático al gestor.
+- **Depende de:** B01
+
+### B03 — Envío automático al gestor
+
+- **Estado:** descartada (fuera del alcance acordado)
+- **Objetivos:** G2
+- **Origen:** D1§4
+- **Problema:** el gestor pide los datos cada mes.
+- **Resultado observable:** el gestor recibe los movimientos sin pedirlos.
+- **Dentro:** —
+- **Fuera:** —
+- **Depende de:** B02
+"""
+
+
+def producto_ok(nombre, brief=BRIEF_OK, backlog=BACKLOG_OK):
+    """Proyecto con D1 ingerido y un brief y backlog coherentes."""
+    root = proyecto(nombre)
+    ingerir(root, "vision.md", DOC_VISION)
+    discovery.write_product(root, "brief.md", brief)
+    discovery.write_product(root, "backlog.md", backlog)
+    return root
+
+
+def test_F001_R006_lee_objetivos():
+    b = discovery.parse_brief(BRIEF_OK)
+    expect([g["id"] for g in b["goals"]] == ["G1", "G2"], "lee G1 y G2")
+    expect(discovery.refs(b["goals"][0]["fields"].get("origen"))["sections"] == ["D1§1", "D1§3"],
+           "cada objetivo cita su origen")
+    expect(len(b["questions"]) == 1 and not b["questions"][0]["open"]
+           and b["questions"][0]["refs"]["goals"] == ["G1"], "lee la pregunta respondida y sus citas")
+    root = producto_ok("r006-next-id")
+    expect(run(root, "next-id", "G").stdout.strip() == "G3", "next-id G = G3")
+
+
+def test_F001_R007_lee_candidata_completa():
+    c = discovery.parse_backlog(BACKLOG_OK)["candidates"]
+    expect([x["id"] for x in c] == ["B01", "B02", "B03"], "lee B01, B02, B03")
+    campos = {"estado", "objetivos", "origen", "problema", "resultado observable",
+              "dentro", "fuera", "depende de"}
+    expect(campos <= set(c[1]["fields"]), "una candidata trae todos sus campos",
+           f"{sorted(c[1]['fields'])}")
+    expect(c[2]["state"] == "descartada" and c[0]["state"] == "candidata", "lee el estado")
+    expect(discovery.refs(c[1]["fields"]["depende de"])["candidates"] == ["B01"],
+           "lee las dependencias")
+
+
+def test_F001_R008_next_id_no_reutiliza():
+    root = producto_ok("r008-next-id")
+    expect(run(root, "next-id", "B").stdout.strip() == "B04",
+           "next-id B = B04: cuenta la descartada B03")
+    vacio = proyecto("r008-vacio")
+    expect(run(vacio, "next-id", "B").stdout.strip() == "B01"
+           and run(vacio, "next-id", "G").stdout.strip() == "G1", "sin backlog: B01 y G1")
+    expect(run(vacio, "next-id", "X").returncode == 1, "prefijo desconocido: error")
+
+
 # --------------------------------------------------------------------------
 
 def main():

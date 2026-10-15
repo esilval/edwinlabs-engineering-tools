@@ -67,7 +67,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T006 — Plantillas, lectura de brief y backlog, y `next-id` · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R006, R007, R008
 - **Depende de:** T002
 - **Archivos:** `plugins/discovery/templates/brief.md`, `plugins/discovery/templates/backlog.md`, `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`
