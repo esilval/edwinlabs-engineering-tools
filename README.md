@@ -7,6 +7,7 @@ Marketplace de plugins de [Claude Code](https://code.claude.com/docs).
 ```bash
 claude plugin marketplace add esilval/edwinlabs-engineering-tools
 claude plugin install sdd --scope user
+claude plugin install discovery --scope user
 ```
 
 En VS Code: escribe `/plugins`, pestaña **Marketplaces**, añade
@@ -17,6 +18,7 @@ En VS Code: escribe `/plugins`, pestaña **Marketplaces**, añade
 
 | Plugin | Qué hace |
 | ------ | -------- |
+| [`discovery`](plugins/discovery) | De documento de producto a backlog de features: brief, objetivos y candidatas con trazabilidad documento → objetivo → candidata, aprobados por el usuario. |
 | [`sdd`](plugins/sdd) | Desarrollo orientado a especificaciones, con una compuerta que impide escribir código sin especificación y trazabilidad requisito → tarea → prueba. |
 
 ## Estructura del repositorio
