@@ -43,6 +43,8 @@ HEREDOC = re.compile(
 )
 
 APPROVAL_WORD = re.compile(r"approved|aprobad[oa]", re.I)
+# Solo para comandos que no se pueden analizar por palabras.
+APPROVE_TEXT = re.compile(r"sdd\.py['\"]?\s+approve\b")
 
 
 # --------------------------------------------------------------------------
@@ -169,7 +171,8 @@ def invokes_approve(command):
     cuerpo de un heredoc son una sola palabra entre comillas, o se descartan
     antes de analizar. Lo que esta compuerta no puede ver (un script, un
     `bash -c` o un interprete con el codigo en linea) lo revierte la auditoria
-    de PostToolUse. Un comando que no se puede analizar no se deniega.
+    de PostToolUse. Un comando que no se puede analizar se deniega solo si su
+    texto contiene la orden.
     """
     command = _strip_heredocs(command or "")
     # Lo que va dentro de $(…) o de `…` se ejecuta, aunque este entre comillas
@@ -179,7 +182,10 @@ def invokes_approve(command):
     try:
         tokens = _tokens(command)
     except ValueError:
-        return False
+        # Algo que el analizador no entiende y bash si ($'…', comillas raras):
+        # se busca la orden en el texto, como la compuerta anterior. Si no, un
+        # trozo ilegible bastaria para colar una aprobacion.
+        return bool(APPROVE_TEXT.search(command))
     for seg, _redirects in _segments(tokens):
         words = _command_words(seg)
         for word, nxt in zip(words, words[1:]):

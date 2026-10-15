@@ -791,6 +791,7 @@ EJECUCIONES = [
     'echo "$(python3 sdd.py approve)"',
     'git commit -m "$(python3 /x/sdd.py approve plan)"',
     "x=$(cd y && python3 sdd.py approve)",
+    "python3 sdd.py approve; echo $'it\\'s'",
 ]
 
 
@@ -802,7 +803,8 @@ def test_F002_R004_mencion_no_bloquea(base):
     for cmd in MENCIONES:
         expect(not sdd_bash.invokes_approve(cmd), f"no es ejecucion: {cmd.splitlines()[0][:50]!r}")
         expect(not bash_bloquea(p, cmd), f"la compuerta no bloquea: {cmd.splitlines()[0][:50]!r}")
-    expect(not sdd_bash.invokes_approve('echo "sin cerrar'), "un comando que no se analiza: no")
+    expect(not sdd_bash.invokes_approve('echo "sin cerrar'),
+           "un comando que no se analiza y no contiene la orden: no")
 
 
 def test_F002_R005_ejecucion_bloquea(base):

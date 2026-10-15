@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-10-15         |
-| Estado | Approved · 28810123f98f              |
+| Estado | Approved · 667317ce1dd8              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -70,16 +70,24 @@ posterior no cambia y sigue siendo la red de lo que la compuerta no ve.
   `sdd_bash.py`: quita los heredocs, separa el comando en segmentos y palabras
   respetando las comillas, y deniega solo si algún segmento tiene una palabra
   cuyo nombre de archivo es `sdd.py` seguida de la palabra `approve`. Un texto
-  entre comillas es una sola palabra, así que una mención no coincide. La
+  entre comillas es una sola palabra, así que una mención no coincide. El
+  contenido de las sustituciones de comandos (`$(…)` y comillas invertidas) se
+  analiza aparte, porque se ejecuta aunque vaya entre comillas dobles. La
   búsqueda del nombre de la función se retira de la compuerta previa. Si el
-  comando no se puede analizar, no se deniega.
+  comando no se puede analizar (algo que el analizador no entiende y bash sí),
+  se busca en el texto solo `sdd.py approve`, como hacía la compuerta anterior:
+  así un trozo ilegible no sirve para colar una aprobación.
 - **Alternativas descartadas:** mantener la búsqueda de texto con excepciones
   para `git commit` y `gh pr` (lista que nunca se acaba); seguir bloqueando
   `python3 -c` con la función dentro (es justo lo que la compuerta no puede
   distinguir de una mención; la auditoría ya lo resuelve después).
 - **Consecuencias:** `bash -c "python3 sdd.py approve"` o un script que llame a
   la función pasan la compuerta. Los cubre la auditoría, que devuelve el Estado
-  a su valor anterior (R006); es el supuesto de la spec.
+  a su valor anterior (R006); es el supuesto de la spec. Una mención dentro de
+  un comando que no se puede analizar se sigue bloqueando; es raro y es el mal
+  menor. La auditoría solo vigila la feature activa: un comando que cambie
+  `.sdd/current` puede aprobar otra feature sin que lo vea. Se documenta como
+  límite conocido y se resuelve en una feature aparte.
 
 ### D3 — Mensaje de `W-TEST-UNSCOPED` (R003)
 

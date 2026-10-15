@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-10-15  |
-| Estado | Approved · 1b14b7f540bb       |
+| Estado | Approved · 84c0bed55beb       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -55,7 +55,7 @@ Todas las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 - **Requisitos:** R004, R005
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd_bash.py`, `plugins/sdd/tests/selftest.py`
-- **Hecho cuando:** `invokes_approve` solo da positivo si algún segmento del comando tiene una palabra cuyo nombre de archivo es `sdd.py` seguida de `approve`; un comando que no se puede analizar da negativo; pasan `test_F002_R004_mencion_no_bloquea` (mensaje de commit, descripción de PR, heredoc a archivo, `echo`) y `test_F002_R005_ejecucion_bloquea` (relativo, ruta absoluta, encadenado tras `&&`).
+- **Hecho cuando:** `invokes_approve` solo da positivo si algún segmento del comando, o del contenido de una sustitución `$(…)` o con comillas invertidas, tiene una palabra cuyo nombre de archivo es `sdd.py` seguida de `approve`; si el comando no se puede analizar, da positivo solo si su texto contiene `sdd.py approve`; pasan `test_F002_R004_mencion_no_bloquea` (mensaje de commit, descripción de PR, heredoc a archivo, `echo`) y `test_F002_R005_ejecucion_bloquea` (relativo, ruta absoluta, encadenado tras `&&`, dentro de sustituciones y en un comando que no se puede analizar).
 
 ### T005 — Regresión de la auditoría y README
 
@@ -63,7 +63,7 @@ Todas las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 - **Requisitos:** R006, R004
 - **Depende de:** T004
 - **Archivos:** `plugins/sdd/tests/selftest.py`, `plugins/sdd/README.md`
-- **Hecho cuando:** pasa `test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar` (un comando que la compuerta ya no bloquea y que aprueba `spec.md` es revertido); el README dice que la compuerta reconoce la **ejecución** de `sdd.py approve` y que lo demás lo cubre la auditoría.
+- **Hecho cuando:** pasa `test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar` (un comando que la compuerta ya no bloquea y que aprueba `spec.md` es revertido); el README dice que la compuerta reconoce la **ejecución** de `sdd.py approve` y que lo demás lo cubre la auditoría, documenta como límite conocido que la auditoría solo vigila la feature activa, y aclara que una cita a un requisito dentro de un texto (incluido un docstring) no cuenta como evidencia.
 
 ### T006 — Cierre sobre el caso real
 
