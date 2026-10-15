@@ -195,18 +195,56 @@ def invokes_approve(command):
 
 
 def _substitutions(command):
-    """Contenido de las sustituciones de comandos `…` y $(…), sin anidar."""
-    found = re.findall(r"`([^`]*)`", command)
-    depth, start = 0, None
-    for i, ch in enumerate(command):
+    """
+    Contenido de las sustituciones de comandos `…` y $(…) que bash ejecutaria.
+    Se recorre el comando respetando las comillas: dentro de comillas simples
+    no hay sustitucion (es la forma habitual de citar una orden en un mensaje),
+    y una \\$( o \\` escapada tampoco lo es. Dentro de comillas dobles si.
+    """
+    found, i, n, single = [], 0, len(command), False
+    while i < n:
+        ch = command[i]
+        if single:
+            if ch == "'":
+                single = False
+            i += 1
+            continue
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            # Una comilla simple dentro de comillas dobles es un caracter mas;
+            # basta con no tratarla: el analisis por palabras va despues.
+            if command.count('"', 0, i) % 2 == 0:
+                single = True
+            i += 1
+            continue
+        if ch == "`":
+            j = i + 1
+            while j < n and command[j] != "`":
+                j += 2 if command[j] == "\\" else 1
+            if j >= n:
+                break
+            found.append(command[i + 1:j])
+            i = j + 1
+            continue
         if command.startswith("$(", i) and not command.startswith("$((", i):
-            if depth == 0:
-                start = i + 2
-            depth += 1
-        elif ch == ")" and depth:
-            depth -= 1
-            if depth == 0 and start is not None:
-                found.append(command[start:i])
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if command[j] == "\\":
+                    j += 2
+                    continue
+                if command[j] == "(":
+                    depth += 1
+                elif command[j] == ")":
+                    depth -= 1
+                j += 1
+            if depth:
+                break
+            found.append(command[i + 2:j - 1])
+            i = j
+            continue
+        i += 1
     return found
 
 

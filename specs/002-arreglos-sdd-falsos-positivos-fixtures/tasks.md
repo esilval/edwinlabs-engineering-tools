@@ -5,7 +5,7 @@
 | Spec   | `spec.md`   |
 | Plan   | `plan.md`   |
 | Fecha  | 2026-10-15  |
-| Estado | Approved · 84c0bed55beb       |
+| Estado | Approved · ad5296b51437       |
 
 > Cada tarea debe ser verificable por sí sola y caber en una sola sesión de
 > trabajo. Si una tarea necesita una decisión que no está en `plan.md`, la tarea
@@ -47,11 +47,11 @@ Todas las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 - **Requisitos:** R001, R002
 - **Depende de:** T002
 - **Archivos:** `plugins/sdd/scripts/sdd_trace.py`, `plugins/sdd/tests/selftest.py`
-- **Hecho cuando:** en archivos que no son Python se vacía por línea el texto entre comillas salvo el título de `it(…)`, `test(…)` o `describe(…)`; pasan `test_F002_R002_titulo_js_cuenta` y `test_F002_R001_cadena_js_no_cuenta`.
+- **Hecho cuando:** en archivos que no son Python, un analizador por línea conserva los comentarios enteros y las cadenas que son primer argumento de una llamada o título de Ruby sin paréntesis, y vacía las demás; pasan `test_F002_R002_titulo_js_cuenta` (también `it.only`, `test.each(…)(…)`, `t.Run` de Go, `@DisplayName` de JUnit y `it '…' do` de Ruby con su evidencia exacta), `test_F002_R002_comentario_con_apostrofo_cuenta` (`//` y `#` con apóstrofos) y `test_F002_R001_cadena_js_no_cuenta`.
 
 ### T004 — Compuerta Bash por palabras del comando · P
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R004, R005
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd_bash.py`, `plugins/sdd/tests/selftest.py`

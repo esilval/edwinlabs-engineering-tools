@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-10-15         |
-| Estado | Approved · 667317ce1dd8              |
+| Estado | Approved · 0c9acfdeabab              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -49,17 +49,23 @@ posterior no cambia y sigue siendo la red de lo que la compuerta no ve.
   - **Python:** la vista se calcula con `tokenize`, que conoce las cadenas de
     varias líneas. Si el archivo no se puede tokenizar, se usa el texto tal cual,
     como hoy.
-  - **Resto de lenguajes:** se vacían por línea los textos entre `"…"`, `'…'` y
-    `` `…` ``, salvo el título de una declaración `it(…)`, `test(…)` o
-    `describe(…)`, que en esos lenguajes es la forma normal de nombrar una
-    prueba.
+  - **Resto de lenguajes:** un analizador por línea distingue comentarios
+    (`//`, `/* … */` en una línea, y `#` en Ruby y shell) de cadenas (`"…"`,
+    `'…'`, `` `…` ``). Los comentarios se conservan enteros, aunque lleven
+    apóstrofos. Una cadena se conserva si es el **primer argumento de una
+    llamada** (`it(…)`, `it.only(…)`, `test.each(…)(…)`, `t.Run(…)`,
+    `@DisplayName(…)`) o el título de una prueba de Ruby sin paréntesis
+    (`it '…' do`, también `describe`, `context`, `specify`, `test`); el resto se
+    vacía. Así se cubren las formas de nombrar una prueba sin enumerarlas.
 - **Alternativas descartadas:** excluir los archivos de prueba de los plugins
   (no-goal de la spec, y el problema reaparece en cualquier repo con fixtures);
   marcar los fixtures con una convención especial (obliga a recordarla, y el
   plugin se apoya en no tener que recordar).
 - **Consecuencias:** en lenguajes distintos de Python, un texto de varias líneas
   no se reconoce como texto; es un caso raro en pruebas, y su efecto es el de
-  hoy.
+  hoy. Una cita dentro de una cadena que es primer argumento de cualquier
+  llamada (`expect("F001_R001")`) sigue contando, como hoy: no hay regresión,
+  pero R001 no cubre ese caso fuera de Python.
 
 ### D2 — Reconocer la aprobación por las palabras del comando (R004, R005)
 

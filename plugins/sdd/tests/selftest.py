@@ -779,6 +779,9 @@ MENCIONES = [
     "cat > notas.md <<'EOF'\npython3 plugins/sdd/scripts/sdd.py approve\nEOF",
     'echo "para aprobar: python3 sdd.py approve"',
     "grep -rn 'sdd.py approve' plugins/sdd/README.md",
+    "git commit -m 'la compuerta ya no bloquea `python3 sdd.py approve`'",
+    "gh pr create --title t --body 'Ahora `sdd.py approve` solo se bloquea si se ejecuta'",
+    "git commit -m 'cita $(python3 sdd.py approve) en texto'",
 ]
 
 EJECUCIONES = [
