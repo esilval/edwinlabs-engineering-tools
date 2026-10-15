@@ -698,8 +698,8 @@ def test_que_usa_los_fixtures():
 '''
 
 
-def test_F002_R001_fixture_en_cadena_no_cuenta(base):
-    print("\nF002 · R001: un fixture en una cadena no es una prueba")
+def test_F002_R010_fixture_en_cadena_no_cuenta(base):
+    print("\nF002 · R010: en Python, un fixture en una cadena no es una prueba")
     p = repo_con_feature(base, "f002-r001-fixture", archivos={"tests/test_f.py": FIXTURE_PY})
     expect(evidencia(p, "R001") == [], "una cadena de una linea no cuenta",
            f"{evidencia(p, 'R001')}")
@@ -707,8 +707,8 @@ def test_F002_R001_fixture_en_cadena_no_cuenta(base):
            f"{evidencia(p, 'R002')}")
 
 
-def test_F002_R001_cita_en_texto_no_cuenta(base):
-    print("\nF002 · R001: una cita dentro de un texto no cuenta")
+def test_F002_R010_cita_en_texto_no_cuenta(base):
+    print("\nF002 · R010: en Python, una cita dentro de un texto no cuenta")
     p = repo_con_feature(base, "f002-r001-texto", archivos={"tests/test_t.py": (
         "def test_otro():\n    msg = 'ver F001-R002 en la spec'\n    assert msg\n")})
     expect(evidencia(p, "R002") == [], "F001-R002 entre comillas no cuenta",
@@ -747,66 +747,61 @@ def test_F002_R002_salto_de_pagina(base):
            f"{evidencia(p, 'R002')}")
 
 
-def test_F002_R002_titulo_js_cuenta(base):
-    print("\nF002 · R002: el titulo de una prueba JS o Ruby sigue contando")
-    p = repo_con_feature(base, "f002-r002-js", archivos={
-        "tests/login.spec.ts": ("describe('login', () => {\n"
-                                "  it('F001_R001 rechaza el token caducado', () => {\n"
-                                "    expect(login('x')).toBe(false);\n  });\n});\n"),
-        "spec/pagos_spec.rb": ("describe 'pagos' do\n  it 'F001-R002 cobra a fin de mes' do\n"
-                               "    expect(cobro).to eq(1)\n  end\nend\n"),
-    })
-    expect(evidencia(p, "R001") == ["tests/login.spec.ts::F001_R001 rechaza el token caducado"],
-           "it('…') en TypeScript cuenta", f"{evidencia(p, 'R001')}")
-    # TEST_DECL no reconoce `it '…' do`: la evidencia de Ruby va sin etiqueta.
-    expect(evidencia(p, "R002") == ["spec/pagos_spec.rb"], "it '…' do en Ruby cuenta",
-           f"{evidencia(p, 'R002')}")
+OTROS_LENGUAJES = {
+    "tests/a.test.js": (
+        "describe('login', () => {\n"
+        "  it('caduca', () => {\n"
+        "    /*\n"
+        "     * Doesn't retry: F001-R001 it's the token case\n"
+        "     */\n"
+        "    expect(login('x')).toBe(false);\n  });\n"
+        "  it.only('F001_R002 solo esta', () => { expect(1).toBe(1); });\n"
+        "  test.each([[1]])('F001_R001 caso %s', (n) => { expect(n).toBe(1); });\n"
+        "});\n"),
+    # Un dato en una cadena: fuera de Python sigue contando (consecuencia de R010).
+    "tests/datos.test.js": (
+        "const FIXTURE = \"it('F001_R002 dato', () => { expect(1).toBe(1) })\";\n"),
+    "spec/pagos_spec.rb": (
+        "describe 'pagos' do\n"
+        "  xit 'F001_R001 pendiente' do\n    expect(1).to eq(1)\n  end\n"
+        "  scenario 'F001_R002 rechaza' do\n"
+        "    # it's F001-R001, the user's charge\n    expect(1).to eq(1)\n  end\nend\n"),
+    "test/login.bats": "@test \"F001_R001 login\" {\n  run login\n  [ \"$status\" -eq 0 ]\n}\n",
+    "src/test/kotlin/LoginTest.kt": (
+        "@Test fun `F001_R002 rechaza el token`() { assertEquals(1, login()) }\n"),
+    "LoginTests.cs": ("[Fact(DisplayName = \"F001_R001 caduca\")]\n"
+                      "public void Caduca() { Assert.Equal(1, Login()); }\n"),
+    "src/test/scala/LoginSpec.scala": (
+        "\"login\" should \"F001_R002 rechazar\" in { assert(login() == 1) }\n"),
+    "login_test.go": (
+        "func TestLogin(t *testing.T) {\n"
+        "\tcases := []struct{ name string }{{\"F001_R002 caducado\"}}\n"
+        "\tfor _, tc := range cases {\n"
+        "\t\tt.Run(tc.name, func(t *testing.T) { if login() != 1 { t.Errorf(\"x\") } })\n\t}\n"
+        "\tt.Run(\"F001_R001 subcaso\", func(t *testing.T) {})\n}\n"),
+    "src/test/java/PagosTest.java": (
+        "@DisplayName(\"F001-R002 cobra a fin de mes\")\n"
+        "void cobra() { assertEquals(1, cobro()); }\n"),
+}
 
-    formas = repo_con_feature(base, "f002-r002-formas", spec=SPEC_BASE.replace(
-        "| R002 | SHOULD |", "| R002 | MUST |"), archivos={
-        "tests/a.test.js": ("it.only('F001_R001 solo esta', () => {\n  expect(1).toBe(1);\n});\n"
-                            "test.each([[1]])('F001_R002 caso %s', (n) => {\n"
-                            "  expect(n).toBe(1);\n});\n"),
-        "pagos_test.go": ("func TestPagos(t *testing.T) {\n"
-                          "\tt.Run(\"F001_R001 subcaso\", func(t *testing.T) {\n"
-                          "\t\tif cobro() != 1 { t.Errorf(\"mal\") }\n\t})\n}\n"),
-        "src/test/java/PagosTest.java": ("@DisplayName(\"F001-R002 cobra a fin de mes\")\n"
-                                         "void cobra() { assertEquals(1, cobro()); }\n"),
-    })
-    r1, r2 = evidencia(formas, "R001"), evidencia(formas, "R002")
-    # TEST_DECL no reconoce it.only( como declaracion: cuenta sin etiqueta, como antes.
-    expect(any(t.startswith("tests/a.test.js") for t in r1), "it.only('…') cuenta", f"{r1}")
-    expect(any("tests/a.test.js" in t for t in r2), "test.each(…)('…') cuenta", f"{r2}")
-    expect(any("pagos_test.go" in t for t in r1), "t.Run(\"…\") de Go cuenta", f"{r1}")
-    expect(any("PagosTest.java" in t for t in r2), "@DisplayName(\"…\") de JUnit cuenta", f"{r2}")
-
-
-def test_F002_R002_comentario_con_apostrofo_cuenta(base):
-    print("\nF002 · R002: un comentario con apostrofos sigue contando")
-    p = repo_con_feature(base, "f002-r002-apostrofo", archivos={
-        "tests/token.test.js": ("test('caduca', () => {\n"
-                                "  // don't retry: F001-R001 it's the expired token case\n"
-                                "  expect(login('x')).toBe(false);\n});\n"),
-        "spec/pagos_spec.rb": ("describe 'pagos' do\n  it 'cobra' do\n"
-                               "    # it's F001-R002, the user's monthly charge\n"
-                               "    expect(cobro).to eq(1)\n  end\nend\n"),
-    })
-    expect(evidencia(p, "R001") == ["tests/token.test.js::caduca"],
-           "// con apostrofos en JS cuenta", f"{evidencia(p, 'R001')}")
-    expect(evidencia(p, "R002") == ["spec/pagos_spec.rb"],
-           "# con apostrofos en Ruby cuenta", f"{evidencia(p, 'R002')}")
+ESPERADO = {
+    "R001": ["tests/a.test.js", "spec/pagos_spec.rb", "test/login.bats", "LoginTests.cs",
+             "login_test.go"],
+    "R002": ["tests/a.test.js", "tests/datos.test.js", "spec/pagos_spec.rb",
+             "src/test/kotlin/LoginTest.kt", "src/test/scala/LoginSpec.scala",
+             "login_test.go", "src/test/java/PagosTest.java"],
+}
 
 
-def test_F002_R001_cadena_js_no_cuenta(base):
-    print("\nF002 · R001: una cadena en JS que no es titulo no cuenta")
-    p = repo_con_feature(base, "f002-r001-js", archivos={"tests/fix.test.js": (
-        "const FIXTURE = \"it('F001_R001 falso', () => {})\";\n"
-        "test('usa el fixture', () => {\n"
-        "  const nota = `ver F001-R002`;\n  expect(FIXTURE).toBeTruthy();\n});\n")})
-    expect(evidencia(p, "R001") == [], "un it('…') dentro de una cadena no cuenta",
-           f"{evidencia(p, 'R001')}")
-    expect(evidencia(p, "R002") == [], "una plantilla `…` con la cita no cuenta",
-           f"{evidencia(p, 'R002')}")
+def test_F002_R010_otros_lenguajes_como_antes(base):
+    print("\nF002 · R010: fuera de Python las citas cuentan como antes")
+    spec = SPEC_BASE.replace("| R002 | SHOULD |", "| R002 | MUST |")
+    p = repo_con_feature(base, "f002-r010-otros", spec=spec, archivos=OTROS_LENGUAJES)
+    for rid, archivos in ESPERADO.items():
+        encontrados = evidencia(p, rid)
+        for archivo in archivos:
+            expect(any(t == archivo or t.startswith(archivo + "::") for t in encontrados),
+                   f"{rid} sigue contando en {archivo}", f"{encontrados}")
 
 
 MENCIONES = [
@@ -885,14 +880,12 @@ def main():
         test_degenerados(base)
         test_bash(base)
         test_F002_R003_aviso_nombra_el_requisito(base)
-        test_F002_R001_fixture_en_cadena_no_cuenta(base)
-        test_F002_R001_cita_en_texto_no_cuenta(base)
+        test_F002_R010_fixture_en_cadena_no_cuenta(base)
+        test_F002_R010_cita_en_texto_no_cuenta(base)
         test_F002_R002_nombre_y_comentario_cuentan(base)
         test_F002_R002_python_invalido_no_revienta(base)
         test_F002_R002_salto_de_pagina(base)
-        test_F002_R002_titulo_js_cuenta(base)
-        test_F002_R002_comentario_con_apostrofo_cuenta(base)
-        test_F002_R001_cadena_js_no_cuenta(base)
+        test_F002_R010_otros_lenguajes_como_antes(base)
         test_F002_R004_mencion_no_bloquea(base)
         test_F002_R005_ejecucion_bloquea(base)
         test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base)

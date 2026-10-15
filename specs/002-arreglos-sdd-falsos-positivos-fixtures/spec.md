@@ -4,7 +4,7 @@
 | ------ | ------------ |
 | ID     | `002-arreglos-sdd-falsos-positivos-fixtures`     |
 | Fecha  | 2026-10-15     |
-| Estado | Approved · ad629d2a03c1        |
+| Estado | Approved · f4db4a40601d        |
 | Issue  | —            |
 
 > Este documento describe **qué** y **por qué**, nunca **cómo**.
@@ -70,12 +70,13 @@ Notación EARS. Cada requisito lleva un ID estable que se referencia después en
 
 | ID   | Prioridad | Requisito |
 | ---- | --------- | --------- |
-| R001 | MUST | SI la cita a un requisito con prefijo de feature aparece en un archivo de pruebas solo como parte de un texto literal, ENTONCES el sistema NO DEBERÁ contarla como evidencia de prueba. |
+| R001 | OBSOLETO | SI la cita a un requisito con prefijo de feature aparece en un archivo de pruebas solo como parte de un texto literal, ENTONCES el sistema NO DEBERÁ contarla como evidencia de prueba. (reemplazado por R010) |
 | R002 | MUST | CUANDO una prueba cita un requisito en su nombre o en un comentario de su cuerpo, el sistema DEBERÁ seguir contándola como evidencia de prueba. |
 | R003 | MUST | CUANDO el sistema avisa de una prueba que cita un requisito sin prefijo de feature, el sistema DEBERÁ nombrar en el mensaje el requisito afectado. |
 | R004 | MUST | SI un comando solo menciona la orden de aprobación como texto, sin ejecutarla, ENTONCES el sistema NO DEBERÁ bloquearlo. |
 | R005 | MUST | CUANDO un comando ejecuta la orden de aprobación de `sdd`, el sistema DEBERÁ seguir bloqueándolo. |
 | R006 | MUST | SI un comando que la compuerta deja pasar cambia el Estado de un artefacto hacia aprobado, ENTONCES el sistema DEBERÁ seguir devolviéndolo a su valor anterior. |
+| R010 | MUST | SI la cita a un requisito con prefijo de feature aparece en un archivo de pruebas Python solo como parte de un texto literal, ENTONCES el sistema NO DEBERÁ contarla como evidencia de prueba. |
 
 ## Criterios de aceptación
 
@@ -110,6 +111,13 @@ Notación EARS. Cada requisito lleva un ID estable que se referencia después en
 
 - **Dado** un comando opaco que la compuerta deja pasar y que marca `spec.md` como aprobado **cuando** termina **entonces** la auditoría devuelve el Estado a su valor anterior.
 
+### R010
+
+- **Dado** un archivo de pruebas Python que contiene la cadena `"def test_F001_R001_algo():\n    assert x\n"` como dato **cuando** se calcula la trazabilidad de la feature 001 **entonces** R001 no tiene esa evidencia.
+- **Dado** una cita `F001-R002` dentro de un texto entre comillas de una prueba Python que no cita el requisito de otra forma **cuando** se calcula la trazabilidad **entonces** R002 no la cuenta.
+- **Dado** el selftest actual de `sdd` en este repositorio **cuando** se calcula la trazabilidad de la feature 001 **entonces** ninguna evidencia de R001 ni de R002 apunta a `plugins/sdd/tests/selftest.py`.
+- **Dado** un archivo de pruebas en otro lenguaje (JS, Go, Ruby, Java…) **cuando** se calcula la trazabilidad **entonces** las citas cuentan exactamente igual que antes de esta feature, también las que van dentro de un texto.
+
 ## Requisitos no funcionales
 
 No aplica. La constitución fija versión mínima, dependencias y comportamiento de
@@ -132,3 +140,14 @@ los guardrails.
 
 > Lo rellena `/sdd:amend` cuando cambian los requisitos después de aprobar la
 > spec: fecha, qué cambió, por qué y los IDs afectados.
+
+- **2026-10-15 · R001 pasa a OBSOLETO, reemplazado por R010 (cambio de
+  comportamiento).** No contar las citas dentro de textos literales se limita a
+  los archivos de prueba Python; en los demás lenguajes las citas cuentan como
+  antes. Motivo: dos revisiones de T003 demostraron que vaciar textos fuera de
+  Python con un analizador hecho a mano pierde evidencia real en formas
+  habituales (comentarios de varias líneas, títulos de RSpec, Kotlin, C#,
+  subpruebas por tabla de Go), y eso rompía R002. Python tiene un analizador
+  real (`tokenize`). El ID es R010 porque `next-req` cuenta también las
+  menciones a R007 y R009 de la sección «Problema»; R007–R009 quedan sin usar.
+  Afecta a: R001, R010, y a las pruebas `test_F002_R001_*`.

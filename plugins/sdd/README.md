@@ -202,11 +202,15 @@ def test_otro_caso():
     ...
 ```
 
-Una cita dentro de un **texto** no cuenta, tampoco en un docstring: un
-`"def test_F001_R001_x(): …"` escrito como dato en un test no es una prueba.
-Fuera de Python, se conservan los comentarios y la cadena que nombra una prueba
-(primer argumento de `it(…)`, `test.each(…)(…)`, `t.Run(…)`, `@DisplayName(…)`,
-o `it '…' do` en Ruby); el resto de cadenas no cuenta.
+En **archivos de prueba Python**, una cita dentro de un texto no cuenta, tampoco
+en un docstring: un `"def test_F001_R001_x(): …"` escrito como dato en un test
+no es una prueba. Si el archivo no se puede tokenizar, se lee tal cual.
+
+En los demás lenguajes las citas cuentan dondequiera que estén, también dentro
+de un texto. Distinguir allí un dato de un título de prueba
+(`it.only("…")`, `t.Run("…")`, ``fun `…`()``, `DisplayName = "…"`, RSpec, Bats,
+tablas de Go…) exigiría un analizador por lenguaje; un fixture de código de
+prueba escrito como dato en esos lenguajes cuenta como evidencia.
 
 El prefijo es obligatorio porque cada feature numera sus requisitos desde
 `R001`. Sin él, la prueba de una feature cubriría en silencio el requisito

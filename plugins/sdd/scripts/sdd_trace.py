@@ -405,69 +405,21 @@ def is_test_file(path):
     return any(norm(part) in TEST_DIRS for part in path.parts[:-1])
 
 
-HASH_COMMENT = {".rb", ".sh", ".bash"}
-# Lo que precede a una cadena que es el primer argumento de una llamada:
-# it(, it.only(, test.each([…])(, t.Run(, @DisplayName(.
-CALL_OPEN = re.compile(r"[\w$\])]\s*\(\s*$")
-# Titulo de una prueba de Ruby sin parentesis: it '…' do, describe "…" do.
-RUBY_TITLE = re.compile(r"(?:^|[\s;{])(?:it|describe|context|specify|test)\s+$")
-
-
-def _is_title(line, start):
-    """True si la cadena que empieza en `start` nombra una prueba."""
-    before = line[:start]
-    return bool(CALL_OPEN.search(before) or RUBY_TITLE.search(before))
-
-
-def _blank_quotes(line, suffix):
-    """
-    Vacia las cadenas de una linea que no nombran una prueba. Recorre la linea
-    distinguiendo comentarios (`//`, `/* … */`, y `#` en Ruby y shell), que se
-    conservan enteros aunque lleven apostrofos, de cadenas ("…", '…', `…`).
-    Una cadena se conserva si es el primer argumento de una llamada o el titulo
-    de una prueba de Ruby; las demas se vacian.
-    """
-    out, i, n = list(line), 0, len(line)
-    hash_comment = suffix in HASH_COMMENT
-    while i < n:
-        ch = line[i]
-        if hash_comment and ch == "#":
-            break
-        if not hash_comment and line.startswith("//", i):
-            break
-        if not hash_comment and line.startswith("/*", i):
-            end = line.find("*/", i + 2)
-            i = n if end == -1 else end + 2
-            continue
-        if ch in "\"'`":
-            j = i + 1
-            while j < n and line[j] != ch:
-                j += 2 if line[j] == "\\" else 1
-            if j >= n:
-                break  # cadena sin cerrar en esta linea: el resto se deja igual
-            if not _is_title(line, i):
-                out[i:j + 1] = " " * (j + 1 - i)
-            i = j + 1
-            continue
-        i += 1
-    return "".join(out)
-
-
 def code_view(content, suffix):
     """
     Lineas del archivo con el contenido de los textos literales en blanco,
     mismas lineas y columnas. Las citas y las declaraciones de prueba se buscan
     aqui: una cadena "def test_F001_R001_x()" escrita como dato en un test no
-    es una prueba (R001 de la feature 002). Nombres y comentarios se conservan.
+    es una prueba (R010 de la feature 002). Nombres y comentarios se conservan.
 
     Python se tokeniza, que conoce las cadenas de varias lineas; si no se puede
-    tokenizar, se devuelve el texto tal cual. En los demas lenguajes se vacian
-    por linea las cadenas que no nombran una prueba (ver _blank_quotes); los
-    comentarios se conservan.
+    tokenizar, se devuelve el texto tal cual. En los demas lenguajes la vista es
+    el texto tal cual: un analizador hecho a mano perdia citas reales en formas
+    habituales de nombrar o comentar pruebas (R010 de la feature 002).
     """
     lines = content.splitlines()
     if suffix != ".py":
-        return [_blank_quotes(line, suffix) for line in lines]
+        return lines
     import tokenize
     string_types = {tokenize.STRING}
     for name in ("FSTRING_MIDDLE", "TSTRING_MIDDLE"):  # f-strings 3.12+, t-strings 3.14+

@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-10-15         |
-| Estado | Approved · 0c9acfdeabab              |
+| Estado | Approved · 6cef81d5c0a2              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -15,8 +15,8 @@
 ## Resumen
 
 Tres cambios pequeños en `plugins/sdd/scripts/`. La trazabilidad busca citas a
-requisitos en una **vista de código** del archivo de pruebas, con los textos
-literales en blanco. La compuerta sobre Bash reconoce la aprobación por las
+requisitos en una **vista de código** de los archivos de prueba Python, con los
+textos literales en blanco; en los demás lenguajes el texto se usa tal cual. La compuerta sobre Bash reconoce la aprobación por las
 **palabras del comando** (`… sdd.py approve`), no por una cadena en cualquier
 parte del texto. El aviso de prueba sin prefijo usa el ID real. La auditoría
 posterior no cambia y sigue siendo la red de lo que la compuerta no ve.
@@ -26,8 +26,8 @@ posterior no cambia y sigue siendo la red de lo que la compuerta no ve.
 | Regla | ¿Se cumple? | Cómo, o excepción justificada |
 | ----- | ----------- | ----------------------------- |
 | Lo determinista en un script | sí | Todo el cambio está en `sdd_trace.py` y `sdd_bash.py` |
-| Python 3.8, solo biblioteca estándar | sí | `tokenize` e `io` son de la biblioteca estándar y existen en 3.8 |
-| Guardrail que falla abierto y con escape | sí | Un comando que no se puede analizar no se bloquea en la compuerta; lo cubre la auditoría. El escape `SDD_BYPASS=1` no cambia |
+| Python 3.8, solo biblioteca estándar | sí | `tokenize` es de la biblioteca estándar y existe en 3.8 |
+| Guardrail que falla abierto y con escape | sí | Un comando que no se puede analizar solo se bloquea si su texto contiene la orden de aprobar; lo demás lo cubre la auditoría. Un archivo Python que no se tokeniza se lee tal cual. El escape `SDD_BYPASS=1` no cambia |
 | Ningún hook devuelve `allow` | sí | Solo se estrecha cuándo se deniega; las salidas no cambian |
 | Solo el usuario aprueba | sí | `sdd.py approve` ejecutado sigue bloqueado (R005) y la auditoría sigue revirtiendo (R006) |
 | Códigos y schemas como contrato | sí | No cambia ningún código ni campo de `sdd.trace/v1`; cambia el texto de un mensaje |
@@ -36,7 +36,7 @@ posterior no cambia y sigue siendo la red de lo que la compuerta no ve.
 
 ## Decisiones
 
-### D1 — Vista de código de un archivo de pruebas (R001, R002)
+### D1 — Vista de código de un archivo de pruebas Python (R010, R002)
 
 - **Contexto:** hoy se busca `F001_R001` en cada línea del archivo, y la
   declaración de prueba más cercana por encima se toma de las líneas tal cual.
@@ -47,25 +47,27 @@ posterior no cambia y sigue siendo la red de lo que la compuerta no ve.
   de prueba. Los nombres de función y los comentarios se conservan (R002). La
   clasificación del cuerpo (vacía, sin aserción) sigue usando el texto real.
   - **Python:** la vista se calcula con `tokenize`, que conoce las cadenas de
-    varias líneas. Si el archivo no se puede tokenizar, se usa el texto tal cual,
+    varias líneas, sobre las mismas líneas que `splitlines()` para que las filas
+    coincidan. Si el archivo no se puede tokenizar, se usa el texto tal cual,
     como hoy.
-  - **Resto de lenguajes:** un analizador por línea distingue comentarios
-    (`//`, `/* … */` en una línea, y `#` en Ruby y shell) de cadenas (`"…"`,
-    `'…'`, `` `…` ``). Los comentarios se conservan enteros, aunque lleven
-    apóstrofos. Una cadena se conserva si es el **primer argumento de una
-    llamada** (`it(…)`, `it.only(…)`, `test.each(…)(…)`, `t.Run(…)`,
-    `@DisplayName(…)`) o el título de una prueba de Ruby sin paréntesis
-    (`it '…' do`, también `describe`, `context`, `specify`, `test`); el resto se
-    vacía. Así se cubren las formas de nombrar una prueba sin enumerarlas.
-- **Alternativas descartadas:** excluir los archivos de prueba de los plugins
-  (no-goal de la spec, y el problema reaparece en cualquier repo con fixtures);
-  marcar los fixtures con una convención especial (obliga a recordarla, y el
-  plugin se apoya en no tener que recordar).
-- **Consecuencias:** en lenguajes distintos de Python, un texto de varias líneas
-  no se reconoce como texto; es un caso raro en pruebas, y su efecto es el de
-  hoy. Una cita dentro de una cadena que es primer argumento de cualquier
-  llamada (`expect("F001_R001")`) sigue contando, como hoy: no hay regresión,
-  pero R001 no cubre ese caso fuera de Python.
+  - **Resto de lenguajes:** la vista es el texto tal cual, como antes de esta
+    feature (R010).
+- **Alternativas descartadas:**
+  - Excluir los archivos de prueba de los plugins (no-goal de la spec, y el
+    problema reaparece en cualquier repo con fixtures).
+  - Marcar los fixtures con una convención especial (obliga a recordarla).
+  - **Vaciar también los textos fuera de Python, intentado dos veces en T003 y
+    descartado.** Primero, vaciando todo salvo el título de `it/test/describe`;
+    después, con un analizador por línea que conservaba comentarios y primeros
+    argumentos de llamada. Las dos revisiones encontraron pérdidas de evidencia
+    real en formas habituales: comentarios con apóstrofos o de varias líneas,
+    títulos de RSpec (`xit`, `scenario`), Bats, nombres de Kotlin entre comillas
+    invertidas, `DisplayName = "…"` de C#, ScalaTest y subpruebas por tabla de
+    Go. Sin un analizador real por lenguaje, la lista no se acaba, y perder una
+    cita real tumba el CI.
+- **Consecuencias:** un fixture escrito en otro lenguaje dentro de un test sigue
+  contando como evidencia, como hoy. El caso que motivó la feature (el selftest
+  de `sdd`) está en Python.
 
 ### D2 — Reconocer la aprobación por las palabras del comando (R004, R005)
 
@@ -106,10 +108,10 @@ posterior no cambia y sigue siendo la red de lo que la compuerta no ve.
 
 | Componente | Cambio | Requisitos que cubre |
 | ---------- | ------ | -------------------- |
-| `plugins/sdd/scripts/sdd_trace.py` | vista de código en `scan_tests`; mensaje de `W-TEST-UNSCOPED` | R001, R002, R003 |
+| `plugins/sdd/scripts/sdd_trace.py` | vista de código para Python en `scan_tests`; texto tal cual en otros lenguajes; mensaje de `W-TEST-UNSCOPED` | R010, R002, R003 |
 | `plugins/sdd/scripts/sdd_bash.py` | `invokes_approve` por palabras del comando | R004, R005 |
-| `plugins/sdd/tests/selftest.py` | pruebas `test_F002_Rxxx_*` | R001, R002, R003, R004, R005, R006 |
-| `plugins/sdd/README.md` | la compuerta reconoce la ejecución, no la mención | R004 |
+| `plugins/sdd/tests/selftest.py` | pruebas `test_F002_Rxxx_*` | R010, R002, R003, R004, R005, R006 |
+| `plugins/sdd/README.md` | la compuerta reconoce la ejecución, no la mención; las citas en textos solo dejan de contar en Python | R004, R010 |
 
 ## Modelo de datos
 
@@ -124,25 +126,25 @@ interfaz de los hooks también.
 
 | Requisito | Tipo de prueba | Dónde vive |
 | --------- | -------------- | ---------- |
-| R001 | integración: fixture en cadena (también de varias líneas) no cuenta; cita en texto entre comillas no cuenta | `plugins/sdd/tests/selftest.py` |
-| R002 | integración: nombre de prueba, comentario en el cuerpo y título `it("…")` de JS siguen contando | ídem |
+| R010 | integración: en Python, fixture en cadena (también de varias líneas) y cita en texto no cuentan; en JS, Go, Ruby, Java y Kotlin las citas cuentan como antes | `plugins/sdd/tests/selftest.py` |
+| R002 | integración: nombre de prueba y comentario en el cuerpo siguen contando; un salto de página no desalinea la vista | ídem |
 | R003 | integración: `test_R004_x` sin prefijo produce un aviso que nombra R004 | ídem |
 | R004 | integración: commit con mensaje, PR con descripción, heredoc a archivo y `echo` con la orden no se bloquean | ídem |
 | R005 | integración: `python3 sdd.py approve`, ruta absoluta y encadenado tras `&&` se bloquean | ídem |
 | R006 | integración: comando opaco que aprueba `spec.md` es revertido por la auditoría (la prueba actual sigue pasando) | ídem |
 
 Además, al cerrar: `sdd trace` de la feature 001 no debe apuntar a
-`plugins/sdd/tests/selftest.py` para R001 ni R002 (criterio de R001).
+`plugins/sdd/tests/selftest.py` para R001 ni R002 (criterio de R010).
 
 ## Riesgos técnicos
 
 | Riesgo | Impacto | Mitigación |
 | ------ | ------- | ---------- |
 | Un archivo de pruebas Python con errores de sintaxis no se tokeniza | vuelve el comportamiento de hoy en ese archivo | se usa el texto tal cual; nunca falla ni bloquea |
-| En otros lenguajes, el vaciado por línea falla con comillas escapadas raras | una cita podría perderse o colarse | pruebas con los casos de JS/TS habituales; el efecto es el de hoy |
+| Un fixture en otro lenguaje sigue contando | un requisito podría figurar como probado sin serlo | consecuencia aceptada en R010; documentada en el README |
 | La compuerta deja pasar más comandos | una autoaprobación por script no se bloquea antes | la auditoría la revierte después (R006, probado) |
 
 ## Trazabilidad
 
-Los seis requisitos MUST (R001–R006) aparecen en la tabla de componentes y en
-la de pruebas.
+Los seis requisitos MUST vigentes (R002–R006 y R010) aparecen en la tabla de
+componentes y en la de pruebas. R001 es obsoleto (reemplazado por R010).
