@@ -67,7 +67,7 @@ Todas las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T006 — Cierre sobre el caso real
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R010, R002
 - **Depende de:** T003, T005
 - **Archivos:** —
