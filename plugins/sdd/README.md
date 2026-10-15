@@ -99,8 +99,9 @@ Cada artefacto lleva `| Estado | Draft |` en la cabecera. Solo
 - La aprobación la ejecuta Claude Code al cargar la skill, con la inyección
   `` !`…` ``, así que no pasa por la herramienta Bash. Por eso el hook puede
   denegar la **ejecución** de `sdd.py approve` por parte del modelo sin
-  bloquear al usuario. Mencionar la orden (en un mensaje de commit, la
-  descripción de un PR o un texto que se escribe a un archivo) no se bloquea.
+  bloquear al usuario. Mencionar la orden entre comillas (en un mensaje de
+  commit, la descripción de un PR) o en un texto que se escribe a un archivo no
+  se bloquea.
 - Aprueba siempre la siguiente fase pendiente. El orden spec → plan → tasks
   hace que no haya otra aprobable, así que no necesita argumento.
 - Se niega si el artefacto no está completo.
@@ -155,13 +156,14 @@ Límites:
 - Las instantáneas se guardan en el directorio temporal del sistema, una por
   llamada (`tool_use_id`), y se barren al cabo de un día.
 - La prevención no ve una aprobación lanzada por un script, `bash -c "…"`, una
-  tubería a `sh` o un heredoc sin comillas que la ejecute: eso lo revierte la
-  auditoría.
+  tubería a `sh`, un heredoc que se pasa a un intérprete, o uno sin comillas
+  cuya sustitución la ejecute: eso lo revierte la auditoría.
 - **La auditoría solo vigila la feature activa.** Un comando que cambie
   `.sdd/current`, apruebe otra feature y vuelva a dejar el puntero no se
   detecta. Pendiente de una feature propia.
-- Un `\$(…)` escapado que contenga la orden se bloquea aunque no se ejecute:
-  peca de prudente.
+- Un `\$(…)` escapado fuera de comillas dobles que contenga la orden se
+  bloquea aunque no se ejecute, igual que una mención sin comillas
+  (`echo python3 sdd.py approve`): peca de prudente.
 
 **Escapes**, en orden de contundencia:
 

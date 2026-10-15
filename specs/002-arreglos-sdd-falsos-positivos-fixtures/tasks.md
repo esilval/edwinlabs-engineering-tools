@@ -59,7 +59,7 @@ Todas las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T005 — Regresión de la auditoría y README
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R006, R004
 - **Depende de:** T004
 - **Archivos:** `plugins/sdd/tests/selftest.py`, `plugins/sdd/README.md`

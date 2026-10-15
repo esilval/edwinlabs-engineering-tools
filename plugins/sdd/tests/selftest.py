@@ -858,7 +858,7 @@ def test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base):
     if shutil.which("git") is None:
         print("  (sin git: omitida)")
         return
-    p = repo_con_feature(base, "f002-r006", spec=SPEC_BASE + "\n")
+    p = repo_con_feature(base, "f002-r006")
     spec = p / "specs" / "001-x" / "spec.md"
     spec.write_text("# S\n\n| Campo | Valor |\n| - | - |\n| Estado | Draft |\n\n## R\n\n"
                     + SPEC_BASE, encoding="utf-8")
