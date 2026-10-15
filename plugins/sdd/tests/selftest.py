@@ -736,6 +736,41 @@ def test_F002_R002_python_invalido_no_revienta(base):
            "se usa el texto tal cual, como antes", f"{evidencia(p, 'R001')}")
 
 
+MENCIONES = [
+    "git commit -q -m 'sdd: la compuerta ya no bloquea sdd.py approve ni set_status(x)'",
+    'gh pr create --title t --body "Corrige: python3 sdd.py approve y set_status(texto, v)"',
+    "cat > notas.md <<'EOF'\npython3 plugins/sdd/scripts/sdd.py approve\nEOF",
+    'echo "para aprobar: python3 sdd.py approve"',
+    "grep -rn 'sdd.py approve' plugins/sdd/README.md",
+]
+
+EJECUCIONES = [
+    "python3 sdd.py approve",
+    "python3 /x/plugins/sdd/scripts/sdd.py approve plan",
+    'python3 "$HOME/plugins/sdd/scripts/sdd.py" approve',
+    "cd plugins/sdd && python3 scripts/sdd.py approve",
+    "ls; FOO=1 python3 sdd.py approve tasks",
+]
+
+
+def test_F002_R004_mencion_no_bloquea(base):
+    print("\nF002 · R004: mencionar la aprobacion no bloquea")
+    p = repo_con_feature(base, "f002-r004")
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_bash
+    for cmd in MENCIONES:
+        expect(not sdd_bash.invokes_approve(cmd), f"no es ejecucion: {cmd.splitlines()[0][:50]!r}")
+        expect(not bash_bloquea(p, cmd), f"la compuerta no bloquea: {cmd.splitlines()[0][:50]!r}")
+    expect(not sdd_bash.invokes_approve('echo "sin cerrar'), "un comando que no se analiza: no")
+
+
+def test_F002_R005_ejecucion_bloquea(base):
+    print("\nF002 · R005: ejecutar sdd.py approve sigue bloqueado")
+    p = repo_con_feature(base, "f002-r005")
+    for cmd in EJECUCIONES:
+        expect(bash_bloquea(p, cmd), f"bloquea: {cmd!r}")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -750,6 +785,8 @@ def main():
         test_F002_R001_cita_en_texto_no_cuenta(base)
         test_F002_R002_nombre_y_comentario_cuentan(base)
         test_F002_R002_python_invalido_no_revienta(base)
+        test_F002_R004_mencion_no_bloquea(base)
+        test_F002_R005_ejecucion_bloquea(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

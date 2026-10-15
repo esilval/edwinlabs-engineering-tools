@@ -51,7 +51,7 @@ Todas las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T004 — Compuerta Bash por palabras del comando · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R004, R005
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd_bash.py`, `plugins/sdd/tests/selftest.py`

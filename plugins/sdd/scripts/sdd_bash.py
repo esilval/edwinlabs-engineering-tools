@@ -42,7 +42,6 @@ HEREDOC = re.compile(
     re.S,
 )
 
-APPROVE_CALL = re.compile(r"sdd\.py['\"]?\s+approve\b|\bset_status\s*\(")
 APPROVAL_WORD = re.compile(r"approved|aprobad[oa]", re.I)
 
 
@@ -162,8 +161,26 @@ def write_targets(command):
 
 
 def invokes_approve(command):
-    """True si el comando intenta aprobar una fase por su cuenta."""
-    return bool(APPROVE_CALL.search(command or ""))
+    """
+    True si el comando **ejecuta** `sdd.py approve`: en algun segmento, una
+    palabra cuyo nombre de archivo es sdd.py seguida de la palabra approve.
+
+    Una mencion no cuenta: un mensaje de commit, la descripcion de un PR o el
+    cuerpo de un heredoc son una sola palabra entre comillas, o se descartan
+    antes de analizar. Lo que esta compuerta no puede ver (un script, un
+    `bash -c` o un interprete con el codigo en linea) lo revierte la auditoria
+    de PostToolUse. Un comando que no se puede analizar no se deniega.
+    """
+    try:
+        tokens = _tokens(_strip_heredocs(command or ""))
+    except ValueError:
+        return False
+    for seg, _redirects in _segments(tokens):
+        words = _command_words(seg)
+        for word, nxt in zip(words, words[1:]):
+            if os.path.basename(word) == "sdd.py" and nxt == "approve":
+                return True
+    return False
 
 
 def mentions_approval(command):
