@@ -270,6 +270,69 @@ def test_F001_R003_formato_no_admitido():
     expect(r.returncode == 1 and foto(root) is None, "un archivo inexistente se rechaza sin cambios")
 
 
+# ----------------------------------------------------------------- T004
+
+def docx(path, parrafos):
+    """Fabrica un .docx minimo: [(estilo o None, texto)]."""
+    import zipfile
+    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    cuerpo = ""
+    for estilo, texto in parrafos:
+        ppr = f'<w:pPr><w:pStyle w:val="{estilo}"/></w:pPr>' if estilo else ""
+        cuerpo += f"<w:p>{ppr}<w:r><w:t>{texto}</w:t></w:r></w:p>"
+    xml = f'<?xml version="1.0"?><w:document xmlns:w="{w}"><w:body>{cuerpo}</w:body></w:document>'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("word/document.xml", xml)
+    return path
+
+
+def test_F001_R004_docx_convertido():
+    root = proyecto("r004-docx")
+    p = docx(root / "entrada" / "pagos.docx", [
+        ("Title", "Plan de pagos"), ("Heading1", "Cobros"), (None, "Cobrar a fin de mes."),
+        ("Heading2", "Recurrentes"), (None, "Cada mes."), ("Ttulo1", "Devoluciones"),
+    ])
+    r = run(root, "ingest", str(p))
+    expect(r.returncode == 0, "ingesta de un .docx", r.stderr)
+    guardo = guardado(root, "D1")
+    expect("\n# Plan de pagos\n" in guardo and "## 1 Cobros" in guardo
+           and "### 1.1 Recurrentes" in guardo and "## 2 Devoluciones" in guardo,
+           "los estilos de titulo dan los encabezados (tambien los de Word en espanol)")
+    expect("Cobrar a fin de mes." in guardo, "el texto de los parrafos se conserva")
+    cabecera = discovery.header_fields(guardo)
+    expect(cabecera["Original"] == "pagos.docx"
+           and cabecera["Huella original"] == discovery.bytes_digest(p.read_bytes()),
+           "registra el nombre del original y la huella de sus bytes")
+    roto = root / "entrada" / "roto.docx"
+    roto.write_bytes(b"no soy un zip")
+    antes = foto(root)
+    r = run(root, "ingest", str(roto))
+    expect(r.returncode == 1 and "Word" in r.stderr and foto(root) == antes,
+           "un .docx corrupto se rechaza sin tocar el producto", r.stderr)
+
+
+def test_F001_R004_original_registrado():
+    root = proyecto("r004-original")
+    pdf = root / "entrada" / "vision.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.4 contenido binario")
+    md = doc(root, "vision-convertido.md", "# Visión\n\n## Problema\n")
+    r = run(root, "ingest", str(md), "--original", str(pdf))
+    cabecera = discovery.header_fields(guardado(root, "D1"))
+    expect(r.returncode == 0 and cabecera["Original"] == "vision.pdf"
+           and cabecera["Huella original"] == discovery.bytes_digest(pdf.read_bytes())
+           and cabecera["Ingesta"], "registra nombre, fecha y huella de los bytes del PDF",
+           f"{r.stderr} {cabecera}")
+    antes = foto(root)
+    r = run(root, "ingest", str(doc(root, "otra-conversion.md", "# Otra\n")), "--original", str(pdf))
+    expect(r.returncode == 1 and "D1" in r.stderr and foto(root) == antes,
+           "el mismo PDF dos veces es un duplicado", r.stderr)
+    r = run(root, "ingest", str(pdf))
+    expect(r.returncode == 1 and "--original" in r.stderr and foto(root) == antes,
+           "un PDF directo pide convertirlo y usar --original")
+
+
 # ----------------------------------------------------------------- T006
 
 DOC_VISION = """# Visión

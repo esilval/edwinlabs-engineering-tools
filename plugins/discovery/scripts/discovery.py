@@ -318,6 +318,63 @@ def ingest_text(root, content, original_name, original_digest, today=None):
             "sections": len(numbers)}
 
 
+WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+# Estilos de titulo de Word: los ids en ingles ("Heading2", "Title") y los de
+# una instalacion en espanol ("Ttulo2", "Titulo2"). outlineLvl gana si existe.
+WORD_HEADING_STYLE = re.compile(r"^(?:heading|t[ií]?tulo|ttulo)\s*(\d)$", re.I)
+WORD_TITLE_STYLE = re.compile(r"^(?:title|t[ií]?tulo|ttulo)$", re.I)
+
+
+def bytes_digest(data):
+    """Huella de un archivo binario: sus bytes en bruto, sin normalizar."""
+    return hashlib.sha1(data).hexdigest()[:12]
+
+
+def docx_to_markdown(path):
+    """
+    Convierte un .docx a Markdown con la biblioteca estandar: el .docx es un
+    zip con XML. Los parrafos con estilo de titulo dan los encabezados; el
+    resto, parrafos de texto. Lanza Rejected si el archivo no es un Word valido.
+    """
+    import zipfile
+    import xml.etree.ElementTree as ET
+    try:
+        with zipfile.ZipFile(path) as z:
+            xml = z.read("word/document.xml")
+        body = ET.fromstring(xml).find(f"{WORD_NS}body")
+    except (zipfile.BadZipFile, KeyError, ET.ParseError, OSError):
+        raise Rejected(f"{Path(path).name} no es un documento Word válido.")
+    if body is None:
+        raise Rejected(f"{Path(path).name} no tiene cuerpo de documento.")
+
+    out = []
+    for p in body.iter(f"{WORD_NS}p"):
+        text = "".join(t.text or "" for t in p.iter(f"{WORD_NS}t")).strip()
+        if not text:
+            continue
+        level = None
+        ppr = p.find(f"{WORD_NS}pPr")
+        if ppr is not None:
+            outline = ppr.find(f"{WORD_NS}outlineLvl")
+            style = ppr.find(f"{WORD_NS}pStyle")
+            style_id = style.get(f"{WORD_NS}val", "") if style is not None else ""
+            # El estilo Titulo es el titulo del documento (H1); Titulo 1 es
+            # la primera seccion (H2). Asi un Word con Titulo + Titulo 1, 2…
+            # queda con un H1 unico y sus secciones empiezan en §1.
+            if WORD_TITLE_STYLE.match(style_id):
+                level = 1
+            elif outline is not None and outline.get(f"{WORD_NS}val", "").isdigit():
+                level = int(outline.get(f"{WORD_NS}val")) + 2
+            elif WORD_HEADING_STYLE.match(style_id):
+                level = int(WORD_HEADING_STYLE.match(style_id).group(1)) + 1
+        if level and 1 <= level <= 6:
+            out.append(f"{'#' * level} {text}")
+        else:
+            out.append(text)
+        out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
 def cmd_ingest(args):
     original = None
     if "--original" in args:
@@ -325,7 +382,7 @@ def cmd_ingest(args):
         if i + 1 >= len(args):
             print("error: --original necesita un archivo", file=sys.stderr)
             return 1
-        original = args[i + 1]
+        original = Path(args[i + 1])
         args = args[:i] + args[i + 2:]
     if len(args) != 1:
         print("uso: discovery.py ingest <archivo> [--original <archivo>]", file=sys.stderr)
@@ -340,10 +397,26 @@ def cmd_ingest(args):
                            "(.md, .markdown), Word (.docx) y PDF (.pdf).")
         if not source.is_file():
             raise Rejected(f"No existe el archivo {source}.")
-        if ext not in TEXT_FORMATS:
-            raise Rejected(f"{source.name} todavía no se puede ingerir directamente.")
-        content = source.read_text(encoding="utf-8")
-        result = ingest_text(root, content, source.name, text_digest(content))
+        if ext == ".pdf":
+            raise Rejected(f"{source.name} es un PDF: conviértelo a Markdown y llama a "
+                           f"ingest <markdown> --original {source.name}.")
+        if original is not None:
+            # Markdown convertido por el modelo desde un PDF u otro original:
+            # se registra el nombre y la huella de los bytes del original.
+            if ext not in TEXT_FORMATS:
+                raise Rejected("Con --original, el archivo a ingerir es el Markdown convertido.")
+            if original.suffix.lower() not in SUPPORTED or not original.is_file():
+                raise Rejected(f"El original {original} no existe o no es Markdown, Word ni PDF.")
+            content = source.read_text(encoding="utf-8")
+            result = ingest_text(root, content, original.name,
+                                 bytes_digest(original.read_bytes()))
+        elif ext == ".docx":
+            content = docx_to_markdown(source)
+            result = ingest_text(root, content, source.name,
+                                 bytes_digest(source.read_bytes()))
+        else:
+            content = source.read_text(encoding="utf-8")
+            result = ingest_text(root, content, source.name, text_digest(content))
     except Rejected as exc:
         print(f"Rechazado: {exc} El producto no ha cambiado.", file=sys.stderr)
         return 1
