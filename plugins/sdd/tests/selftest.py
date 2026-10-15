@@ -677,7 +677,63 @@ def test_F002_R003_aviso_nombra_el_requisito(base):
         "tests/test_x.py": "def test_R004_x():\n    assert True\n"})
     avisos = [f["message"] for f in traza(p)["findings"] if f["code"] == "W-TEST-UNSCOPED"]
     expect(len(avisos) == 1 and "No cuenta: R004 existe" in avisos[0]
-           and "R001 existe" not in avisos[0], "el aviso nombra R004, no R001", f"{avisos}")
+           and "R001" not in avisos[0], "el aviso nombra R004, no R001", f"{avisos}")
+
+
+def evidencia(cwd, rid):
+    return next(r for r in traza(cwd)["requirements"] if r["id"] == rid)["tests"]
+
+
+FIXTURE_PY = '''import sdd
+
+FIXTURE = "def test_F001_R001_algo():\\n    assert x\\n"
+MULTILINEA = """
+def test_F001_R002_falso():
+    assert y
+"""
+
+
+def test_que_usa_los_fixtures():
+    assert FIXTURE and MULTILINEA
+'''
+
+
+def test_F002_R001_fixture_en_cadena_no_cuenta(base):
+    print("\nF002 · R001: un fixture en una cadena no es una prueba")
+    p = repo_con_feature(base, "f002-r001-fixture", archivos={"tests/test_f.py": FIXTURE_PY})
+    expect(evidencia(p, "R001") == [], "una cadena de una linea no cuenta",
+           f"{evidencia(p, 'R001')}")
+    expect(evidencia(p, "R002") == [], "una cadena de varias lineas tampoco",
+           f"{evidencia(p, 'R002')}")
+
+
+def test_F002_R001_cita_en_texto_no_cuenta(base):
+    print("\nF002 · R001: una cita dentro de un texto no cuenta")
+    p = repo_con_feature(base, "f002-r001-texto", archivos={"tests/test_t.py": (
+        "def test_otro():\n    msg = 'ver F001-R002 en la spec'\n    assert msg\n")})
+    expect(evidencia(p, "R002") == [], "F001-R002 entre comillas no cuenta",
+           f"{evidencia(p, 'R002')}")
+
+
+def test_F002_R002_nombre_y_comentario_cuentan(base):
+    print("\nF002 · R002: nombre y comentario siguen contando")
+    p = repo_con_feature(base, "f002-r002", archivos={"tests/test_ok.py": (
+        "def test_F001_R001_ok():\n    assert login() == 'ok'\n\n\n"
+        "def test_otro():\n    # F001-R002\n    assert True  # con 'una cadena' en la linea\n")})
+    expect(evidencia(p, "R001") == ["tests/test_ok.py::test_F001_R001_ok"],
+           "el nombre de la prueba cuenta", f"{evidencia(p, 'R001')}")
+    expect(evidencia(p, "R002") == ["tests/test_ok.py::test_otro"],
+           "un comentario en el cuerpo cuenta", f"{evidencia(p, 'R002')}")
+
+
+def test_F002_R002_python_invalido_no_revienta(base):
+    print("\nF002 · R002: un archivo Python que no se tokeniza no rompe nada")
+    p = repo_con_feature(base, "f002-r002-invalido", archivos={"tests/test_roto.py": (
+        "def test_F001_R001_x(:\n    assert '''sin cerrar\n")})
+    r = run("trace", ["--json"], cwd=p)
+    expect(r.returncode == 0, "trace no revienta", r.stderr)
+    expect(evidencia(p, "R001") == ["tests/test_roto.py::test_F001_R001_x"],
+           "se usa el texto tal cual, como antes", f"{evidencia(p, 'R001')}")
 
 
 def main():
@@ -690,6 +746,10 @@ def main():
         test_degenerados(base)
         test_bash(base)
         test_F002_R003_aviso_nombra_el_requisito(base)
+        test_F002_R001_fixture_en_cadena_no_cuenta(base)
+        test_F002_R001_cita_en_texto_no_cuenta(base)
+        test_F002_R002_nombre_y_comentario_cuentan(base)
+        test_F002_R002_python_invalido_no_revienta(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

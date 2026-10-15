@@ -405,6 +405,43 @@ def is_test_file(path):
     return any(norm(part) in TEST_DIRS for part in path.parts[:-1])
 
 
+def code_view(content, suffix):
+    """
+    Lineas del archivo con el contenido de los textos literales en blanco,
+    mismas lineas y columnas. Las citas y las declaraciones de prueba se buscan
+    aqui: una cadena "def test_F001_R001_x()" escrita como dato en un test no
+    es una prueba (R001 de la feature 002). Nombres y comentarios se conservan.
+
+    Python se tokeniza, que conoce las cadenas de varias lineas. Si no se puede
+    tokenizar, o el lenguaje es otro, se devuelve el texto tal cual.
+    """
+    lines = content.splitlines()
+    if suffix != ".py":
+        return lines
+    import io
+    import tokenize
+    string_types = {tokenize.STRING}
+    if hasattr(tokenize, "FSTRING_MIDDLE"):  # Python 3.12+: f-strings por partes
+        string_types.add(tokenize.FSTRING_MIDDLE)
+    chars = [list(line) for line in lines]
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(content).readline):
+            if tok.type not in string_types:
+                continue
+            (srow, scol), (erow, ecol) = tok.start, tok.end
+            for row in range(srow, erow + 1):
+                if row - 1 >= len(chars):
+                    break
+                line = chars[row - 1]
+                start = scol if row == srow else 0
+                end = ecol if row == erow else len(line)
+                for c in range(start, min(end, len(line))):
+                    line[c] = " "
+    except (tokenize.TokenError, SyntaxError, IndentationError, ValueError):
+        return lines
+    return ["".join(line) for line in chars]
+
+
 def scan_tests(root, extra_globs=None):
     """
     Devuelve (scoped, bare):
@@ -431,7 +468,8 @@ def scan_tests(root, extra_globs=None):
             if "R" not in content:
                 continue
             lines = content.splitlines()
-            for i, line in enumerate(lines):
+            view = code_view(content, path.suffix.lower())
+            for i, line in enumerate(view):
                 hits = [((int(f), "R" + r), scoped)
                         for f, r in SCOPED_REQ_ID.findall(line)]
                 hits += [("R" + r, bare)
@@ -440,7 +478,7 @@ def scan_tests(root, extra_globs=None):
                     continue
                 label, kind = None, "ok"
                 for j in range(i, max(-1, i - 25), -1):
-                    d = TEST_DECL.search(lines[j])
+                    d = TEST_DECL.search(view[j])
                     if d:
                         label = next(g for g in d.groups() if g)
                         kind = test_body_kind(lines, j, path.suffix.lower())
