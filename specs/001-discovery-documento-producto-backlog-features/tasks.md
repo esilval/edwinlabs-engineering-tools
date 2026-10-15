@@ -115,7 +115,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T012 — Skills clarify y decompose
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R005, R006, R007, R009, R010
 - **Depende de:** T007, T008
 - **Archivos:** `plugins/discovery/skills/clarify/SKILL.md`, `plugins/discovery/skills/decompose/SKILL.md`
