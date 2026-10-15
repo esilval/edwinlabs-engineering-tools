@@ -83,7 +83,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T008 — `check`: errores
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R008, R010, R011, R014
 - **Depende de:** T007
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`
@@ -107,7 +107,7 @@ funciones `test_F001_Rxxx_*` que usan el ayudante `expect(...)`.
 
 ### T011 — Guard y auditoría de la aprobación
 
-- **Estado:** `[ ]`
+- **Estado:** `[~]`
 - **Requisitos:** R015
 - **Depende de:** T010
 - **Archivos:** `plugins/discovery/hooks/hooks.json`, `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`

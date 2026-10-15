@@ -691,19 +691,30 @@ def test_F001_R011_referencia_inexistente():
     msgs = [x["message"] for x in con_codigo(root, "E-REF-UNKNOWN")]
     expect(any("G9" in m for m in msgs) and any("D4§1" in m for m in msgs)
            and any("B42" in m for m in msgs), "un error por cada cita rota", f"{msgs}")
+    brief = BRIEF_OK.replace("- **Movimiento:** una venta o una devolución (D1§1)",
+                             "- **Movimiento:** una venta o una devolución (D1§8)")
+    discovery.write_product(root, "brief.md", brief)
+    msgs = [x["message"] for x in con_codigo(root, "E-REF-UNKNOWN")]
+    expect(any("brief.md" in m and "D1§8" in m for m in msgs),
+           "tambien una cita rota en el glosario", f"{msgs}")
+    nota = BRIEF_OK.replace("## Objetivos", "> Ejemplo de cita: D7§4.2.\n\n## Objetivos")
+    discovery.write_product(root, "brief.md", nota)
+    expect(not any("D7" in x["message"] for x in con_codigo(root, "E-REF-UNKNOWN")),
+           "una cita de ejemplo en una nota (blockquote) no cuenta")
 
 
 def test_F001_R011_dependencia_circular():
-    backlog = BACKLOG_OK.replace("### B01 — Resumen diario de ventas\n\n- **Estado:** candidata\n"
-                                 "- **Objetivos:** G1\n- **Origen:** D1§1, D1§3\n",
-                                 "### B01 — Resumen diario de ventas\n\n- **Estado:** candidata\n"
-                                 "- **Objetivos:** G1\n- **Origen:** D1§1, D1§3\n", 1)
-    backlog = backlog.replace("- **Fuera:** comparativas entre días.\n- **Depende de:** —",
-                              "- **Fuera:** comparativas entre días.\n- **Depende de:** B02")
+    backlog = BACKLOG_OK.replace("- **Fuera:** comparativas entre días.\n- **Depende de:** —",
+                                 "- **Fuera:** comparativas entre días.\n- **Depende de:** B02")
     root = producto_ok("r011-ciclo", backlog=backlog)
     f = con_codigo(root, "E-BACKLOG-DEP-CYCLE")
-    expect(f and "B01" in f[0]["message"] and "B02" in f[0]["message"],
-           "E-BACKLOG-DEP-CYCLE nombra B01 y B02", f"{f}")
+    expect(len(f) == 1 and f[0]["message"].endswith("B01 -> B02 -> B01"),
+           "E-BACKLOG-DEP-CYCLE describe el ciclo exacto", f"{f}")
+    propio = BACKLOG_OK.replace("- **Depende de:** B01", "- **Depende de:** B02")
+    discovery.write_product(root, "backlog.md", propio)
+    f = con_codigo(root, "E-BACKLOG-DEP-CYCLE")
+    expect(len(f) == 1 and f[0]["message"].endswith("B02 -> B02"),
+           "una candidata que depende de si misma", f"{f}")
 
 
 def test_F001_R011_documento_modificado():
@@ -713,6 +724,14 @@ def test_F001_R011_documento_modificado():
                  encoding="utf-8")
     f = con_codigo(root, "E-SOURCE-MODIFIED")
     expect(len(f) == 1 and f[0]["document"] == "D1", "E-SOURCE-MODIFIED nombra D1", f"{f}")
+    sin_huella = proyecto("r011-sin-huella")
+    ingerir(sin_huella, "vision.md", DOC_VISION)
+    p = next((sin_huella / "product" / "sources").glob("D1-*.md"))
+    texto = p.read_text(encoding="utf-8")
+    p.write_text("\n".join(l for l in texto.splitlines() if not l.startswith("| Huella |")) + "\n",
+                 encoding="utf-8")
+    expect(len(con_codigo(sin_huella, "E-SOURCE-MODIFIED")) == 1,
+           "borrar la fila Huella tambien cuenta como modificado")
 
 
 def test_F001_R008_hueco_en_ids():
@@ -724,8 +743,12 @@ def test_F001_R008_hueco_en_ids():
     repetido = BACKLOG_OK.replace("### B03 —", "### B02 —")
     discovery.write_product(root, "backlog.md", repetido)
     msgs = [x["message"] for x in con_codigo(root, "E-BACKLOG-ID-GAP")]
-    expect(any("repetid" in m and "B2" in m.replace("B02", "B2") for m in msgs),
-           "y un ID repetido", f"{msgs}")
+    expect("IDs repetidos en candidatas: B02." in msgs, "y un ID repetido, con su formato", f"{msgs}")
+    duplicado = producto_ok("r008-doc-repetido")
+    origen = next((duplicado / "product" / "sources").glob("D1-*.md"))
+    (origen.parent / "D1-copia.md").write_text(origen.read_text(encoding="utf-8"), encoding="utf-8")
+    msgs = [x["message"] for x in con_codigo(duplicado, "E-BACKLOG-ID-GAP")]
+    expect("IDs repetidos en documentos: D1." in msgs, "dos archivos con el mismo Dn", f"{msgs}")
 
 
 def test_F001_R010_candidata_redactada_como_requisito():
@@ -734,6 +757,15 @@ def test_F001_R010_candidata_redactada_como_requisito():
     root = producto_ok("r010-requisito", backlog=backlog)
     f = con_codigo(root, "E-BACKLOG-REQUIREMENT")
     expect(len(f) == 1 and f[0]["item"] == "B01", "E-BACKLOG-REQUIREMENT nombra B01", f"{f}")
+    for texto in ("la aplicación deberá enviar un correo.", "the system SHALL send it."):
+        discovery.write_product(root, "backlog.md",
+                                BACKLOG_OK.replace("el dueño ve el total del día al cerrar.", texto))
+        expect(len(con_codigo(root, "E-BACKLOG-REQUIREMENT")) == 1, f"detecta «{texto}»")
+    futuro = BACKLOG_OK.replace("el dueño no sabe cuánto vendió hoy, cada día.",
+                                "el dueño deberá cerrar la caja a mano cada noche.")
+    discovery.write_product(root, "backlog.md", futuro)
+    expect(not con_codigo(root, "E-BACKLOG-REQUIREMENT"),
+           "un futuro normal («el dueño deberá cerrar…») no es un requisito")
 
 
 def test_F001_R010_comandos_no_tocan_specs():
@@ -763,6 +795,29 @@ def test_F001_R014_huecos_de_plantilla():
     discovery.write_product(root, "brief.md", plantilla_brief)
     expect(any(x["file"] == "brief.md" for x in comprobar(root)["findings"]
                if x["code"] == "E-PRODUCT-TEMPLATE"), "y en brief.md")
+    copiado = BACKLOG_OK + ("\n### B04 — _título de la feature candidata_\n\n- **Estado:** candidata"
+                            "\n- **Objetivos:** G1\n- **Origen:** _D1§4.2_, D1§3\n")
+    root2 = producto_ok("r014-plantilla-copiada", backlog=copiado)
+    f = con_codigo(root2, "E-PRODUCT-TEMPLATE")
+    expect(len(f) == 1 and "2 hueco" in f[0]["message"],
+           "un bloque copiado para B04 con sus cursivas sin rellenar", f"{f}")
+    expect(not con_codigo(producto_ok("r014-cursiva-propia",
+                                      backlog=BACKLOG_OK.replace("total del día", "_total_ del día")),
+                          "E-PRODUCT-TEMPLATE"), "una cursiva propia no es un hueco")
+
+
+def test_F001_R011_contencion_de_secciones():
+    root = proyecto("r011-contencion")
+    ingerir(root, "pagos.md", "# Pagos\n\n## Cobros\n\n### Tarjeta\n\n### Efectivo\n\n## Cierre\n")
+    brief = BRIEF_OK.replace("D1§1, D1§2, D1§3", "D1§1.1").replace("- **Origen:** D1§4\n",
+                                                                  "- **Origen:** D1§2\n")
+    backlog = BACKLOG_OK.replace("D1§1, D1§3", "D1§1.1").replace("- **Origen:** D1§4\n",
+                                                                "- **Origen:** D1§2\n")
+    discovery.write_product(root, "brief.md", brief)
+    discovery.write_product(root, "backlog.md", backlog)
+    sin = {x["section"] for x in con_codigo(root, "E-SOURCE-UNCOVERED")}
+    expect(sin == {"D1§1.2"}, "citar D1§1.1 cubre su padre D1§1 pero no a su hermana D1§1.2",
+           f"{sin}")
 
 
 # ----------------------------------------------------------------- T009
@@ -877,6 +932,81 @@ def test_F001_R016_reformateo_no_invalida():
     p.write_text(p.read_text(encoding="utf-8").replace("\n## Usuarios", "\n\n\n## Usuarios")
                  .replace("el dueño ve", "el  dueño  ve"), encoding="utf-8")
     expect(not con_codigo(root, "W-PRODUCT-NOT-APPROVED"), "reformatear no invalida")
+
+
+# ----------------------------------------------------------------- T011
+
+def hook(root, sub, tool, tool_input, tool_use_id="t1", env_extra=None):
+    payload = json.dumps({"tool_name": tool, "tool_use_id": tool_use_id, "cwd": str(root),
+                          "tool_input": tool_input})
+    return run(root, sub, stdin=payload, env_extra=env_extra)
+
+
+def deniega(r):
+    if r.returncode != 0:
+        return None
+    if not r.stdout.strip():
+        return False
+    d = json.loads(r.stdout)["hookSpecificOutput"]
+    return d["permissionDecision"] == "deny" and bool(d["permissionDecisionReason"])
+
+
+def test_F001_R015_guard_edit():
+    root = producto_ok("r015-edit")
+    backlog = root / "product" / "backlog.md"
+    r = hook(root, "guard", "Edit", {"file_path": str(backlog), "old_string": "| Estado | Draft |",
+                                     "new_string": "| Estado | Approved · 0123456789ab |"})
+    expect(deniega(r) is True, "un Edit que aprueba backlog.md se deniega", r.stdout)
+    expect("allow" not in r.stdout, "nunca devuelve allow")
+    sellado = BRIEF_OK.replace("| Estado | Draft |", "| Estado | Approved |")
+    r = hook(root, "guard", "Write", {"file_path": "product/brief.md", "content": sellado})
+    expect(deniega(r) is True, "un Write que aprueba brief.md, aunque sea sin huella, se deniega")
+    r = hook(root, "guard", "Edit", {"file_path": str(backlog), "old_string": "al cerrar.",
+                                     "new_string": "al cerrar la caja."})
+    expect(deniega(r) is False, "editar otra parte del backlog no se bloquea")
+    r = hook(root, "guard", "Write", {"file_path": "product/sources/nota.md", "content": "x"})
+    expect(deniega(r) is False, "otros archivos no le interesan")
+
+
+def test_F001_R015_guard_bash():
+    root = producto_ok("r015-bash")
+    r = hook(root, "guard", "Bash", {"command": "python3 /x/scripts/discovery.py approve --skill"})
+    expect(deniega(r) is True, "el modelo no puede lanzar discovery.py approve")
+    r = hook(root, "guard", "Bash", {"command": "python3 /x/scripts/discovery.py check"})
+    expect(deniega(r) is False, "otros comandos pasan")
+
+
+def test_F001_R015_auditoria_restaura():
+    root = producto_ok("r015-auditoria")
+    backlog = root / "product" / "backlog.md"
+    hook(root, "guard", "Bash", {"command": "python3 ofuscado.py"}, tool_use_id="a1")
+    texto = backlog.read_text(encoding="utf-8")
+    sellado = discovery.set_status(texto, f"Approved · {discovery.content_digest(texto)}")[0]
+    backlog.write_text(sellado, encoding="utf-8")
+    r = hook(root, "audit", "Bash", {}, tool_use_id="a1")
+    expect(r.returncode == 2 and "backlog.md" in r.stderr, "detecta la autoaprobacion", r.stderr)
+    expect(estado(root, "backlog.md") == "Draft", "y devuelve el Estado a Draft")
+    hook(root, "guard", "Bash", {"command": "ls"}, tool_use_id="a2")
+    r = hook(root, "audit", "Bash", {}, tool_use_id="a2")
+    expect(r.returncode == 0 and not r.stderr, "un comando que no toca el Estado: silencio")
+    expect(hook(root, "audit", "Bash", {}, tool_use_id="sin-foto").returncode == 0,
+           "sin instantanea no opina")
+
+
+def test_F001_R015_sin_product_no_opina():
+    root = proyecto("r015-sin-product")
+    r = hook(root, "guard", "Bash", {"command": "python3 x/discovery.py approve"})
+    expect(deniega(r) is False, "sin product/ el plugin no opina")
+    con = producto_ok("r015-bypass")
+    r = hook(con, "guard", "Bash", {"command": "python3 x/discovery.py approve"},
+             env_extra={"DISCOVERY_BYPASS": "1"})
+    expect(deniega(r) is False, "DISCOVERY_BYPASS=1 lo desactiva")
+    r = run(con, "guard", stdin="no soy json")
+    expect(r.returncode == 0 and not r.stdout.strip(), "stdin roto: deja pasar")
+    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
+    expect(any("Bash" in h["matcher"] and "Edit" in h["matcher"] for h in hooks["PreToolUse"])
+           and any(h["matcher"] == "Bash" for h in hooks["PostToolUse"]),
+           "hooks.json registra guard y auditoria")
 
 
 def test_zz_todos_los_codigos_se_prueban():

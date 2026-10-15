@@ -21,6 +21,9 @@ Subcomandos:
                       hay errores (para CI).
   approve [--skill]   Aprueba brief y backlog si check no da errores. Solo
                       lo lanza el usuario, con /discovery:approve.
+  guard               Hook PreToolUse: impide que el modelo apruebe.
+  audit               Hook PostToolUse sobre Bash: revierte una aprobacion
+                      escrita por un comando.
 """
 
 import datetime
@@ -675,24 +678,44 @@ FINDINGS = {
 }
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
-ITALIC_EDGE = re.compile(r"(?:^|[\s|*(>\[])_(?=[^\s_])|(?<=[^\s_])_(?=$|[\s|.,;:)*\]])")
 INLINE_PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9])_[^_\n]*(?:\.\.\.|\\<)[^_\n]*_(?![A-Za-z0-9])")
-REQUIREMENT_WORDS = re.compile(r"\b(?:debera|deberan|shall)\b")
+# Forma EARS de un requisito, no cualquier futuro: «DEBERÁ» en mayusculas, o
+# «el sistema / la aplicacion… deberá». «El dueño deberá cerrar la caja» es
+# una descripcion valida de un problema.
+EARS_UPPER = re.compile(r"\b(?:DEBER[AÁ]N?|SHALL)\b")
+EARS_SUBJECT = re.compile(r"\b(?:el|la)\s+(?:sistema|aplicaci[oó]n|plataforma|producto|servicio)"
+                          r"\s+deber[aá]n?\b", re.I)
+ITALIC_FRAGMENT = re.compile(r"(?<![A-Za-z0-9_])_([^_\n]+?)_(?![A-Za-z0-9_])")
 
 
-def template_lines(name):
-    """Lineas de la plantilla que son huecos por rellenar (texto en cursiva)."""
+def template_fragments(name):
+    """Textos en cursiva de la plantilla: cada uno es un hueco por rellenar."""
     path = TEMPLATES_DIR / name
     if not path.is_file():
         return set()
-    return {_squash(line) for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip() and ITALIC_EDGE.search(line.strip())}
+    return {norm(m.group(1).strip()) for line in path.read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().startswith(">") for m in ITALIC_FRAGMENT.finditer(line)}
 
 
 def find_placeholders(text, template_name):
-    known = template_lines(template_name)
-    return [(i, raw.strip()) for i, raw in enumerate((text or "").splitlines(), 1)
-            if raw.strip() and (_squash(raw) in known or INLINE_PLACEHOLDER.search(raw))]
+    """
+    Lineas que conservan un hueco de la plantilla. Se compara cada fragmento en
+    cursiva, no la linea entera: un bloque copiado para B02 con su
+    `_título de la feature candidata_` sin rellenar tambien cuenta.
+    """
+    known = template_fragments(template_name)
+    out = []
+    for i, raw in enumerate((text or "").splitlines(), 1):
+        if raw.lstrip().startswith(">"):
+            continue
+        frags = {norm(m.group(1).strip()) for m in ITALIC_FRAGMENT.finditer(raw)}
+        if frags & known or INLINE_PLACEHOLDER.search(raw):
+            out.append((i, raw.strip()))
+    return out
+
+
+def is_requirement(text):
+    return bool(EARS_UPPER.search(text) or EARS_SUBJECT.search(text))
 
 
 def _related(a, b):
@@ -707,7 +730,8 @@ def _cycles(graph):
         if state.get(node) == "done":
             return
         if state.get(node) == "open":
-            found.append(path[path.index(node):] + [node])
+            # `path` ya termina en el nodo que cierra el ciclo.
+            found.append(path[path.index(node):])
             return
         state[node] = "open"
         for nxt in graph.get(node, []):
@@ -719,18 +743,21 @@ def _cycles(graph):
     return found
 
 
-def _id_gaps(ids, label):
+def _id_gaps(ids, label, hint):
     """Mensajes por huecos o repetidos en una serie de IDs ('G', 'B', 'D')."""
+    if not ids:
+        return []
+    prefix = ids[0][0]
+    width = 2 if prefix == "B" else 1
     nums = [int(i[1:]) for i in ids]
+    fmt = lambda n: f"{prefix}{n:0{width}d}"  # noqa: E731
     out = []
     repeated = sorted({n for n in nums if nums.count(n) > 1})
     if repeated:
-        out.append(f"{label} repetidos: " + ", ".join(f"{ids[0][0]}{n}" for n in repeated))
-    missing = sorted(set(range(1, max(nums, default=0) + 1)) - set(nums))
+        out.append(f"IDs repetidos en {label}: " + ", ".join(fmt(n) for n in repeated) + ".")
+    missing = sorted(set(range(1, max(nums) + 1)) - set(nums))
     if missing:
-        width = 2 if ids and ids[0].startswith("B") else 1
-        out.append(f"faltan {label}: " + ", ".join(f"{ids[0][0]}{n:0{width}d}" for n in missing)
-                   + ". Un elemento se descarta, no se borra.")
+        out.append(f"Faltan IDs en {label}: " + ", ".join(fmt(n) for n in missing) + f". {hint}")
     return out
 
 
@@ -750,23 +777,22 @@ def analyze(root):
     # E-SOURCE-MODIFIED
     for did, d in docs.items():
         stored = d["fields"].get("Huella")
-        if stored and stored != text_digest(source_content(d["text"])):
-            add("E-SOURCE-MODIFIED", f"{did} se editó después de ingerirlo. Los documentos no se "
-                "editan: restaura el archivo y trae el cambio como documento nuevo.", document=did)
+        if stored != text_digest(source_content(d["text"])):
+            add("E-SOURCE-MODIFIED", f"{did} se editó después de ingerirlo, o su cabecera ya no "
+                "tiene la huella. Los documentos no se editan: restaura el archivo y trae el "
+                "cambio como documento nuevo.", document=did)
 
-    # E-REF-UNKNOWN: origen de objetivos y candidatas, objetivos, dependencias, preguntas
-    def check_refs(where, text):
-        for broken in broken_refs(product, refs(text)):
-            add("E-REF-UNKNOWN", f"{where} cita {broken}.")
-
-    for g in goals:
-        check_refs(f"{g['id']} (Origen)", g["fields"].get("origen", ""))
-    for c in candidates:
-        for field in ("objetivos", "origen", "depende de"):
-            check_refs(f"{c['id']} ({field.capitalize()})", c["fields"].get(field, ""))
-    for q in brief["questions"]:
-        check_refs(f"La pregunta «{q['text'][:60]}»", q["text"])
-    check_refs("Secciones descartadas", " ".join(brief["discarded"]))
+    # E-REF-UNKNOWN: toda cita del brief y del backlog, fuera de las notas en
+    # blockquote (que traen ejemplos como D2§4.2).
+    for name, text in ((BRIEF, product["brief_text"]), (BACKLOG, product["backlog_text"])):
+        seen = set()
+        for n, line in enumerate((text or "").splitlines(), 1):
+            if line.lstrip().startswith(">"):
+                continue
+            for broken in broken_refs(product, refs(line)):
+                if (name, broken) not in seen:
+                    seen.add((name, broken))
+                    add("E-REF-UNKNOWN", f"{name}, línea {n}, cita {broken}.", file=name)
 
     # E-GOAL-NO-FEATURE
     pursued = {g for c in live for g in refs(c["fields"].get("objetivos", ""))["goals"]}
@@ -796,15 +822,22 @@ def analyze(root):
         add("E-BACKLOG-DEP-CYCLE", "Dependencias circulares: " + " -> ".join(cycle))
 
     # E-BACKLOG-ID-GAP
-    for ids, label in ((list(docs), "documentos"), ([g["id"] for g in goals], "objetivos"),
-                       ([c["id"] for c in candidates], "candidatas")):
-        for message in _id_gaps(ids, label):
-            add("E-BACKLOG-ID-GAP", message[0].upper() + message[1:])
+    # Los documentos se cuentan por archivo: D1-a.md y D1-b.md son un repetido.
+    base = product_root(root) / SOURCES_DIR
+    doc_ids = sorted((f"D{SOURCE_FILE.match(p.name).group(1)}" for p in base.iterdir()
+                      if SOURCE_FILE.match(p.name)), key=lambda d: int(d[1:])) \
+        if base.is_dir() else []
+    for ids, label, hint in (
+            (doc_ids, "documentos", "Un documento ingerido no se borra."),
+            ([g["id"] for g in goals], "objetivos", "Un objetivo se descarta, no se borra."),
+            ([c["id"] for c in candidates], "candidatas",
+             "Una candidata se descarta (Estado: descartada), no se borra.")):
+        for message in _id_gaps(ids, label, hint):
+            add("E-BACKLOG-ID-GAP", message)
 
     # E-BACKLOG-REQUIREMENT
     for item in goals + candidates:
-        body = norm(item["title"] + " " + " ".join(item["fields"].values()))
-        if REQUIREMENT_WORDS.search(body):
+        if is_requirement(item["title"] + " " + " ".join(item["fields"].values())):
             add("E-BACKLOG-REQUIREMENT", f"{item['id']} está redactado como requisito "
                 "(«DEBERÁ»). Aquí va problema y resultado; los requisitos los escribe "
                 "/sdd:specify.", item=item["id"])
@@ -942,6 +975,140 @@ def cmd_approve(args):
 
 
 # --------------------------------------------------------------------------
+# Guard y auditoria: hooks que protegen la aprobacion (R015)
+# --------------------------------------------------------------------------
+
+APPROVABLE = (BRIEF, BACKLOG)
+APPROVE_CALL = re.compile(r"discovery\.py['\"]?\s+approve\b")
+
+
+def claims_approval(text):
+    """True si el Estado empieza por Approved, tenga huella o no."""
+    words = norm(doc_status(text) or "").strip("`*_ ").split()
+    return bool(words) and words[0].strip("`*_") in APPROVED
+
+
+def deny(reason):
+    """Bloquea. El JSON solo se procesa con exit 0: nunca combinar con exit 2."""
+    json.dump({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                      "permissionDecision": "deny",
+                                      "permissionDecisionReason": reason}}, sys.stdout)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _approvable_target(root, raw_path):
+    """Nombre del artefacto aprobable al que apunta raw_path, o None."""
+    try:
+        target = Path(raw_path)
+        if not target.is_absolute():
+            target = root / target
+        target = target.resolve()
+        base = product_root(root).resolve()
+    except (OSError, ValueError):
+        return None, None
+    for name in APPROVABLE:
+        if target == base / name:
+            return name, target
+    return None, None
+
+
+def _snapshot_path(root, payload):
+    import tempfile
+    key = payload.get("tool_use_id") or payload.get("session_id") or "nosession"
+    digest = hashlib.sha1(f"{root}|{key}".encode("utf-8")).hexdigest()[:20]
+    return Path(tempfile.gettempdir()) / "discovery-audit" / f"{digest}.json"
+
+
+def _statuses(root):
+    return {n: doc_status(read_product(root, n) or "") for n in APPROVABLE
+            if read_product(root, n) is not None}
+
+
+APPROVAL_REASON = (
+    "Guardrail discovery: la aprobación del producto es del usuario, no tuya. Es la "
+    "prueba de que una persona revisó el brief y el backlog.\n\nNo cambies el campo "
+    "Estado ni ejecutes `discovery.py approve`: pídele al usuario que lo revise y "
+    "ejecute /discovery:approve.\n\nEscape puntual: DISCOVERY_BYPASS=1."
+)
+
+
+def cmd_guard(_args):
+    """Hook PreToolUse sobre Write|Edit|Bash. Nunca devuelve allow."""
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError:
+        return 0
+    root = project_root(payload)
+    if os.environ.get("DISCOVERY_BYPASS") == "1" or not product_root(root).is_dir():
+        return 0
+    tool_input = payload.get("tool_input") or {}
+
+    if payload.get("tool_name") == "Bash":
+        if APPROVE_CALL.search(tool_input.get("command") or ""):
+            return deny(APPROVAL_REASON)
+        # Lo que un comando opaco cambie lo revisa la auditoria de PostToolUse.
+        path = _snapshot_path(root, payload)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(_statuses(root)), encoding="utf-8")
+        except OSError:
+            pass
+        return 0
+
+    name, target = _approvable_target(root, tool_input.get("file_path") or "")
+    if not name:
+        return 0
+    before = target.read_text(encoding="utf-8", errors="replace") if target.is_file() else ""
+    if "content" in tool_input:
+        after = tool_input.get("content") or ""
+    elif "new_string" in tool_input:
+        old = tool_input.get("old_string") or ""
+        if not old or old not in before:
+            return 0
+        count = -1 if tool_input.get("replace_all") else 1
+        after = before.replace(old, tool_input.get("new_string") or "", count)
+    else:
+        return 0
+    if claims_approval(after) and doc_status(after) != doc_status(before):
+        return deny(APPROVAL_REASON)
+    return 0
+
+
+def cmd_audit(_args):
+    """
+    Hook PostToolUse sobre Bash: si un comando cambio el Estado de brief o
+    backlog hacia una aprobacion, lo devuelve a su valor anterior. Exit 2 para
+    que el modelo lea el aviso; PostToolUse no puede deshacer el comando.
+    """
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError:
+        return 0
+    root = project_root(payload)
+    path = _snapshot_path(root, payload)
+    try:
+        before = json.loads(path.read_text(encoding="utf-8"))
+        path.unlink()
+    except (OSError, ValueError):
+        return 0
+    if os.environ.get("DISCOVERY_BYPASS") == "1":
+        return 0
+    restored = []
+    for name, old in before.items():
+        text = read_product(root, name)
+        if text is not None and claims_approval(text) and doc_status(text) != old:
+            write_product(root, name, set_status(text, old or "Draft")[0])
+            restored.append(f"{name} (vuelve a '{old or 'Draft'}')")
+    if not restored:
+        return 0
+    sys.stderr.write("Guardrail discovery: el comando cambió el Estado de "
+                     + ", ".join(restored) + ". La aprobación es del usuario, con "
+                     "/discovery:approve.\n")
+    return 2
+
+
+# --------------------------------------------------------------------------
 
 COMMANDS = {
     "ingest": cmd_ingest,
@@ -949,14 +1116,25 @@ COMMANDS = {
     "questions": cmd_questions,
     "check": cmd_check,
     "approve": cmd_approve,
+    "guard": cmd_guard,
+    "audit": cmd_audit,
 }
+
+# Un hook que revienta nunca debe bloquear al usuario: falla abierto.
+HOOKS = {"guard", "audit"}
 
 
 def main(argv):
     if len(argv) < 2 or argv[1] not in COMMANDS:
         print(__doc__.strip(), file=sys.stderr)
         return 2
-    return COMMANDS[argv[1]](argv[2:])
+    try:
+        return COMMANDS[argv[1]](argv[2:])
+    except Exception as exc:  # noqa: BLE001
+        if argv[1] in HOOKS:
+            print(f"discovery.py {argv[1]}: {exc}", file=sys.stderr)
+            return 0
+        raise
 
 
 if __name__ == "__main__":
