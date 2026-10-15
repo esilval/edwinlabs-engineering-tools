@@ -55,7 +55,7 @@ def product_path(root, rel):
     """
     base = product_root(root).resolve()
     target = (base / rel).resolve()
-    if target != base and base not in target.parents:
+    if base not in target.parents:
         raise OutsideProduct(f"{rel} queda fuera de {PRODUCT_DIR}/")
     return target
 
@@ -126,8 +126,14 @@ def doc_status(text):
 
 
 def is_approved(text):
+    """
+    Aprobado = 'Approved · <huella>'. A diferencia de sdd, aqui no hay
+    artefactos anteriores a la huella que respetar: un 'Approved' sin huella
+    lo ha escrito alguien a mano y no cuenta.
+    """
     words = norm(doc_status(text) or "").strip("`*_ ").split()
-    return bool(words) and words[0].strip("`*_") in APPROVED
+    return (bool(words) and words[0].strip("`*_") in APPROVED
+            and approval_digest(text) is not None)
 
 
 def set_status(text, value):

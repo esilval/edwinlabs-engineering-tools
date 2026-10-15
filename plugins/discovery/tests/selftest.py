@@ -27,7 +27,8 @@ BASE = Path(tempfile.mkdtemp(prefix="discovery-selftest-"))
 
 
 def expect(ok, nombre, detalle=""):
-    print(f"  {'ok  ' if ok else 'FALLA'} {nombre}" + (f" :: {detalle}" if detalle and not ok else ""))
+    extra = f" :: {detalle}" if detalle and not ok else ""
+    print(f"  {'ok  ' if ok else 'FALLA'} {nombre}{extra}")
     if not ok:
         fallos.append(nombre)
     return ok
@@ -55,14 +56,18 @@ def test_F001_R010_escritura_solo_en_product():
     root = proyecto("r010-rutas")
     discovery.write_product(root, "brief.md", "x\n")
     expect((root / "product" / "brief.md").is_file(), "escribe dentro de product/")
-    for malo in ("../fuera.md", "../specs/spec.md", "/tmp/absoluta.md", "sources/../../x.md"):
+    (root / "fuera").mkdir()
+    (root / "product" / "enlace").symlink_to(root / "fuera")
+    for malo in ("../fuera.md", "../specs/spec.md", "/tmp/absoluta.md",
+                 "sources/../../x.md", ".", "enlace/x.md"):
         try:
             discovery.write_product(root, malo, "x\n")
             escapo = True
         except discovery.OutsideProduct:
             escapo = False
         expect(not escapo, f"rechaza escribir en {malo}")
-    expect(not (root / "fuera.md").exists() and not (root / "specs").exists(),
+    expect(not (root / "fuera.md").exists() and not (root / "specs").exists()
+           and not (root / "fuera" / "x.md").exists(),
            "nada se escribio fuera de product/")
 
 
@@ -89,8 +94,9 @@ BACKLOG_APROBADO = """# Backlog
 
 
 def _aprobar(texto):
-    sellado, ok = discovery.set_status(texto, f"Approved · {discovery.content_digest(texto)}")
-    assert ok
+    huella = discovery.content_digest(texto)
+    sellado, ok = discovery.set_status(texto, f"Approved · {huella}")
+    expect(ok, "set_status encuentra la fila Estado")
     return sellado
 
 
@@ -102,7 +108,8 @@ def test_F001_R016_huella_ignora_formato():
     sellado = _aprobar(BACKLOG_APROBADO)
     expect(discovery.is_approved(sellado) and not discovery.is_stale(sellado),
            "recien aprobado: aprobado y no cambiado")
-    reformateado = sellado.replace("\n\n### B01", "\n\n\n### B01").replace("el usuario", "el  usuario")
+    reformateado = (sellado.replace("\n\n### B01", "\n\n\n### B01")
+                    .replace("el usuario", "el  usuario"))
     expect(not discovery.is_stale(reformateado), "reformatear tras aprobar no invalida")
 
 
@@ -117,13 +124,18 @@ def test_F001_R016_huella_detecta_cambio():
            "una fila Estado fuera de la cabecera no cuenta")
     expect(not discovery.is_approved(discovery.set_status(sellado, "Draft")[0]),
            "Draft no es aprobado")
+    a_mano = discovery.set_status(sellado, "Approved")[0]
+    expect(not discovery.is_approved(a_mano), "un Approved sin huella no cuenta como aprobado")
+    expect(discovery.set_status("# B\n\n## X\n", "Draft") == ("# B\n\n## X\n", False),
+           "set_status sin fila Estado no cambia nada")
 
 
-def test_F001_R002_huella_de_texto_igual_con_otro_formato():
-    # F001-R002: la deteccion de duplicados compara esta huella
-    expect(discovery.text_digest("# Vision\n\nTexto.\n") == discovery.text_digest("# Vision\nTexto.\n"),
+def test_huella_de_texto():
+    # Base de la deteccion de duplicados; el criterio de R002 lo prueba T003.
+    a, b = "# Vision\n\nTexto.\n", "# Vision\nTexto.\n"
+    expect(discovery.text_digest(a) == discovery.text_digest(b),
            "el mismo contenido con otro formato tiene la misma huella")
-    expect(discovery.text_digest("# Vision\nTexto.\n") != discovery.text_digest("# Vision\nOtro.\n"),
+    expect(discovery.text_digest(b) != discovery.text_digest("# Vision\nOtro.\n"),
            "contenido distinto, huella distinta")
 
 
