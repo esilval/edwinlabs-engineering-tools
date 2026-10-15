@@ -272,18 +272,28 @@ def test_F001_R003_formato_no_admitido():
 
 # ----------------------------------------------------------------- T004
 
-def docx(path, parrafos):
-    """Fabrica un .docx minimo: [(estilo o None, texto)]."""
+def docx(path, parrafos, extra=None):
+    """
+    Fabrica un .docx minimo: [(estilo o None, texto)]. Un estilo 'outline:N'
+    usa w:outlineLvl en lugar de w:pStyle. `extra` anade otro archivo al zip,
+    como hace Word al guardar de nuevo.
+    """
     import zipfile
     w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     cuerpo = ""
     for estilo, texto in parrafos:
-        ppr = f'<w:pPr><w:pStyle w:val="{estilo}"/></w:pPr>' if estilo else ""
+        if estilo and estilo.startswith("outline:"):
+            ppr = f'<w:pPr><w:outlineLvl w:val="{estilo[8:]}"/></w:pPr>'
+        else:
+            ppr = f'<w:pPr><w:pStyle w:val="{estilo}"/></w:pPr>' if estilo else ""
         cuerpo += f"<w:p>{ppr}<w:r><w:t>{texto}</w:t></w:r></w:p>"
-    xml = f'<?xml version="1.0"?><w:document xmlns:w="{w}"><w:body>{cuerpo}</w:body></w:document>'
+    xml = (f'<?xml version="1.0"?><w:document xmlns:w="{w}">'
+           f"<w:body>{cuerpo}</w:body></w:document>")
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("word/document.xml", xml)
+        if extra:
+            z.writestr("docProps/core.xml", extra)
     return path
 
 
@@ -301,15 +311,43 @@ def test_F001_R004_docx_convertido():
            "los estilos de titulo dan los encabezados (tambien los de Word en espanol)")
     expect("Cobrar a fin de mes." in guardo, "el texto de los parrafos se conserva")
     cabecera = discovery.header_fields(guardo)
-    expect(cabecera["Original"] == "pagos.docx"
-           and cabecera["Huella original"] == discovery.bytes_digest(p.read_bytes()),
-           "registra el nombre del original y la huella de sus bytes")
+    expect(cabecera["Original"] == "pagos.docx" and cabecera["Ingesta"]
+           and cabecera["Huella original"] == discovery.text_digest(discovery.docx_to_markdown(p)),
+           "registra nombre, fecha y la huella del contenido convertido")
+    otra = docx(root / "entrada" / "pagos-guardado.docx", [
+        ("Title", "Plan de pagos"), ("Heading1", "Cobros"), (None, "Cobrar a fin de mes."),
+        ("Heading2", "Recurrentes"), (None, "Cada mes."), ("Ttulo1", "Devoluciones"),
+    ], extra="<guardado-otra-vez/>")
+    expect(otra.read_bytes() != p.read_bytes(), "(el zip guardado de nuevo tiene otros bytes)")
+    antes = foto(root)
+    r = run(root, "ingest", str(otra))
+    expect(r.returncode == 1 and "D1" in r.stderr and foto(root) == antes,
+           "el mismo Word guardado de nuevo es un duplicado", r.stderr)
     roto = root / "entrada" / "roto.docx"
     roto.write_bytes(b"no soy un zip")
     antes = foto(root)
     r = run(root, "ingest", str(roto))
     expect(r.returncode == 1 and "Word" in r.stderr and foto(root) == antes,
            "un .docx corrupto se rechaza sin tocar el producto", r.stderr)
+
+
+def test_F001_R004_docx_estructura():
+    root = proyecto("r004-docx-estructura")
+    p = docx(root / "entrada" / "notas.docx", [
+        ("Title", "Notas"), ("Title", "Subtitulo marcado como titulo"),
+        ("outline:0", "Por esquema"), (None, "# no soy titulo"), (None, "- ni lista"),
+        ("Heading6", "Muy profundo"),
+    ])
+    md = discovery.docx_to_markdown(p)
+    expect(md.count("\n# ") + md.startswith("# ") == 1 and "Subtitulo marcado como titulo\n" in md,
+           "solo el primer Title es H1; el segundo queda como texto", md)
+    expect("## Por esquema" in md, "outlineLvl 0 da un H2 (primera seccion)", md)
+    expect("\\# no soy titulo" in md and "\\- ni lista" in md,
+           "un parrafo normal que empieza por # o - se escapa", md)
+    expect("###### Muy profundo" in md, "Heading6 se queda en H6", md)
+    run(root, "ingest", str(p))
+    expect(discovery.sections(guardado(root, "D1")) == ["1", "1.1"],
+           "el # escapado no crea una seccion falsa", f"{discovery.sections(guardado(root, 'D1'))}")
 
 
 def test_F001_R004_original_registrado():
@@ -331,6 +369,10 @@ def test_F001_R004_original_registrado():
     r = run(root, "ingest", str(pdf))
     expect(r.returncode == 1 and "--original" in r.stderr and foto(root) == antes,
            "un PDF directo pide convertirlo y usar --original")
+    md2 = doc(root, "fuente.md", "# Fuente\n")
+    r = run(root, "ingest", str(doc(root, "copia.md", "# Fuente\n")), "--original", str(md2))
+    expect(r.returncode == 1 and "PDF" in r.stderr and foto(root) == antes,
+           "--original solo admite PDF")
 
 
 # ----------------------------------------------------------------- T006

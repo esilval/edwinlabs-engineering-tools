@@ -321,8 +321,10 @@ def ingest_text(root, content, original_name, original_digest, today=None):
 WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 # Estilos de titulo de Word: los ids en ingles ("Heading2", "Title") y los de
 # una instalacion en espanol ("Ttulo2", "Titulo2"). outlineLvl gana si existe.
-WORD_HEADING_STYLE = re.compile(r"^(?:heading|t[ií]?tulo|ttulo)\s*(\d)$", re.I)
-WORD_TITLE_STYLE = re.compile(r"^(?:title|t[ií]?tulo|ttulo)$", re.I)
+WORD_HEADING_STYLE = re.compile(r"^(?:heading|t[ií]?tulo)\s*(\d)$", re.I)
+WORD_TITLE_STYLE = re.compile(r"^(?:title|t[ií]?tulo)$", re.I)
+# Inicio de linea que Markdown leeria como estructura (encabezado, cita, lista).
+MD_STRUCTURE = re.compile(r"^(#|>|[-*+]\s|\d+[.)]\s)")
 
 
 def bytes_digest(data):
@@ -347,7 +349,7 @@ def docx_to_markdown(path):
     if body is None:
         raise Rejected(f"{Path(path).name} no tiene cuerpo de documento.")
 
-    out = []
+    out, title_seen = [], False
     for p in body.iter(f"{WORD_NS}p"):
         text = "".join(t.text or "" for t in p.iter(f"{WORD_NS}t")).strip()
         if not text:
@@ -361,16 +363,21 @@ def docx_to_markdown(path):
             # El estilo Titulo es el titulo del documento (H1); Titulo 1 es
             # la primera seccion (H2). Asi un Word con Titulo + Titulo 1, 2…
             # queda con un H1 unico y sus secciones empiezan en §1.
+            # Solo el primer parrafo con estilo Titulo es el titulo; un
+            # segundo (subtitulo marcado igual) queda como texto.
             if WORD_TITLE_STYLE.match(style_id):
-                level = 1
+                level = None if title_seen else 1
+                title_seen = True
             elif outline is not None and outline.get(f"{WORD_NS}val", "").isdigit():
-                level = int(outline.get(f"{WORD_NS}val")) + 2
+                level = min(int(outline.get(f"{WORD_NS}val")) + 2, 6)
             elif WORD_HEADING_STYLE.match(style_id):
-                level = int(WORD_HEADING_STYLE.match(style_id).group(1)) + 1
-        if level and 1 <= level <= 6:
+                level = min(int(WORD_HEADING_STYLE.match(style_id).group(1)) + 1, 6)
+        if level:
             out.append(f"{'#' * level} {text}")
         else:
-            out.append(text)
+            # Un parrafo normal no puede volverse estructura Markdown: un
+            # '# no soy titulo' seria una seccion falsa y romperia las citas.
+            out.append("\\" + text if MD_STRUCTURE.match(text) else text)
         out.append("")
     return "\n".join(out).rstrip() + "\n"
 
@@ -405,15 +412,17 @@ def cmd_ingest(args):
             # se registra el nombre y la huella de los bytes del original.
             if ext not in TEXT_FORMATS:
                 raise Rejected("Con --original, el archivo a ingerir es el Markdown convertido.")
-            if original.suffix.lower() not in SUPPORTED or not original.is_file():
-                raise Rejected(f"El original {original} no existe o no es Markdown, Word ni PDF.")
+            if original.suffix.lower() != ".pdf" or not original.is_file():
+                raise Rejected(f"--original es para PDF: {original} no existe o no es un PDF. "
+                               "Markdown y Word se ingieren directamente.")
             content = source.read_text(encoding="utf-8")
             result = ingest_text(root, content, original.name,
                                  bytes_digest(original.read_bytes()))
         elif ext == ".docx":
+            # Huella del texto convertido, no del zip: el mismo Word guardado
+            # otra vez cambia sus bytes pero no su contenido (R002, D5).
             content = docx_to_markdown(source)
-            result = ingest_text(root, content, source.name,
-                                 bytes_digest(source.read_bytes()))
+            result = ingest_text(root, content, source.name, text_digest(content))
         else:
             content = source.read_text(encoding="utf-8")
             result = ingest_text(root, content, source.name, text_digest(content))
