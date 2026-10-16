@@ -29,7 +29,7 @@ registradas en su ejecución. Las pruebas de la raíz quitan
 
 ### T001 — Raíz del proyecto en `sdd` · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R003, R004
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd.py`, `plugins/sdd/tests/selftest.py`
