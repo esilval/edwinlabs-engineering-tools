@@ -165,7 +165,7 @@ de contrato es la única que ejecuta `discovery.py`.
 
 ### T011 — README y cierre
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R012, R015
 - **Depende de:** T010
 - **Archivos:** `plugins/architecture/README.md`

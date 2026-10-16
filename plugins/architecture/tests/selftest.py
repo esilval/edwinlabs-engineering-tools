@@ -791,10 +791,9 @@ def test_F006_R011_cambio_tras_aprobar():
            "reformatear sin cambiar el contenido sigue aprobado")
 
 
-def test_F006_R014_producto_cambiado():
-    p = con_arquitectura(proyecto("r014-producto"))
-    run(p, "approve")
-    nueva = PRODUCTO_BACKLOG + """
+# A nivel de modulo: una cadena de varias lineas en columna 0 dentro de una
+# prueba corta el analisis de su cuerpo en la trazabilidad de sdd.
+CANDIDATA_NUEVA = """
 ### B04 — Avisos de stock
 
 - **Estado:** candidata
@@ -806,7 +805,13 @@ def test_F006_R014_producto_cambiado():
 - **Fuera:** pedidos automáticos.
 - **Depende de:** B01
 """
-    con_producto(p, backlog=nueva)  # el backlog se reaprueba con una candidata nueva
+
+
+def test_F006_R014_producto_cambiado():
+    p = con_arquitectura(proyecto("r014-producto"))
+    run(p, "approve")
+    # el backlog se reaprueba con una candidata nueva
+    con_producto(p, backlog=PRODUCTO_BACKLOG + CANDIDATA_NUEVA)
     h = con_codigo(p, "W-ARCH-PRODUCT-CHANGED")
     expect(len(h) == 1 and "product/backlog.md" in h[0]["message"]
            and "product/brief.md" not in h[0]["message"],

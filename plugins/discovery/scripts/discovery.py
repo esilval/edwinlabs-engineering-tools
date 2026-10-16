@@ -1027,8 +1027,9 @@ APPROVE_TEXT = re.compile(r"discovery\.py['\"]?\s+approve\b")
 # Analisis de comandos: ejecutar la orden de aprobar frente a mencionarla.
 #
 # Copia adaptada de plugins/sdd/scripts/sdd_bash.py (invokes_approve y sus
-# ayudantes): los plugins no comparten codigo. Un arreglo en una copia se
-# replica en la otra, y los dos selftests usan listas de casos equivalentes.
+# ayudantes), copiada a su vez en plugins/architecture/scripts/architecture.py:
+# los plugins no comparten codigo. Un arreglo en una copia se replica en las
+# otras, y los selftests usan listas de casos equivalentes.
 # --------------------------------------------------------------------------
 
 _WRAPPERS = {"sudo", "env", "command", "nohup", "time", "nice", "builtin", "exec"}

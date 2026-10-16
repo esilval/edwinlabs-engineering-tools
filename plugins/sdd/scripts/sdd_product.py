@@ -8,9 +8,10 @@ product/sources/, y comprueba que el producto esta aprobado y no cambio
 despues de aprobarse.
 
 Los plugins no comparten codigo: lo que aqui se lee del formato de discovery,
-y su huella de aprobacion, es una copia de plugins/discovery/scripts/discovery.py.
-Un cambio en una copia se replica en la otra; la prueba de contrato del
-selftest de sdd las compara con el discovery real cuando esta en el repo.
+y su huella de aprobacion, es una copia de plugins/discovery/scripts/discovery.py,
+como la de plugins/architecture/scripts/architecture.py. Un cambio en una copia
+se replica en las otras; la prueba de contrato del selftest de sdd las compara
+con el discovery real cuando esta en el repo.
 """
 
 import hashlib
