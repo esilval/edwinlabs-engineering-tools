@@ -123,7 +123,7 @@ de contrato es la única que ejecuta `discovery.py`.
 
 ### T008 — Revisión de decisiones propuestas
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R013
 - **Depende de:** T007
 - **Archivos:** `plugins/architecture/scripts/architecture.py`, `plugins/architecture/tests/selftest.py`

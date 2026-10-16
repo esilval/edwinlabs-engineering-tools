@@ -816,6 +816,92 @@ def test_F006_R014_producto_cambiado():
            "y da error por la candidata nueva sin componente")
 
 
+# ----------------------------------------------------------------- T008
+
+def codigos_de(root, code):
+    """Hallazgos de un codigo sin contarlo como probado (para afirmar ausencias)."""
+    return [f for f in architecture.analyze(root)["findings"] if f["code"] == code]
+
+
+def con_propuesta(nombre, sustituye="—", completo=True):
+    """Arquitectura aprobada (ADR-0001 y 0002) y una ADR-0004 propuesta."""
+    p = con_arquitectura(proyecto(nombre), adrs=dict(DOS_ADR))
+    run(p, "approve")
+    propuesta = adr("0004", "Base de datos gestionada", estado="Proposed",
+                    sustituye=sustituye, completo=completo)
+    (p / "architecture" / "adr" / "0004-base-gestionada.md").write_text(propuesta,
+                                                                       encoding="utf-8")
+    return p
+
+
+def test_F006_R013_revision():
+    rel = "architecture/adr/0004-base-gestionada.md"
+
+    p = con_propuesta("r013-aceptar")
+    r = run(p, "review", "ADR-0004", "aceptar")
+    texto = (p / rel).read_text(encoding="utf-8")
+    expect(r.returncode == 0 and architecture.adr_state(texto) == "approved",
+           "aceptar una propuesta la deja aprobada con su huella", r.stdout + r.stderr)
+
+    p = con_propuesta("r013-rechazar")
+    r = run(p, "review", "adr-0004", "rechazar")
+    adrs = {a["id"]: a for a in architecture.adrs(p)}
+    expect(r.returncode == 0 and adrs["ADR-0004"]["state"] == "rejected"
+           and run(p, "next-id", "ADR").stdout.strip() == "ADR-0005",
+           "rechazar la deja rechazada y conserva su numero", r.stdout + r.stderr)
+
+    p = con_propuesta("r013-sustituir", sustituye="ADR-0002")
+    r = run(p, "review", "ADR-0004", "aceptar")
+    adrs = {a["id"]: a for a in architecture.adrs(p)}
+    expect(r.returncode == 0 and adrs["ADR-0004"]["state"] == "approved"
+           and adrs["ADR-0002"]["state"] == "superseded"
+           and adrs["ADR-0002"]["superseded_by"] == "ADR-0004"
+           and adrs["ADR-0001"]["state"] == "approved"
+           and "ADR-0002" in r.stdout,
+           "aceptar la 0004, que sustituye a la 0002: 0004 aprobada y 0002 sustituida",
+           r.stdout + r.stderr)
+    expect(not [f for f in codigos_de(p, "W-ARCH-NOT-APPROVED") if "0002" in f["artifact"]],
+           "la sustituida no cuenta como cambiada")
+
+    p = con_propuesta("r013-sustituye-cambiada", sustituye="ADR-0002")
+    d = p / "architecture" / "adr" / "0002-despliegue.md"
+    d.write_text(d.read_text(encoding="utf-8").replace("Una sola base", "Una única base"),
+                 encoding="utf-8")
+    antes = foto(p)
+    r = run(p, "review", "ADR-0004", "aceptar")
+    expect(r.returncode == 1 and "ADR-0002 cambió después de aprobarse" in r.stderr
+           and "/architecture:approve" in r.stderr and foto(p) == antes,
+           "no se sustituye a una decision aprobada que cambio despues: se dice como seguir",
+           r.stderr)
+
+    p = con_propuesta("r013-no-propuesta")
+    antes = foto(p)
+    r = run(p, "review", "ADR-0001", "aceptar")
+    expect(r.returncode == 1 and "solo se revisan decisiones propuestas" in r.stderr
+           and foto(p) == antes,
+           "una decision que no esta propuesta no se revisa", r.stderr)
+
+    p = con_propuesta("r013-sustituye-borrador", sustituye="ADR-0005")
+    (p / "architecture" / "adr" / "0005-borrador.md").write_text(
+        adr("0005", "Borrador"), encoding="utf-8")
+    antes = foto(p)
+    r = run(p, "review", "ADR-0004", "aceptar")
+    expect(r.returncode == 1 and "ADR-0005" in r.stderr and foto(p) == antes,
+           "no se acepta si sustituye a una decision que no esta aprobada", r.stderr)
+
+    p = con_propuesta("r013-con-errores", completo=False)
+    antes = foto(p)
+    r = run(p, "review", "ADR-0004", "aceptar")
+    expect(r.returncode == 1 and "E-ADR-INCOMPLETE" in r.stderr and foto(p) == antes,
+           "no se acepta una propuesta con errores propios, y no se escribe nada", r.stderr)
+
+    p = con_propuesta("r013-skill")
+    r = run(p, "review", "ADR-0009", "aceptar", "--skill")
+    expect(r.returncode == 0 and "no existe" in r.stdout,
+           "con --skill, la negativa sale por stdout con 0", r.stdout)
+    expect(run(p, "review", "ADR-0004").returncode == 2, "sin decision: uso y salida 2")
+
+
 # --------------------------------------------------------------------------
 
 def cobertura_de_codigos():

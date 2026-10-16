@@ -798,6 +798,88 @@ def approve(root):
     return True, lines
 
 
+def review(root, adr_id, decision):
+    """
+    Decide una decision propuesta (D4, R013). Aceptar exige que el ADR no tenga
+    errores propios; lo sella y marca como sustituidos los ADR que cita en
+    Sustituye, que tienen que estar aprobados. Rechazar lo deja en Rejected,
+    con su numero. Devuelve (ok, lineas_de_mensaje).
+    """
+    adr_id = adr_id.upper()
+    by_id = {a["id"]: a for a in adrs(root)}
+    target = by_id.get(adr_id)
+    if target is None:
+        return False, [f"No se puede revisar: {adr_id} no existe en {ARCH_DIR}/{ADR_DIR}/."]
+    if target["state"] != "proposed":
+        return False, [f"No se puede revisar {adr_id}: solo se revisan decisiones propuestas "
+                       f"(Proposed), y está en «{target['status'] or 'Draft'}». Una en borrador "
+                       "se aprueba con el conjunto, con /architecture:approve."]
+    path = Path(root) / target["file"]
+    text = read_text(path)
+
+    if decision == "rechazar":
+        new, _ = set_status(text, "Rejected")
+        path.write_text(new, encoding="utf-8")
+        return True, [f"{adr_id} rechazada. Conserva su número y queda como historia."]
+
+    own = [f for f in analyze(root)["findings"]
+           if f["severity"] == "error" and f["artifact"] == target["file"]]
+    if own:
+        return False, ([f"No se puede aceptar {adr_id}: tiene errores propios."]
+                       + [f"  [{f['code']}] {f['message']}" for f in own])
+    replaced = [f"ADR-{n}" for n in ADR_REF.findall(target["sustituye"])]
+    def why_not(r):
+        if r not in by_id:
+            return f"{r} no existe"
+        if by_id[r]["state"] == "stale":
+            return (f"{r} cambió después de aprobarse: reapruébala antes con "
+                    "/architecture:approve")
+        return f"{r} no está aprobada ({by_id[r]['status'] or 'Draft'})"
+
+    bad = [r for r in replaced if by_id.get(r, {}).get("state") != "approved"]
+    if bad:
+        return False, [f"No se puede aceptar {adr_id}: solo sustituye a decisiones "
+                       f"aprobadas, y {'; '.join(why_not(r) for r in bad)}."]
+
+    writes = {path: set_status(text, f"Approved · {content_digest(text)}")[0]}
+    for r in replaced:
+        old = Path(root) / by_id[r]["file"]
+        writes[old] = set_status(read_text(old), f"Superseded by {adr_id}")[0]
+    for p, new in writes.items():
+        p.write_text(new, encoding="utf-8")
+    lines = [f"{adr_id} aceptada y aprobada."]
+    if replaced:
+        lines.append(f"{', '.join(replaced)} queda(n) sustituida(s) por {adr_id}.")
+    return True, lines
+
+
+REVIEW_DECISIONS = {"aceptar": "aceptar", "accept": "aceptar",
+                    "rechazar": "rechazar", "reject": "rechazar"}
+
+
+def cmd_review(args):
+    """
+    review ADR-NNNN aceptar|rechazar [--skill]. Con --skill (lo usa
+    /architecture:review) todo va a stdout y sale siempre con 0.
+    """
+    skill = "--skill" in args
+    rest = [a for a in args if a != "--skill"]
+    if len(rest) != 2 or not ADR_REF.fullmatch(rest[0].upper()) \
+            or rest[1].lower() not in REVIEW_DECISIONS:
+        msg = "Uso: architecture.py review ADR-NNNN aceptar|rechazar [--skill]"
+        print(msg, file=sys.stdout if skill else sys.stderr)
+        return 0 if skill else 2
+    try:
+        ok, lines = review(project_root(), rest[0], REVIEW_DECISIONS[rest[1].lower()])
+    except Exception as exc:  # noqa: BLE001
+        if not skill:
+            raise
+        ok, lines = False, [f"No se pudo revisar: error inesperado ({exc})."]
+    stream = sys.stdout if (ok or skill) else sys.stderr
+    print("\n".join(lines), file=stream)
+    return 0 if (ok or skill) else 1
+
+
 def cmd_approve(args):
     """
     Con --skill (lo usa /architecture:approve) todo va a stdout y sale siempre
@@ -854,6 +936,7 @@ COMMANDS = {
     "next-id": cmd_next_id,
     "check": cmd_check,
     "approve": cmd_approve,
+    "review": cmd_review,
 }
 
 # Un hook que revienta nunca debe bloquear al usuario: falla abierto.
