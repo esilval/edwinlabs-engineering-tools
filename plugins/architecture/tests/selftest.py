@@ -300,6 +300,138 @@ def test_F006_R015_contrato_con_discovery():
            "un brief editado tras aprobarse: cambiado", f"{architecture.product_problems(p)}")
 
 
+# ----------------------------------------------------------------- T003
+# Una arquitectura coherente sobre el producto de prueba: las pruebas de las
+# tareas siguientes la rompen de una en una.
+
+def cabecera(titulo, estado="Draft"):
+    return f"# {titulo}\n\n| Campo  | Valor |\n| ------ | ----- |\n| Estado | {estado} |\n\n"
+
+
+ARQ_QUALITY = cabecera("Atributos de calidad") + """## Atributos
+
+### Q1 — Resumen al cerrar
+
+- **Escenario:** al cerrar la caja, el total del día aparece en menos de 2 segundos con 5000 ventas
+- **Motivo:** G1, D1§3
+
+### Q2 — Exportación completa
+
+- **Escenario:** exportar 12 meses de movimientos termina en menos de 30 segundos
+- **Motivo:** G2
+"""
+
+ARQ_COMPONENTS = cabecera("Componentes") + """## Componentes
+
+### C1 — Ventas
+
+- **Responsabilidad:** registra ventas y calcula los totales del día
+- **Candidatas:** B01
+
+### C2 — Exportación
+
+- **Responsabilidad:** genera archivos de movimientos a partir de las ventas
+- **Candidatas:** B02
+"""
+
+ARQ_STANDARDS = cabecera("Estándares") + """## Estándares
+
+### S1 — Exportación depende de Ventas, nunca al revés
+
+- **Tipo:** dependencia
+- **Detalle:** C2 → C1
+- **Decisión:** ADR-0001
+"""
+
+ARQ_QUESTIONS = cabecera("Preguntas de arquitectura") + """## Preguntas
+
+- [x] (ADR-0001; Q2) ¿Hace falta exportar en segundo plano?
+  - **Respuesta:** no; 30 segundos son aceptables.
+"""
+
+
+def adr(numero, titulo, estado="Draft", motivo="Q1, G1", sustituye="—", completo=True):
+    cuerpo = ("## Contexto\n\nLas ventas del día se consultan al cerrar.\n\n"
+              "## Decisión\n\nUna sola base de datos relacional para ventas y movimientos.\n\n"
+              "## Alternativas descartadas\n\n- Una base por componente: sin necesidad hoy.\n\n")
+    if completo:
+        cuerpo += "## Consecuencias\n\n- Los dos componentes comparten esquema.\n"
+    return (f"# ADR-{numero} — {titulo}\n\n| Campo     | Valor |\n| --------- | ----- |\n"
+            f"| Estado    | {estado} |\n| Fecha     | 2026-10-16 |\n| Motivo    | {motivo} |\n"
+            f"| Sustituye | {sustituye} |\n\n{cuerpo}")
+
+
+def con_arquitectura(p, quality=ARQ_QUALITY, components=ARQ_COMPONENTS,
+                     standards=ARQ_STANDARDS, questions=ARQ_QUESTIONS, adrs=None):
+    """Pone en p un producto aprobado y una arquitectura coherente en Draft."""
+    con_producto(p)
+    arq = p / "architecture"
+    (arq / "adr").mkdir(parents=True, exist_ok=True)
+    for nombre, texto in (("quality.md", quality), ("components.md", components),
+                          ("standards.md", standards), ("questions.md", questions)):
+        (arq / nombre).write_text(texto, encoding="utf-8")
+    for archivo, texto in (adrs if adrs is not None else
+                           {"0001-base-de-datos-unica.md": adr("0001", "Base de datos única")}
+                           ).items():
+        (arq / "adr" / archivo).write_text(texto, encoding="utf-8")
+    return p
+
+
+def test_F006_R003_lee_componentes_y_candidatas():
+    p = con_arquitectura(proyecto("r003-lectura"))
+    comps = {c["id"]: c for c in architecture.components(p)}
+    expect(sorted(comps) == ["C1", "C2"]
+           and comps["C1"]["fields"]["responsabilidad"].startswith("registra ventas")
+           and comps["C1"]["fields"]["candidatas"] == "B01",
+           "C1 con su responsabilidad y sus candidatas", f"{comps}")
+    otro = ARQ_COMPONENTS.replace("- **Candidatas:** B01", "- **Candidatas:** B01, B02")
+    p = con_arquitectura(proyecto("r003-varias"), components=otro)
+    c1 = architecture.components(p)[0]
+    expect(architecture.CAND_REF.findall(c1["fields"]["candidatas"]) == ["01", "02"],
+           "un componente que aloja B01 y B02 las lista las dos")
+    q = architecture.quality(p)
+    expect([x["id"] for x in q] == ["Q1", "Q2"] and q[1]["fields"]["motivo"] == "G2",
+           "atributos con su escenario y su motivo")
+    s = architecture.standards(p)
+    expect(s and s[0]["fields"]["decision"] == "ADR-0001" and s[0]["fields"]["tipo"] == "dependencia",
+           "estandares con su tipo y su decision", f"{s}")
+    preguntas = architecture.questions(p)
+    expect(len(preguntas) == 1 and not preguntas[0]["open"]
+           and preguntas[0]["adrs"] == ["ADR-0001"] and preguntas[0]["items"] == ["Q2"],
+           "preguntas con su estado y lo que citan", f"{preguntas}")
+    d = architecture.adrs(p)[0]
+    expect(d["id"] == "ADR-0001" and d["title"] == "Base de datos única" and d["state"] == "draft"
+           and d["motivo"] == "Q1, G1" and all(d["sections"].values()),
+           "un ADR con su titulo, estado, motivo y las cuatro secciones", f"{d}")
+
+
+def test_F006_R005_numeracion_no_reutiliza():
+    p = con_arquitectura(proyecto("r005-numeracion"), adrs={
+        "0001-base-de-datos-unica.md": adr("0001", "Base de datos única"),
+        "0002-cola-de-trabajos.md": adr("0002", "Cola de trabajos", estado="Rejected"),
+    })
+    estados = [a["state"] for a in architecture.adrs(p)]
+    r = run(p, "next-id", "ADR")
+    expect(estados == ["draft", "rejected"] and r.stdout.strip() == "ADR-0003",
+           "con 0001 y 0002 rechazada, el siguiente es ADR-0003", f"{estados} {r.stdout}")
+    expect([run(p, "next-id", k).stdout.strip() for k in ("Q", "c", "S")] == ["Q3", "C3", "S2"],
+           "Q, C y S tambien siguen al maximo, en mayusculas o minusculas")
+    expect(run(p, "next-id", "X").returncode == 2, "un tipo desconocido sale con 2")
+    for raro in ("0003-Cache_Local.md", "0004.md"):
+        (p / "architecture" / "adr" / raro).write_text(adr(raro[:4], "Raro"), encoding="utf-8")
+    expect(run(p, "next-id", "ADR").stdout.strip() == "ADR-0005",
+           "archivos con nombre fuera del patron tambien ocupan su numero")
+
+    preguntas = ARQ_QUESTIONS + "\n- [ ] (Q1) ¿Guardamos en S3 o en disco?\n"
+    q = con_arquitectura(proyecto("r005-citas"), questions=preguntas)
+    abierta = architecture.questions(q)[-1]
+    expect(abierta["open"] and abierta["items"] == ["Q1"] and abierta["adrs"] == [],
+           "las citas de una pregunta salen solo de su parentesis inicial", f"{abierta}")
+    vacio = con_producto(proyecto("r005-vacio"))
+    expect(run(vacio, "next-id", "ADR").stdout.strip() == "ADR-0001",
+           "sin architecture/, el primero es ADR-0001")
+
+
 # --------------------------------------------------------------------------
 
 def cobertura_de_codigos():

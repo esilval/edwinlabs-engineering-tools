@@ -264,6 +264,144 @@ def product_candidates(root):
 
 
 # --------------------------------------------------------------------------
+# Artefactos de architecture/ (D1)
+# --------------------------------------------------------------------------
+
+# Cualquier .md que empiece por cuatro digitos cuenta como decision, aunque su
+# nombre no siga NNNN-slug.md: un numero ocupado no se vuelve a dar nunca.
+ADR_FILE = re.compile(r"^(\d{4})(?:[-_.].*)?\.md$")
+ADR_REF = re.compile(r"(?<![A-Za-z0-9])ADR-(\d{4})(?![0-9])")
+QUESTION = re.compile(r"^\s*[-*]\s*\[([ xX])\]\s*(.*)$")
+
+
+def read_arch(root, name):
+    return read_text(Path(root) / ARCH_DIR / name)
+
+
+def header_fields(text):
+    """{campo: valor} de la tabla de cabecera (antes del primer ##)."""
+    head = (text or "")[:_header_end(text or "")]
+    rows = re.findall(r"^\|\s*([^|\n]+?)\s*\|\s*([^|\n]*?)\s*\|\s*$", head, re.M)
+    return {norm(k): v for k, v in rows if not set(k) <= set("-: ")}
+
+
+def quality(root):
+    """Atributos Q de quality.md, con sus campos (escenario, motivo)."""
+    return parse_items(section(read_arch(root, "quality.md"), "atributos"), "Q")
+
+
+def components(root):
+    """Componentes C de components.md, con sus campos (responsabilidad, candidatas)."""
+    return parse_items(section(read_arch(root, "components.md"), "componentes"), "C")
+
+
+def standards(root):
+    """Estandares S de standards.md, con sus campos (tipo, detalle, decision)."""
+    return parse_items(section(read_arch(root, "standards.md"), "estandares"), "S")
+
+
+def questions(root):
+    """
+    Preguntas de questions.md: [{open, text, adrs, items}] en orden. Las citas
+    salen solo del parentesis inicial (`- [ ] (ADR-0002; Q1) ¿…?`): «¿S3 o
+    disco?» en el texto no es una cita al estandar S3.
+    """
+    out = []
+    for line in section(read_arch(root, "questions.md"), "preguntas").splitlines():
+        m = QUESTION.match(line)
+        if not m:
+            continue
+        text = m.group(2).strip()
+        cites = re.match(r"^\(([^)]*)\)", text)
+        cited = cites.group(1) if cites else ""
+        out.append({
+            "open": m.group(1) == " ",
+            "text": text,
+            "adrs": [f"ADR-{n}" for n in ADR_REF.findall(cited)],
+            "items": re.findall(r"(?<![A-Za-z0-9-])([QCS]\d+)(?![0-9])", cited),
+        })
+    return out
+
+
+ADR_SECTIONS = {
+    "contexto": ("contexto", "context"),
+    "decision": ("decision",),
+    "alternativas": ("alternativas descartadas", "alternativas"),
+    "consecuencias": ("consecuencias", "consequences"),
+}
+
+
+def adr_state(text):
+    """
+    'draft' | 'proposed' | 'approved' | 'stale' | 'rejected' | 'superseded'.
+    Aprobado, como el resto, exige la huella del contenido actual.
+    """
+    status = norm(doc_status(text) or "").strip("`*_ ")
+    first = (status.split() or ["draft"])[0]
+    if first in ("proposed", "propuesta", "propuesto"):
+        return "proposed"
+    if first in ("rejected", "rechazada", "rechazado"):
+        return "rejected"
+    if first in ("superseded", "sustituida", "sustituido"):
+        return "superseded"
+    state = artifact_state(text)
+    return state if state in ("approved", "stale") else "draft"
+
+
+def adrs(root):
+    """
+    Decisiones de architecture/adr/NNNN-slug.md, ordenadas por numero:
+    [{id, number, file, title, state, status, motivo, sustituye,
+      superseded_by, sections: {clave: tiene contenido}}].
+    """
+    base = Path(root) / ARCH_DIR / ADR_DIR
+    try:
+        files = sorted(p for p in base.iterdir() if ADR_FILE.match(p.name))
+    except OSError:
+        return []
+    out = []
+    for path in files:
+        text = read_text(path) or ""
+        number = ADR_FILE.match(path.name).group(1)
+        head = re.search(r"^#\s+(.*)$", text, re.M)
+        title = re.sub(r"^ADR-\d{4}\s*[—–:-]?\s*", "", head.group(1)).strip() if head else ""
+        fields = header_fields(text)
+        status = doc_status(text) or ""
+        sup = ADR_REF.search(status) if adr_state(text) == "superseded" else None
+        out.append({
+            "id": f"ADR-{number}", "number": int(number),
+            "file": f"{ARCH_DIR}/{ADR_DIR}/{path.name}", "title": title,
+            "state": adr_state(text), "status": status,
+            "motivo": fields.get("motivo", ""), "sustituye": fields.get("sustituye", ""),
+            "superseded_by": f"ADR-{sup.group(1)}" if sup else None,
+            "sections": {key: bool(re.sub(r"\s+", "", section(text, *titles)))
+                         for key, titles in ADR_SECTIONS.items()},
+        })
+    return out
+
+
+def next_id(root, kind):
+    """Siguiente ID libre de Q, C, S o ADR: maximo + 1, sin reciclar nunca."""
+    kind = kind.upper()
+    if kind == "ADR":
+        used = [a["number"] for a in adrs(root)]
+        return f"ADR-{(max(used) if used else 0) + 1:04d}"
+    readers = {"Q": quality, "C": components, "S": standards}
+    if kind not in readers:
+        raise ValueError(f"tipo desconocido: {kind} (Q, C, S o ADR)")
+    used = [int(i["id"][1:]) for i in readers[kind](root)]
+    return f"{kind}{(max(used) if used else 0) + 1}"
+
+
+def cmd_next_id(args):
+    if len(args) != 1 or args[0].upper() not in ("Q", "C", "S", "ADR"):
+        print("Uso: architecture.py next-id Q|C|S|ADR", file=sys.stderr)
+        return 2
+    print(next_id(project_root(), args[0]))
+    return 0
+
+
+# --------------------------------------------------------------------------
 # init
 # --------------------------------------------------------------------------
 
@@ -300,6 +438,7 @@ def cmd_init(_args):
 
 COMMANDS = {
     "init": cmd_init,
+    "next-id": cmd_next_id,
 }
 
 # Un hook que revienta nunca debe bloquear al usuario: falla abierto.

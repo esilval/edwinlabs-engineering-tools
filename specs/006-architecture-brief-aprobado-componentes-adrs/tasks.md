@@ -58,7 +58,7 @@ de contrato es la única que ejecuta `discovery.py`.
 
 ### T003 — Lectura de los artefactos de arquitectura y `next-id`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R005
 - **Depende de:** T002
 - **Archivos:** `plugins/architecture/scripts/architecture.py`, `plugins/architecture/tests/selftest.py`
