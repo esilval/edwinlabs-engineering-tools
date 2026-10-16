@@ -21,6 +21,10 @@ Subcomandos:
                       Con architecture/: componentes de la candidata de la
                       feature activa, decisiones vigentes y propuestas, y
                       estandares, para planificar.
+  propose-adr "<titulo>"
+                      Escribe la siguiente decision en architecture/adr/ como
+                      propuesta, desde el plan de la feature activa. La decide
+                      el usuario con /architecture:review.
 """
 
 import datetime
@@ -1238,9 +1242,57 @@ def cmd_arch_context(args):
     return 0
 
 
+def propose_adr(root, title, plugin_root):
+    """
+    Escribe la siguiente decision libre en architecture/adr/ como propuesta, con
+    el plan de la feature activa como origen (D4). Devuelve (ok, datos o motivo).
+
+    La plantilla templates/adr.md es una copia de la de plugins/architecture/
+    templates/adr.md con Estado Proposed y la fila «Propuesto por»; la
+    numeracion es la de sdd_architecture (copia de la de architecture.py).
+    """
+    sa = _architecture()
+    if not sa.exists(root):
+        return False, ("No hay architecture/: sin arquitectura no se proponen decisiones; "
+                       "esta va al plan.md de la feature. Para crearla, /architecture:init.")
+    feature = resolve_feature(root)
+    if feature is None:
+        return False, ("No hay una feature activa: una decisión se propone desde el plan "
+                       "de una feature (/sdd:specify, /sdd:plan).")
+    proposer = f"`specs/{feature.name}/plan.md`"
+    adr_id = sa.next_adr(root)
+    number = adr_id.split("-")[1]
+    slug = slugify(title)
+    if slug == "feature":  # slugify sin palabras utiles
+        slug = "decision"
+    path = root / sa.ARCH_DIR / sa.ADR_DIR / f"{number}-{slug}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = render_template("adr.md", {"NUMBER": number, "TITLE": title,
+                                      "DATE": datetime.date.today().isoformat(),
+                                      "PROPOSER": proposer}, plugin_root)
+    path.write_text(text, encoding="utf-8")
+    return True, {"id": adr_id, "file": str(path.relative_to(root))}
+
+
+def cmd_propose_adr(args):
+    title = " ".join(args).strip()
+    if not title:
+        print('Uso: sdd.py propose-adr "<título de la decisión>"', file=sys.stderr)
+        return 2
+    plugin_root = os.environ.get(
+        "CLAUDE_PLUGIN_ROOT", str(Path(__file__).resolve().parent.parent))
+    ok, data = propose_adr(project_root(), title, plugin_root)
+    if not ok:
+        print(data, file=sys.stderr)
+        return 1
+    print(json.dumps(data, indent=2))
+    return 0
+
+
 COMMANDS = {
     "new": cmd_new,
     "arch-context": cmd_arch_context,
+    "propose-adr": cmd_propose_adr,
     "current": cmd_current,
     "status": cmd_status,
     "context": cmd_context,

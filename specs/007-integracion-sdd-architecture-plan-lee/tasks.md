@@ -71,7 +71,7 @@ contrato ejecuta `architecture.py`.
 
 ### T004 — `sdd.py propose-adr` · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R006
 - **Depende de:** T001
 - **Archivos:** `plugins/sdd/scripts/sdd.py`, `plugins/sdd/templates/adr.md`, `plugins/sdd/tests/selftest.py`

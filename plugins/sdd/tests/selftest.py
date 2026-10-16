@@ -1997,6 +1997,60 @@ def test_F007_R001_contexto_sin_arquitectura(base):
            "{'architecture': false} con salida 0", r.stdout + r.stderr)
 
 
+def test_F007_R006_propone_una_decision(base):
+    print("\nF007 · R006: sdd propone una decision sin aprobarla")
+    sa = architecture_lee()
+    adrs_hasta_3 = {k: v for k, v in ADRS_BASE.items() if not k.startswith("0004")}
+    p = repo_con_feature(base, "f007-propuesta", spec=SPEC_LISTA)
+    con_arquitectura(p, adrs=adrs_hasta_3)
+    r = run("propose-adr", ["Cola de exportaciones en segundo plano"], cwd=p)
+    salida = json.loads(r.stdout) if r.returncode == 0 else {}
+    expect(salida.get("id") == "ADR-0004"
+           and salida.get("file") == "architecture/adr/0004-cola-exportaciones-segundo-plano.md",
+           "con ADR-0001 a ADR-0003, crea ADR-0004", r.stdout + r.stderr)
+    adrs = {a["id"]: a for a in sa.adrs(p)}
+    texto = (p / salida.get("file", "x")).read_text(encoding="utf-8") if salida else ""
+    expect(adrs.get("ADR-0004", {}).get("state") == "proposed"
+           and "| Propuesto por | `specs/001-x/plan.md` |" in texto
+           and "| Estado        | Proposed |" in texto,
+           "queda propuesta, con el plan de la feature activa como origen", texto[:400])
+    expect(sa.approval_problems(p) == [],
+           "una propuesta no rompe la aprobacion del conjunto: se decide aparte",
+           f"{sa.approval_problems(p)}")
+    expect(sa.next_adr(p) == "ADR-0005", "y su numero queda ocupado")
+
+    q = repo_con_feature(base, "f007-propuesta-sin-arq", spec=SPEC_LISTA)
+    r = run("propose-adr", ["Algo"], cwd=q)
+    expect(r.returncode == 1 and "No hay architecture/" in r.stderr
+           and not (q / "architecture").exists(),
+           "sin architecture/: sale con 1 y no crea nada", r.stderr)
+    expect(run("propose-adr", [], cwd=p).returncode == 2, "sin titulo: uso y salida 2")
+
+    sin_feature = base / "f007-propuesta-sin-feature"
+    sin_feature.mkdir()
+    con_arquitectura(sin_feature)
+    r = run("propose-adr", ["Algo"], cwd=sin_feature)
+    expect(r.returncode == 1 and "No hay una feature activa" in r.stderr
+           and sa.next_adr(sin_feature) == "ADR-0005",
+           "sin feature activa: sale con 1 y no crea nada", r.stderr)
+    r = run("propose-adr", ["¿?!"], cwd=p)
+    expect(r.returncode == 0 and json.loads(r.stdout)["file"].endswith("0005-decision.md"),
+           "un titulo sin letras ni cifras da un nombre de reserva", r.stdout)
+
+    if ARCHITECTURE.is_file():
+        # Contrato: el architecture real reconoce la propuesta y solo pide
+        # rellenar sus huecos de plantilla.
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(p),
+                   CLAUDE_PLUGIN_ROOT=str(ARCHITECTURE.parent.parent))
+        r = subprocess.run([sys.executable, str(ARCHITECTURE), "check", "--json"],
+                           capture_output=True, text=True, cwd=str(p), env=env, timeout=60)
+        de_la_propuesta = {f["code"] for f in json.loads(r.stdout)["findings"]
+                           if "0004-" in f["artifact"]}
+        expect(de_la_propuesta == {"E-ARCH-TEMPLATE"},
+               "architecture lee la propuesta de sdd y solo senala sus huecos",
+               f"{de_la_propuesta}")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -2048,6 +2102,7 @@ def main():
         test_F007_R001_trace_sin_arquitectura_igual(base)
         test_F007_R002_contexto_de_planificacion(base)
         test_F007_R001_contexto_sin_arquitectura(base)
+        test_F007_R006_propone_una_decision(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
