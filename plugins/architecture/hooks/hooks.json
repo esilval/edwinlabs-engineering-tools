@@ -1,0 +1,33 @@
+{
+  "description": "Protege la arquitectura: solo el usuario aprueba, rechaza o sustituye decisiones",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/architecture.py", "guard"],
+            "timeout": 10,
+            "statusMessage": "Comprobando la aprobacion de la arquitectura"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/architecture.py", "audit"],
+            "timeout": 10,
+            "statusMessage": "Auditando la aprobacion de la arquitectura"
+          }
+        ]
+      }
+    ]
+  }
+}

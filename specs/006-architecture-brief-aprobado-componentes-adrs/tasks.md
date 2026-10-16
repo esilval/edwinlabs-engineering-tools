@@ -137,7 +137,7 @@ de contrato es la única que ejecuta `discovery.py`.
 
 ### T009 — Guardrails
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R012
 - **Depende de:** T003
 - **Archivos:** `plugins/architecture/scripts/architecture.py`, `plugins/architecture/hooks/hooks.json`, `plugins/architecture/tests/selftest.py`

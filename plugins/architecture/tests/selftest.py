@@ -902,6 +902,160 @@ def test_F006_R013_revision():
     expect(run(p, "review", "ADR-0004").returncode == 2, "sin decision: uso y salida 2")
 
 
+# ----------------------------------------------------------------- T009
+
+def hook(root, sub, tool, tool_input, tool_use_id="t1", env_extra=None):
+    import json
+    payload = json.dumps({"tool_name": tool, "tool_use_id": tool_use_id, "cwd": str(root),
+                          "tool_input": tool_input})
+    return run(root, sub, stdin=payload, env_extra=env_extra)
+
+
+def deniega(r):
+    import json
+    if r.returncode != 0:
+        return None
+    if not r.stdout.strip():
+        return False
+    d = json.loads(r.stdout)["hookSpecificOutput"]
+    return d["permissionDecision"] == "deny" and bool(d["permissionDecisionReason"])
+
+
+def test_F006_R012_guard_escrituras():
+    p = con_arquitectura(proyecto("r012-escrituras"), adrs=dict(DOS_ADR))
+    comp = p / "architecture" / "components.md"
+    rel_adr = "architecture/adr/0001-base-de-datos-unica.md"
+    for estado in ("Approved · 0123456789ab", "Rejected", "Superseded by ADR-0002",
+                   "Aprobado"):
+        r = hook(p, "guard", "Edit", {"file_path": rel_adr, "old_string": "| Estado    | Draft |",
+                                      "new_string": f"| Estado    | {estado} |"})
+        expect(deniega(r) is True, f"un Edit que lleva un ADR a {estado!r} se deniega", r.stdout)
+        expect("allow" not in r.stdout, "nunca devuelve allow")
+    for estado in ("Proposed", "Draft"):
+        r = hook(p, "guard", "Edit", {"file_path": rel_adr, "old_string": "| Estado    | Draft |",
+                                      "new_string": f"| Estado    | {estado} |"})
+        expect(deniega(r) is False, f"llevar un ADR a {estado!r} lo puede hacer el modelo")
+    r = hook(p, "guard", "Write", {"file_path": str(comp), "content":
+             ARQ_COMPONENTS.replace("| Estado | Draft |", "| Estado | Approved · 0123456789ab |")})
+    expect(deniega(r) is True, "un Write que aprueba components.md se deniega")
+    r = hook(p, "guard", "Write", {"file_path": "architecture/adr/0009-nueva.md",
+                                   "content": adr("0009", "Nueva", estado="Approved · aaaaaaaaaaaa")})
+    expect(deniega(r) is True, "crear un ADR ya aprobado se deniega")
+    r = hook(p, "guard", "Write", {"file_path": "architecture/QUALITY.md", "content":
+             ARQ_QUALITY.replace("| Estado | Draft |", "| Estado | Approved |")})
+    expect(deniega(r) is True, "QUALITY.md en mayusculas tambien se reconoce")
+    r = hook(p, "guard", "Edit", {"file_path": str(comp), "old_string": "registra ventas",
+                                  "new_string": "registra ventas y devoluciones"})
+    expect(deniega(r) is False, "editar otra parte de un artefacto no se bloquea")
+
+    run(p, "approve")
+    sellado = architecture.doc_status(comp.read_text(encoding="utf-8"))
+    r = hook(p, "guard", "Edit", {"file_path": str(comp), "old_string": sellado,
+                                  "new_string": "Approved · 0123456789ab"})
+    expect(deniega(r) is True, "reescribir la huella de un aprobado se deniega", r.stdout)
+
+
+MENCIONES = [
+    "git commit -q -m 'architecture: la compuerta ya no bloquea architecture.py approve'",
+    'gh pr create --title t --body "Corrige: python3 architecture.py approve en texto"',
+    "cat > notas.md <<'EOF'\npython3 plugins/architecture/scripts/architecture.py approve\nEOF",
+    'echo "para aprobar: python3 architecture.py approve"',
+    "grep -rn 'architecture.py review' plugins/architecture/README.md",
+    "git commit -m 'la compuerta ya no bloquea `python3 architecture.py approve`'",
+    "gh pr create --title t --body 'Ahora `architecture.py review` solo se bloquea si se ejecuta'",
+    "git commit -m 'cita $(python3 architecture.py approve) en texto'",
+]
+
+EJECUCIONES = [
+    "python3 architecture.py approve",
+    "python3 /x/plugins/architecture/scripts/architecture.py approve --skill",
+    'python3 "$HOME/plugins/architecture/scripts/architecture.py" review ADR-0004 aceptar',
+    "cd plugins/architecture && python3 scripts/architecture.py approve",
+    "ls; FOO=1 python3 architecture.py review ADR-0001 rechazar",
+    "echo `python3 architecture.py approve`",
+    'echo "$(python3 architecture.py approve)"',
+    'git commit -m "$(python3 /x/architecture.py approve)"',
+    "x=$(cd y && python3 architecture.py approve)",
+    "python3 architecture.py approve; echo $'it\\'s'",
+]
+
+
+def test_F006_R012_guard_comandos():
+    p = con_arquitectura(proyecto("r012-comandos"))
+    for cmd in MENCIONES:
+        corto = cmd.splitlines()[0][:50]
+        expect(not architecture.invokes_approve(cmd), f"no es ejecucion: {corto!r}")
+        r = hook(p, "guard", "Bash", {"command": cmd})
+        expect(deniega(r) is False, f"la compuerta no bloquea: {corto!r}", r.stdout)
+    for cmd in EJECUCIONES:
+        expect(architecture.invokes_approve(cmd), f"es ejecucion: {cmd!r}")
+        r = hook(p, "guard", "Bash", {"command": cmd})
+        expect(deniega(r) is True, f"bloquea: {cmd!r}", r.stdout)
+        expect("allow" not in r.stdout, f"nunca devuelve allow: {cmd!r}")
+    r = hook(p, "guard", "Bash", {"command": "python3 architecture.py check --check"})
+    expect(deniega(r) is False, "otros subcomandos pasan")
+
+
+def test_F006_R012_auditoria_revierte():
+    p = con_arquitectura(proyecto("r012-auditoria"), adrs=dict(DOS_ADR))
+    rel = "architecture/adr/0002-despliegue.md"
+    opaco = "bash -c 'python3 plugins/architecture/scripts/architecture.py review ADR-0002 aceptar'"
+    r = hook(p, "guard", "Bash", {"command": opaco}, tool_use_id="a1")
+    expect(deniega(r) is False, "la compuerta deja pasar un bash -c", r.stdout)
+    d = p / rel
+    d.write_text(architecture.set_status(d.read_text(encoding="utf-8"),
+                                         "Approved · 0123456789ab")[0], encoding="utf-8")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="a1")
+    expect(r.returncode == 2 and estado(p, rel) == "Draft" and rel in r.stderr,
+           "y la auditoria devuelve el ADR a Draft y avisa", r.stderr)
+
+    hook(p, "guard", "Bash", {"command": "ls"}, tool_use_id="a2")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="a2")
+    expect(r.returncode == 0 and not r.stderr, "un comando que no toca el Estado: silencio")
+    expect(hook(p, "audit", "Bash", {}, tool_use_id="sin-foto").returncode == 0,
+           "sin instantanea no opina")
+
+    hook(p, "guard", "Bash", {"command": "python3 crea.py"}, tool_use_id="a3")
+    (p / "architecture" / "adr" / "0009-nueva.md").write_text(
+        adr("0009", "Nueva", estado="Rejected"), encoding="utf-8")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="a3")
+    expect(r.returncode == 2 and estado(p, "architecture/adr/0009-nueva.md") == "Draft",
+           "un ADR creado ya rechazado por un comando vuelve a Draft", r.stderr)
+
+
+def test_F006_R012_escape_y_nunca_allow():
+    p = con_arquitectura(proyecto("r012-escape"))
+    r = hook(p, "guard", "Bash", {"command": "python3 architecture.py approve"},
+             env_extra={"ARCHITECTURE_BYPASS": "1"})
+    expect(deniega(r) is False, "ARCHITECTURE_BYPASS=1 desactiva la compuerta")
+    r = hook(p, "guard", "Edit", {"file_path": "architecture/quality.md",
+                                  "old_string": "| Estado | Draft |",
+                                  "new_string": "| Estado | Approved · 0123456789ab |"},
+             env_extra={"ARCHITECTURE_BYPASS": "1"})
+    expect(deniega(r) is False, "con el escape, el usuario puede aprobar a mano con un Edit")
+    hook(p, "guard", "Bash", {"command": "python3 x.py"}, tool_use_id="b1")
+    q = p / "architecture" / "quality.md"
+    q.write_text(architecture.set_status(q.read_text(encoding="utf-8"), "Approved")[0],
+                 encoding="utf-8")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="b1", env_extra={"ARCHITECTURE_BYPASS": "1"})
+    expect(r.returncode == 0 and estado(p, "architecture/quality.md") == "Approved",
+           "ARCHITECTURE_BYPASS=1 tambien desactiva la auditoria")
+
+    sin = con_producto(proyecto("r012-sin-architecture"))
+    r = hook(sin, "guard", "Bash", {"command": "python3 architecture.py approve"})
+    expect(deniega(r) is False and not r.stderr, "sin architecture/ los hooks no hacen nada")
+    r = run(sin, "guard", stdin="no soy json")
+    expect(r.returncode == 0 and not r.stdout, "un payload ilegible falla abierto")
+
+    import json
+    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    expect(all(h.get("timeout") and h.get("command") == "python3" and h.get("args")
+               for grupo in hooks.values() for m in grupo for h in m["hooks"])
+           and any(m["matcher"] == "Write|Edit|Bash" for m in hooks["PreToolUse"])
+           and any(m["matcher"] == "Bash" for m in hooks["PostToolUse"]),
+           "hooks.json registra guard y audit en forma exec con timeout")
+
+
 # --------------------------------------------------------------------------
 
 def cobertura_de_codigos():

@@ -880,6 +880,308 @@ def cmd_review(args):
     return 0 if (ok or skill) else 1
 
 
+# --------------------------------------------------------------------------
+# Guardrails (D6, R012): el modelo no puede escribir un estado que decide el
+# usuario (Approved, Rejected, Superseded) ni ejecutar approve o review.
+# --------------------------------------------------------------------------
+
+BYPASS = "ARCHITECTURE_BYPASS"
+USER_STATES = {"approved", "aprobado", "aprobada", "rejected", "rechazada", "rechazado",
+               "superseded", "sustituida", "sustituido"}
+GUARDED_COMMANDS = {"approve", "review"}
+APPROVE_TEXT = re.compile(r"architecture\.py['\"]?\s+(?:approve|review)\b")
+
+GUARD_REASON = (
+    "Guardrail architecture: aprobar, rechazar o sustituir una decisión es del "
+    "usuario, no tuya. Es la prueba de que una persona revisó la arquitectura.\n\n"
+    "No cambies el campo Estado a Approved, Rejected ni Superseded, ni ejecutes "
+    "`architecture.py approve` o `review`: pídele al usuario que lo revise y ejecute "
+    "/architecture:approve o /architecture:review. Puedes dejar una decisión en "
+    "Draft o en Proposed.\n\nEscape puntual: ARCHITECTURE_BYPASS=1."
+)
+
+
+def claims_user_state(text):
+    """True si el Estado de la cabecera es uno que solo decide el usuario."""
+    words = norm(doc_status(text) or "").strip("`*_ ").split()
+    return bool(words) and words[0].strip("`*_") in USER_STATES
+
+
+def guarded_files(root):
+    """Rutas relativas de los artefactos de architecture/ que se protegen."""
+    rels = [f"{ARCH_DIR}/{n}" for n in SET_FILES]
+    try:
+        rels += sorted(f"{ARCH_DIR}/{ADR_DIR}/{p.name}"
+                       for p in (Path(root) / ARCH_DIR / ADR_DIR).iterdir()
+                       if p.suffix.lower() == ".md")
+    except OSError:
+        pass
+    return rels
+
+
+def _guarded_target(root, raw_path):
+    """Ruta relativa del artefacto protegido al que apunta raw_path, o None."""
+    try:
+        target = Path(raw_path)
+        if not target.is_absolute():
+            target = Path(root) / target
+        rel = target.resolve().relative_to((Path(root) / ARCH_DIR).resolve())
+    except (OSError, ValueError):
+        return None
+    parts = rel.parts
+    # Sin distinguir mayusculas: en macOS y Windows QUALITY.md es quality.md.
+    if len(parts) == 1 and parts[0].casefold() in SET_FILES:
+        return f"{ARCH_DIR}/{parts[0].casefold()}"
+    if len(parts) == 2 and parts[0].casefold() == ADR_DIR and parts[1].lower().endswith(".md"):
+        return f"{ARCH_DIR}/{ADR_DIR}/{parts[1]}"
+    return None
+
+
+# Analisis de comandos: ejecutar approve o review frente a mencionarlos.
+#
+# Copia adaptada del analizador de plugins/discovery/scripts/discovery.py, que a
+# su vez copia el de plugins/sdd/scripts/sdd_bash.py: los plugins no comparten
+# codigo. Un arreglo en una copia se replica en las otras, y los selftests usan
+# listas de casos equivalentes.
+
+_WRAPPERS = {"sudo", "env", "command", "nohup", "time", "nice", "builtin", "exec"}
+_SEPARATORS = {";", "&&", "||", "|", "|&", "&", "(", ")", ";;"}
+_REDIRECTS = {">", ">>", ">|", "&>", "&>>", "<", "<<", "<<<", "<<-", "<>", ">&", "<&"}
+_HEREDOC = re.compile(
+    r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|$)",
+    re.S,
+)
+
+
+def _strip_heredocs(command):
+    """Quita el cuerpo de los heredocs: es texto, no comandos."""
+    return _HEREDOC.sub(lambda m: m.group(0).split("\n", 1)[0], command)
+
+
+def _command_segments(command):
+    """Palabras de cada comando simple, sin redirecciones ni su destino."""
+    import shlex
+    lex = shlex.shlex(command.replace("\n", " ; "), posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    lex.commenters = ""
+    tokens = list(lex)  # ValueError si las comillas no cierran
+    segments, seg, i = [], [], 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in _SEPARATORS:
+            segments.append(seg)
+            seg = []
+        elif tok in _REDIRECTS:
+            i += 1
+        else:
+            seg.append(tok)
+        i += 1
+    segments.append(seg)
+    return segments
+
+
+def _command_words(seg):
+    """Quita asignaciones VAR=x y envoltorios como sudo o env."""
+    words = list(seg)
+    while words and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0])
+                     or os.path.basename(words[0]) in _WRAPPERS):
+        words.pop(0)
+    return words
+
+
+def _substitutions(command):
+    """Contenido de las sustituciones `…` y $(…) que bash ejecutaria,
+    respetando las comillas simples y los escapes."""
+    found, i, n, single = [], 0, len(command), False
+    while i < n:
+        ch = command[i]
+        if single:
+            if ch == "'":
+                single = False
+            i += 1
+            continue
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            if command.count('"', 0, i) % 2 == 0:
+                single = True
+            i += 1
+            continue
+        if ch == "`":
+            j = i + 1
+            while j < n and command[j] != "`":
+                j += 2 if command[j] == "\\" else 1
+            if j >= n:
+                break
+            found.append(command[i + 1:j])
+            i = j + 1
+            continue
+        if command.startswith("$(", i) and not command.startswith("$((", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if command[j] == "\\":
+                    j += 2
+                    continue
+                if command[j] == "(":
+                    depth += 1
+                elif command[j] == ")":
+                    depth -= 1
+                j += 1
+            if depth:
+                break
+            found.append(command[i + 2:j - 1])
+            i = j
+            continue
+        i += 1
+    return found
+
+
+def invokes_approve(command):
+    """
+    True si el comando **ejecuta** architecture.py approve o review: en algun
+    segmento, una palabra cuyo nombre de archivo es architecture.py seguida de
+    una de esas ordenes, tambien dentro de una sustitucion que se ejecuta. Una
+    mencion (mensaje de commit, PR, heredoc) no cuenta. Lo que no se puede
+    analizar se evalua por su texto; lo que no se ve lo revierte la auditoria.
+    """
+    command = _strip_heredocs(command or "")
+    if any(invokes_approve(inner) for inner in _substitutions(command)):
+        return True
+    try:
+        segments = _command_segments(command)
+    except ValueError:
+        return bool(APPROVE_TEXT.search(command))
+    for seg in segments:
+        words = _command_words(seg)
+        for word, nxt in zip(words, words[1:]):
+            if os.path.basename(word) == "architecture.py" and nxt in GUARDED_COMMANDS:
+                return True
+    return False
+
+
+def deny(reason):
+    """Bloquea. El JSON solo se procesa con exit 0: nunca combinar con exit 2."""
+    json.dump({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                      "permissionDecision": "deny",
+                                      "permissionDecisionReason": reason}}, sys.stdout)
+    sys.stdout.write("\n")
+    return 0
+
+
+SNAPSHOT_TTL = 24 * 3600
+
+
+def _snapshot_path(root, payload):
+    import tempfile
+    key = payload.get("tool_use_id") or payload.get("session_id") or "nosession"
+    digest = hashlib.sha1(f"{root}|{key}".encode("utf-8")).hexdigest()[:20]
+    return Path(tempfile.gettempdir()) / "architecture-audit" / f"{digest}.json"
+
+
+def _prune(directory):
+    """Si un comando falla o se rechaza, PostToolUse no llega y la instantanea
+    queda huerfana. Se barren las de mas de un dia."""
+    import time
+    limit = time.time() - SNAPSHOT_TTL
+    try:
+        for old in directory.glob("*.json"):
+            if old.stat().st_mtime < limit:
+                old.unlink()
+    except OSError:
+        pass
+
+
+def _statuses(root):
+    out = {}
+    for rel in guarded_files(root):
+        text = read_text(Path(root) / rel)
+        if text is not None:
+            out[rel] = doc_status(text)
+    return out
+
+
+def cmd_guard(_args):
+    """Hook PreToolUse sobre Write|Edit|Bash. Nunca devuelve allow."""
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError:
+        return 0
+    root = project_root(payload)
+    if os.environ.get(BYPASS) == "1" or not (root / ARCH_DIR).is_dir():
+        return 0
+    tool_input = payload.get("tool_input") or {}
+
+    if payload.get("tool_name") == "Bash":
+        if invokes_approve(tool_input.get("command") or ""):
+            return deny(GUARD_REASON)
+        # Lo que un comando opaco cambie lo revisa la auditoria de PostToolUse.
+        path = _snapshot_path(root, payload)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(_statuses(root)), encoding="utf-8")
+        except OSError:
+            return 0
+        _prune(path.parent)
+        return 0
+
+    rel = _guarded_target(root, tool_input.get("file_path") or "")
+    if not rel:
+        return 0
+    target = root / rel
+    before = read_text(target) if target.is_file() else ""
+    if "content" in tool_input:
+        after = tool_input.get("content") or ""
+    elif "new_string" in tool_input:
+        old = tool_input.get("old_string") or ""
+        if not old or old not in (before or ""):
+            return 0
+        count = -1 if tool_input.get("replace_all") else 1
+        after = before.replace(old, tool_input.get("new_string") or "", count)
+    else:
+        return 0
+    if claims_user_state(after) and doc_status(after) != doc_status(before or ""):
+        return deny(GUARD_REASON)
+    return 0
+
+
+def cmd_audit(_args):
+    """
+    Hook PostToolUse sobre Bash: si un comando llevo el Estado de un artefacto
+    a uno que decide el usuario, lo devuelve a su valor anterior. Exit 2 para
+    que el modelo lea el aviso; PostToolUse no puede deshacer el comando.
+    """
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError:
+        return 0
+    root = project_root(payload)
+    path = _snapshot_path(root, payload)
+    try:
+        before = json.loads(path.read_text(encoding="utf-8"))
+        path.unlink()
+    except (OSError, ValueError):
+        return 0
+    if os.environ.get(BYPASS) == "1":
+        return 0
+    restored = []
+    # Se recorren todos los artefactos de ahora, no solo los de antes: uno
+    # creado o recreado ya aprobado tambien vuelve a Draft.
+    for rel in guarded_files(root):
+        text = read_text(root / rel)
+        old = before.get(rel)
+        if text is not None and claims_user_state(text) and doc_status(text) != old:
+            (root / rel).write_text(set_status(text, old or "Draft")[0], encoding="utf-8")
+            restored.append(f"{rel} (vuelve a '{old or 'Draft'}')")
+    if not restored:
+        return 0
+    sys.stderr.write("Guardrail architecture: el comando cambió el Estado de "
+                     + ", ".join(restored) + ". Aprobar, rechazar o sustituir es del "
+                     "usuario, con /architecture:approve o /architecture:review. "
+                     "Detente y dile al usuario lo que pasó.\n")
+    return 2
+
+
 def cmd_approve(args):
     """
     Con --skill (lo usa /architecture:approve) todo va a stdout y sale siempre
@@ -937,6 +1239,8 @@ COMMANDS = {
     "check": cmd_check,
     "approve": cmd_approve,
     "review": cmd_review,
+    "guard": cmd_guard,
+    "audit": cmd_audit,
 }
 
 # Un hook que revienta nunca debe bloquear al usuario: falla abierto.
