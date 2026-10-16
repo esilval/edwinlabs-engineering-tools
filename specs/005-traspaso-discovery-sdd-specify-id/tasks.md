@@ -29,7 +29,7 @@ huella de `sdd_product`, salvo en la prueba de contrato.
 
 ### T001 — Aprobación del producto en `sdd_product.py` · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd_product.py`, `plugins/discovery/scripts/discovery.py` (solo comentario), `plugins/sdd/tests/selftest.py`

@@ -1198,6 +1198,189 @@ def test_F004_R004_variable_de_entorno_manda(base):
            "con la variable en un proyecto y el cwd en otro, manda la variable", r.stdout)
 
 
+# ------------------------------------------- feature 005: traspaso desde discovery
+# Un producto coherente en el formato de discovery (copia de los fixtures de su
+# selftest): sdd lee esos archivos, no importa codigo de discovery.
+
+DISCOVERY = PLUGIN.parent / "discovery" / "scripts" / "discovery.py"
+
+PRODUCTO_DOC = """# Visión
+
+## Problema
+
+Los comercios no saben cuánto venden cada día.
+
+## Usuarios
+
+Dueños de comercios pequeños.
+
+## Informes
+
+Un resumen diario de ventas.
+
+## Exportación
+
+Bajar los movimientos a una hoja de cálculo.
+"""
+
+PRODUCTO_BRIEF = """# Brief del producto
+
+| Campo  | Valor |
+| ------ | ----- |
+| Estado | Draft |
+
+## Objetivos
+
+### G1 — Que el comercio sepa cuánto vende
+
+- **Origen:** D1§1, D1§2, D1§3
+- **Descripción:** el dueño ve sus ventas del día sin calcularlas.
+
+### G2 — Que el comercio use sus datos fuera
+
+- **Origen:** D1§4
+- **Descripción:** los movimientos salen a otras herramientas.
+
+## Usuarios
+
+- Dueños de comercios pequeños (D1§2)
+
+## Glosario
+
+- **Movimiento:** una venta o una devolución (D1§1)
+
+## Restricciones
+
+- Ninguna en los documentos.
+
+## Invariantes propuestos para la constitución
+
+- Ninguno en los documentos.
+
+## Secciones descartadas
+
+- Ninguna.
+
+## Preguntas
+
+- [x] (D1§3; G1) ¿Diario o semanal?
+  - **Respuesta:** diario.
+"""
+
+PRODUCTO_BACKLOG = """# Backlog del producto
+
+| Campo  | Valor |
+| ------ | ----- |
+| Estado | Draft |
+
+## Candidatas
+
+### B01 — Resumen diario de ventas
+
+- **Estado:** candidata
+- **Objetivos:** G1
+- **Origen:** D1§1, D1§3
+- **Problema:** el dueño no sabe cuánto vendió hoy, cada día.
+- **Resultado observable:** el dueño ve el total del día al cerrar.
+- **Dentro:** total del día y número de ventas.
+- **Fuera:** comparativas entre días.
+- **Depende de:** —
+
+### B02 — Exportar movimientos
+
+- **Estado:** candidata
+- **Objetivos:** G2
+- **Origen:** D1§4
+- **Problema:** el dueño copia a mano sus ventas para su gestor.
+- **Resultado observable:** el dueño descarga sus movimientos en un archivo.
+- **Dentro:** movimientos de un rango de fechas.
+- **Fuera:** envío automático al gestor.
+- **Depende de:** B01
+
+### B03 — Envío automático al gestor
+
+- **Estado:** descartada (fuera del alcance acordado)
+- **Objetivos:** G2
+- **Origen:** D1§4
+- **Problema:** el gestor pide los datos cada mes.
+- **Resultado observable:** el gestor recibe los movimientos sin pedirlos.
+- **Dentro:** —
+- **Fuera:** —
+- **Depende de:** B02
+"""
+
+
+def sdd_product():
+    if str(PLUGIN / "scripts") not in sys.path:
+        sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_product as modulo
+    return modulo
+
+
+def run_discovery(cwd, *args):
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(cwd),
+               CLAUDE_PLUGIN_ROOT=str(DISCOVERY.parent.parent))
+    return subprocess.run([sys.executable, str(DISCOVERY), *args], capture_output=True,
+                          text=True, cwd=str(cwd), env=env, timeout=60)
+
+
+def test_F005_R003_contrato_con_discovery(base):
+    print("\nF005 · R003: la huella de sdd_product coincide con la de discovery")
+    if not DISCOVERY.is_file():
+        print("  (sin plugins/discovery en el repositorio: prueba de contrato omitida)")
+        return
+    sp = sdd_product()
+    p = base / "f005-contrato"
+    (p / "entrada").mkdir(parents=True)
+    (p / "entrada" / "vision.md").write_text(PRODUCTO_DOC, encoding="utf-8")
+    r = run_discovery(p, "ingest", str(p / "entrada" / "vision.md"))
+    expect(r.returncode == 0, "discovery ingiere el documento de prueba", r.stdout + r.stderr)
+    expect(sp.product_approval(p) == {"brief.md": "missing", "backlog.md": "missing"}
+           and "product/brief.md no existe" in sp.approval_problems(p)[0],
+           "sin brief ni backlog: los dos faltan", f"{sp.approval_problems(p)}")
+    (p / "product" / "brief.md").write_text(PRODUCTO_BRIEF, encoding="utf-8")
+    (p / "product" / "backlog.md").write_text(PRODUCTO_BACKLOG, encoding="utf-8")
+    expect(sp.product_approval(p) == {"brief.md": "draft", "backlog.md": "draft"},
+           "antes de aprobar: los dos en draft", f"{sp.product_approval(p)}")
+
+    r = run_discovery(p, "approve")
+    expect(r.returncode == 0, "discovery aprueba el producto de prueba", r.stdout + r.stderr)
+    expect(sp.product_approval(p) == {"brief.md": "approved", "backlog.md": "approved"},
+           "lo que discovery aprueba, sdd_product lo da por aprobado",
+           f"{sp.product_approval(p)}")
+
+    def aviso_de_discovery():
+        r = run_discovery(p, "check", "--json")
+        return [f["message"] for f in json.loads(r.stdout)["findings"]
+                if f["code"] == "W-PRODUCT-NOT-APPROVED"]
+
+    brief = p / "product" / "brief.md"
+    aprobado = brief.read_text(encoding="utf-8")
+    reformateado = aprobado.replace("\n## Usuarios", "\n\n\n## Usuarios   ")
+    brief.write_text(reformateado, encoding="utf-8")
+    expect(reformateado != aprobado and sp.product_approval(p)["brief.md"] == "approved"
+           and not aviso_de_discovery(),
+           "reformatear sin cambiar el contenido: aprobado para los dos plugins",
+           f"{aviso_de_discovery()}")
+
+    brief.write_text(sp.STATUS_ROW.sub(r"\1Approved\3", aprobado, count=1), encoding="utf-8")
+    expect(sp.product_approval(p)["brief.md"] == "draft",
+           "un Approved sin huella no cuenta: draft, como en discovery")
+
+    brief.write_text(aprobado.replace("sin calcularlas", "sin calcularlas a mano"),
+                     encoding="utf-8")
+    codigos = {f["code"]: f["message"] for f in
+               json.loads(run_discovery(p, "check", "--json").stdout)["findings"]}
+    expect(sp.product_approval(p)["brief.md"] == "stale"
+           and "cambió" in codigos.get("W-PRODUCT-NOT-APPROVED", ""),
+           "un brief editado tras aprobarse: cambiado para los dos plugins", f"{codigos}")
+    problemas = sp.approval_problems(p)
+    expect(len(problemas) == 1 and problemas[0].startswith(
+               "product/brief.md cambió después de aprobarse")
+           and "/discovery:approve" in problemas[0],
+           "el motivo nombra el artefacto y lo que le pasa", f"{sp.approval_problems(p)}")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -1228,6 +1411,7 @@ def main():
         test_F004_R001_raiz_desde_subdirectorio(base)
         test_F004_R003_sin_datos_usa_el_directorio_actual(base)
         test_F004_R004_variable_de_entorno_manda(base)
+        test_F005_R003_contrato_con_discovery(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
