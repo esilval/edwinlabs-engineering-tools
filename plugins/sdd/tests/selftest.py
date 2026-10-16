@@ -1381,6 +1381,103 @@ def test_F005_R003_contrato_con_discovery(base):
            "el motivo nombra el artefacto y lo que le pasa", f"{sp.approval_problems(p)}")
 
 
+PRODUCTO_FUENTE = """# D1 — Visión
+
+| Campo | Valor |
+| ----- | ----- |
+| Documento | D1 |
+| Secciones | 1, 2, 3, 4 |
+
+<!-- discovery:contenido -->
+# Visión
+
+## 1 Problema
+
+Los comercios no saben cuánto venden cada día.
+
+## 2 Usuarios
+
+Dueños de comercios pequeños.
+
+## 3 Informes
+
+Un resumen diario de ventas.
+
+## 4 Exportación
+
+Bajar los movimientos a una hoja de cálculo.
+
+```
+## 4.1 Encabezado de mentira dentro de un bloque de código
+```
+
+### 4.1 Formatos
+
+CSV y hoja de cálculo.
+"""
+
+
+def sella(path):
+    """Aprueba un artefacto de discovery con la huella de sdd_product, como /discovery:approve."""
+    sp = sdd_product()
+    texto = path.read_text(encoding="utf-8")
+    path.write_text(sp.STATUS_ROW.sub(rf"\g<1>Approved · {sp.content_digest(texto)}\3",
+                                      texto, count=1), encoding="utf-8")
+
+
+def con_producto(p, aprobado=True, backlog=PRODUCTO_BACKLOG):
+    """Pone en p un product/ de discovery: brief, backlog y D1 ingerido."""
+    (p / "product" / "sources").mkdir(parents=True)
+    (p / "product" / "sources" / "D1-vision.md").write_text(PRODUCTO_FUENTE, encoding="utf-8")
+    (p / "product" / "brief.md").write_text(PRODUCTO_BRIEF, encoding="utf-8")
+    (p / "product" / "backlog.md").write_text(backlog, encoding="utf-8")
+    if aprobado:
+        sella(p / "product" / "brief.md")
+        sella(p / "product" / "backlog.md")
+    return p
+
+
+def test_F005_R004_lee_candidatas_y_descartadas(base):
+    print("\nF005 · R004: sdd_product lee las candidatas del backlog")
+    sp = sdd_product()
+    p = con_producto(base / "f005-r004-lectura")
+    b02 = sp.candidate(p, "b02")
+    expect(b02 is not None and b02["id"] == "B02" and b02["title"] == "Exportar movimientos"
+           and b02["state"] == "candidata"
+           and b02["fields"]["problema"] == "el dueño copia a mano sus ventas para su gestor."
+           and b02["fields"]["fuera"] == "envío automático al gestor.",
+           "lee B02 (tambien como b02) con su titulo, estado y campos", f"{b02}")
+    expect(sp.candidate(p, "B03")["state"] == "descartada",
+           "B03 esta descartada aunque el Estado lleve un motivo detras")
+    expect(sp.candidate(p, "B09") is None, "B09 no existe: None")
+    expect(sp.refs(b02["fields"]["depende de"])["candidates"] == ["B01"],
+           "las dependencias se leen como citas a candidatas")
+
+
+def test_F005_R006_resuelve_objetivos_y_fuentes(base):
+    print("\nF005 · R006: sdd_product resuelve objetivos y secciones de origen")
+    sp = sdd_product()
+    p = con_producto(base / "f005-r006-lectura")
+    g2 = sp.goals(p).get("G2")
+    expect(g2 == {"id": "G2", "title": "Que el comercio use sus datos fuera",
+                  "description": "los movimientos salen a otras herramientas."},
+           "G2 con su titulo y su descripcion", f"{g2}")
+    fuente = sp.source_section(p, "D1§4")
+    expect(fuente == {"ref": "D1§4", "file": "product/sources/D1-vision.md", "section": "4",
+                      "title": "Exportación"},
+           "D1§4 se resuelve a su archivo, su numero y su titulo", f"{fuente}")
+    sub = sp.source_section(p, "D1§4.1")
+    expect(sub == {"ref": "D1§4.1", "file": "product/sources/D1-vision.md", "section": "4.1",
+                   "title": "Formatos"},
+           "una subseccion (D1§4.1) se resuelve igual, sin tomar la de un bloque de codigo",
+           f"{sub}")
+    perdida = sp.source_section(p, "D7§2")
+    expect(perdida["file"] is None and perdida["title"] is None,
+           "una cita a un documento que no esta: sin archivo, sin excepcion", f"{perdida}")
+    expect(sp.refs("D1§1, D1§3 y G1")["sections"] == ["D1§1", "D1§3"],
+           "las secciones se leen en orden de aparicion")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -1412,6 +1509,8 @@ def main():
         test_F004_R003_sin_datos_usa_el_directorio_actual(base)
         test_F004_R004_variable_de_entorno_manda(base)
         test_F005_R003_contrato_con_discovery(base)
+        test_F005_R004_lee_candidatas_y_descartadas(base)
+        test_F005_R006_resuelve_objetivos_y_fuentes(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

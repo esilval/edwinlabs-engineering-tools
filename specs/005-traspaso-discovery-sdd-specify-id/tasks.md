@@ -40,7 +40,7 @@ huella de `sdd_product`, salvo en la prueba de contrato.
 
 ### T002 — Candidatas, objetivos y fuentes en `sdd_product.py` · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R004, R006
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd_product.py`, `plugins/sdd/tests/selftest.py`
