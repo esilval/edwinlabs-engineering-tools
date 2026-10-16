@@ -381,16 +381,67 @@ def prepare_handoff(root, cid):
         motivo = re.sub(r"^\S+\s*", "", cand["fields"].get("estado", "")).strip(" ()")
         return None, (f"No se crea la feature: {cid} está descartada en product/backlog.md"
                       + (f" ({motivo})." if motivo else "."))
+    taken = features_by_origin(root)
+    if cid in taken:
+        return None, (f"No se crea la feature: {cid} ya tiene una, {taken[cid]} "
+                      f"(fila Origen de specs/{taken[cid]}/spec.md).")
     fields = cand["fields"]
     goal_ids = p.refs(fields.get("objetivos"))["goals"]
     all_goals = p.goals(root)
-    return {
+    handoff = {
         "candidate": cand,
         "goals": [all_goals.get(g, {"id": g, "title": None, "description": ""})
                   for g in goal_ids],
         "sections": [p.source_section(root, s)
                      for s in p.refs(fields.get("origen"))["sections"]],
-    }, None
+    }
+    # Avisos que no impiden crear la feature: dependencias sin feature (R009)
+    # y secciones de origen que ya no se pueden leer como contexto (R006).
+    warnings = []
+    all_candidates = p.candidates(root)
+    for dep in p.refs(fields.get("depende de"))["candidates"]:
+        if dep in taken or all_candidates.get(dep, {}).get("state") == "descartada":
+            continue
+        warnings.append(f"{cid} depende de {dep}, que aún no tiene feature: "
+                        f"conviene especificarla antes (/sdd:specify {dep}).")
+    for s in handoff["sections"]:
+        if s["file"] is None:
+            warnings.append(f"{s['ref']}: el documento no está en product/sources/; "
+                            "esa sección no se puede leer como contexto.")
+    handoff["warnings"] = warnings
+    return handoff, None
+
+
+ORIGIN_ROW = re.compile(r"^\|\s*Origen\s*\|\s*([^|\n]*?)\s*\|", re.M)
+
+
+def features_by_origin(root):
+    """{candidata: feature} leyendo la fila Origen de la cabecera de cada spec (D4)."""
+    t = _trace()
+    out = {}
+    for feature in feature_dirs(root):
+        try:
+            text = (feature / "spec.md").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        m = ORIGIN_ROW.search(text, 0, t._header_end(text))
+        if m:
+            first = m.group(1).split("·")[0].strip().upper()
+            if first:
+                out.setdefault(first, feature.name)
+    return out
+
+
+def handoff_json(handoff):
+    """Campos que el traspaso añade a la salida de new (D5)."""
+    return {
+        "origin": {"candidate": handoff["candidate"]["id"],
+                   "goals": [g["id"] for g in handoff["goals"]],
+                   "sections": [s["ref"] for s in handoff["sections"]]},
+        "context": {"brief": "product/brief.md",
+                    "goals": handoff["goals"], "sources": handoff["sections"]},
+        "warnings": handoff["warnings"],
+    }
 
 
 def origin_value(handoff):
@@ -491,12 +542,15 @@ def cmd_new(args):
     sdd.mkdir(exist_ok=True)
     (sdd / "current").write_text(slug + "\n", encoding="utf-8")
 
-    print(json.dumps({
+    out = {
         "feature": slug,
         "dir": str(feature.relative_to(root)),
         "spec": str((feature / "spec.md").relative_to(root)),
         "next": "/sdd:clarify",
-    }, indent=2))
+    }
+    if handoff:
+        out.update(handoff_json(handoff))
+    print(json.dumps(out, indent=2))
     return 0
 
 

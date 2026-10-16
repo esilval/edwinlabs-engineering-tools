@@ -71,7 +71,7 @@ huella de `sdd_product`, salvo en la prueba de contrato.
 
 ### T004 — Duplicados, dependencias y contexto en el JSON
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R006, R009
 - **Depende de:** T003
 - **Archivos:** `plugins/sdd/scripts/sdd.py`, `plugins/sdd/tests/selftest.py`

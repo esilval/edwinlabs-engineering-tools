@@ -1599,6 +1599,68 @@ def test_F005_R008_specs_sin_origen_igual(base):
                f"{a[i]!r} vs {b[i]!r}"[:300])
 
 
+def test_F005_R005_candidata_con_feature(base):
+    print("\nF005 · R005: una candidata con feature no se especifica dos veces")
+    p = con_producto(base / "f005-r005")
+    run("new", ["B02"], cwd=p)
+    antes = specs_creadas(p)
+    actual = (p / ".sdd" / "current").read_text()
+    for arg in ("B02", "b02"):
+        r = run("new", [arg], cwd=p)
+        expect(r.returncode == 1 and "001-exportar-movimientos" in r.stderr
+               and specs_creadas(p) == antes and (p / ".sdd" / "current").read_text() == actual,
+               f"new {arg} otra vez: no se crea y se nombra la existente", r.stderr)
+
+
+def test_F005_R006_contexto_en_el_json(base):
+    print("\nF005 · R006: el JSON de new trae el contexto para redactar")
+    p = con_producto(base / "f005-r006-json")
+    salida = json.loads(run("new", ["B02"], cwd=p).stdout)
+    expect(salida.get("origin") == {"candidate": "B02", "goals": ["G2"], "sections": ["D1§4"]},
+           "origin: candidata, objetivos y secciones", f"{salida.get('origin')}")
+    ctx = salida.get("context") or {}
+    expect(ctx.get("brief") == "product/brief.md"
+           and ctx.get("goals") == [{"id": "G2", "title": "Que el comercio use sus datos fuera",
+                                     "description": "los movimientos salen a otras herramientas."}]
+           and ctx.get("sources") == [{"ref": "D1§4", "file": "product/sources/D1-vision.md",
+                                       "section": "4", "title": "Exportación"}],
+           "context: el brief, G2 con su titulo y D1§4 con su archivo y su seccion", f"{ctx}")
+
+    p = base / "f005-r006-normal"
+    p.mkdir()
+    salida = json.loads(run("new", ["login con Google"], cwd=p).stdout)
+    expect(sorted(salida) == ["dir", "feature", "next", "spec"],
+           "sin traspaso, el JSON de siempre", f"{sorted(salida)}")
+
+
+def test_F005_R009_dependencia_sin_feature(base):
+    print("\nF005 · R009: una dependencia sin feature se avisa sin impedir")
+    p = con_producto(base / "f005-r009")
+    r = run("new", ["B02"], cwd=p)
+    avisos = json.loads(r.stdout).get("warnings", []) if r.returncode == 0 else None
+    expect(r.returncode == 0 and avisos and len(avisos) == 1 and "B01" in avisos[0],
+           "B02 depende de B01 sin feature: se crea y se avisa de B01", r.stdout + r.stderr)
+
+    p = con_producto(base / "f005-r009-hecha")
+    run("new", ["B01"], cwd=p)
+    r = run("new", ["B02"], cwd=p)
+    expect(r.returncode == 0 and json.loads(r.stdout).get("warnings") == [],
+           "con B01 ya especificada, sin avisos", r.stdout + r.stderr)
+
+
+def test_F005_R006_seccion_que_no_se_puede_leer(base):
+    print("\nF005 · R006: una seccion de origen que ya no esta se indica como tal")
+    perdida = PRODUCTO_BACKLOG.replace("- **Origen:** D1§1, D1§3", "- **Origen:** D1§1, D7§2")
+    p = con_producto(base / "f005-r006-fuente", backlog=perdida)
+    r = run("new", ["B01"], cwd=p)
+    salida = json.loads(r.stdout) if r.returncode == 0 else {}
+    fuentes = {s["ref"]: s["file"] for s in salida.get("context", {}).get("sources", [])}
+    expect(fuentes == {"D1§1": "product/sources/D1-vision.md", "D7§2": None}
+           and any("D7§2" in a for a in salida.get("warnings", [])),
+           "D7§2 sin archivo en el contexto y con aviso; la feature se crea",
+           r.stdout + r.stderr)
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -1638,6 +1700,10 @@ def main():
         test_F005_R004_candidata_inexistente_o_descartada(base)
         test_F005_R007_sin_backlog_o_sin_id(base)
         test_F005_R008_specs_sin_origen_igual(base)
+        test_F005_R005_candidata_con_feature(base)
+        test_F005_R006_contexto_en_el_json(base)
+        test_F005_R009_dependencia_sin_feature(base)
+        test_F005_R006_seccion_que_no_se_puede_leer(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
