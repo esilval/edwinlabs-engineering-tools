@@ -769,6 +769,14 @@ def cmd_audit(_args):
                         f"hacia una aprobacion. Se ha devuelto a '{old or 'Draft'}': "
                         "la aprobacion es del usuario, con /sdd:approve."
                     )
+        if messages:
+            # La auditoria no distingue una aprobacion fabricada de una que trae
+            # git (checkout, pull, rebase): en ambos casos, decide el usuario.
+            messages.append(
+                "Detente y dile al usuario lo que paso, en vez de seguir. Si el "
+                "cambio venia de git (checkout, pull, rebase), que lance el "
+                "comando el mismo con ! o con SDD_BYPASS=1."
+            )
 
     if snap.get("gate") and snap.get("files") is not None:
         after = b.dirty_files(root)

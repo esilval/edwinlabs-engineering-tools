@@ -973,6 +973,8 @@ def test_F003_R001_auditoria_revierte_otra_feature(base):
     expect(r.returncode == 2 and estado_de(spec) == "Draft" and "001-a/spec.md" in r.stderr,
            "con la 002 activa, aprobar el spec de la 001 se revierte y se avisa",
            f"{r.returncode} {estado_de(spec)!r} {r.stderr!r}")
+    expect("Detente y dile al usuario" in r.stderr and r.stderr.count("Detente") == 1,
+           "el aviso pide detenerse y avisar al usuario, una sola vez", r.stderr)
 
     p = repo_dos_features(base, "f003-r001-puntero")
     plan = p / "specs" / "001-a" / "plan.md"
