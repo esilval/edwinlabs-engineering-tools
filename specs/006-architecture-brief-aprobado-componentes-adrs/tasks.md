@@ -97,7 +97,7 @@ de contrato es la única que ejecuta `discovery.py`.
 
 ### T006 — Contrato de `check` y cobertura de códigos
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008
 - **Depende de:** T004, T005
 - **Archivos:** `plugins/architecture/scripts/architecture.py`, `plugins/architecture/tests/selftest.py`

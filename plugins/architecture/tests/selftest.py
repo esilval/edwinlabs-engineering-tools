@@ -616,6 +616,57 @@ def test_F006_R005_huecos_de_plantilla():
            "questions.md recien creado no tiene huecos")
 
 
+# ----------------------------------------------------------------- T006
+
+def test_F006_R008_check_en_ci():
+    import json
+    ok = con_arquitectura(proyecto("r008-ok"))
+    r = run(ok, "check", "--check")
+    expect(r.returncode == 0 and "OK: sin errores." in r.stdout,
+           "sin errores, --check sale con 0", r.stdout + r.stderr)
+
+    sin_b02 = ARQ_COMPONENTS.replace("- **Candidatas:** B02", "- **Candidatas:** —")
+    mal = con_arquitectura(proyecto("r008-error"), components=sin_b02)
+    r = run(mal, "check", "--check")
+    expect(r.returncode == 1 and "E-COMPONENT-CANDIDATE-UNPLACED" in r.stdout,
+           "con un error, --check sale con 1 y lo lista", r.stdout)
+    r = run(mal, "check")
+    expect(r.returncode == 0 and "FALLA: 1 error(es)." in r.stdout,
+           "sin --check, el informe legible sale siempre con 0", r.stdout)
+
+    r = run(mal, "check", "--json")
+    data = json.loads(r.stdout)
+    hallazgo = data["findings"][0] if data["findings"] else {}
+    expect(r.returncode == 0 and data["schema"] == "architecture.check/v1" and not data["ok"]
+           and set(hallazgo) == {"code", "severity", "message", "artifact"}
+           and hallazgo["artifact"] == "architecture/components.md"
+           and hallazgo["code"] == "E-COMPONENT-CANDIDATE-UNPLACED"
+           and hallazgo["severity"] == "error"
+           and data["counts"]["errors"] == 1,
+           "--json: schema, ok, counts y cada hallazgo con code, severity, message y artifact",
+           r.stdout[:300])
+    r = run(mal, "check", "--json", "--check")
+    expect(r.returncode == 1 and json.loads(r.stdout)["ok"] is False,
+           "--json --check: el mismo JSON y salida 1")
+
+    # Solo avisos no hacen fallar: aqui se simula uno, porque los avisos reales
+    # (aprobacion y producto) llegan con la tarea de aprobacion.
+    def solo_un_aviso(root):
+        return [architecture._finding("W-ARCH-NOT-APPROVED", "simulado", "architecture/x")]
+    original = architecture.check_templates
+    architecture.check_templates = solo_un_aviso
+    try:
+        data = architecture.analyze(ok)
+    finally:
+        architecture.check_templates = original
+    expect(data["ok"] and data["counts"]["warnings"] == 1,
+           "un aviso no hace fallar la comprobacion", f"{data['counts']}")
+
+    r = run(ok, "check", "--chek")
+    expect(r.returncode == 2 and "argumento desconocido" in r.stderr,
+           "un argumento desconocido sale con 2")
+
+
 # --------------------------------------------------------------------------
 
 def cobertura_de_codigos():

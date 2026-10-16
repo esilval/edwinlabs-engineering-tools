@@ -608,13 +608,63 @@ def check_templates(root):
     return out
 
 
+SCHEMA = "architecture.check/v1"
+
+
 def analyze(root):
-    """Todos los hallazgos de la arquitectura, en orden de artefacto."""
+    """
+    Todos los hallazgos de la arquitectura, con el schema architecture.check/v1:
+    {schema, ok, counts, findings: [{code, severity, message, artifact}]}.
+    """
     findings = (check_templates(root) + check_quality(root) + check_components(root)
                 + check_adrs(root) + check_standards(root) + check_references(root)
                 + check_questions(root))
-    return {"findings": findings,
-            "ok": not any(f["severity"] == "error" for f in findings)}
+    errors = sum(1 for f in findings if f["severity"] == "error")
+    return {
+        "schema": SCHEMA,
+        "ok": errors == 0,
+        "counts": {
+            "quality": len(quality(root)), "components": len(components(root)),
+            "adrs": len(adrs(root)), "standards": len(standards(root)),
+            "questions_open": sum(1 for q in questions(root) if q["open"]),
+            "errors": errors, "warnings": len(findings) - errors,
+        },
+        "findings": findings,
+    }
+
+
+def report(data):
+    c = data["counts"]
+    out = [f"Arquitectura: {c['quality']} atributo(s), {c['components']} componente(s), "
+           f"{c['adrs']} decisión(es), {c['standards']} estándar(es), "
+           f"{c['questions_open']} pregunta(s) abierta(s)"]
+    for sev, label in (("error", "ERRORES"), ("warning", "AVISOS")):
+        items = [f for f in data["findings"] if f["severity"] == sev]
+        if items:
+            out.append(f"\n  {label} ({len(items)})")
+            out += [f"    [{f['code']}] {f['message']}" for f in items]
+    out.append("\n  OK: sin errores." if data["ok"] else f"\n  FALLA: {c['errors']} error(es).")
+    return "\n".join(out)
+
+
+def cmd_check(args):
+    """
+    Informe legible (siempre exit 0), --json (architecture.check/v1) o
+    --check (exit 1 si hay errores): lo mismo en local y en CI (R008).
+    """
+    unknown = [a for a in args if a not in ("--json", "--check")]
+    if unknown:
+        # En CI, una errata como --chek no debe convertirse en un exit 0.
+        print(f"error: argumento desconocido {' '.join(unknown)}. "
+              "Uso: architecture.py check [--json] [--check]", file=sys.stderr)
+        return 2
+    data = analyze(project_root())
+    if "--json" in args:
+        json.dump(data, sys.stdout, indent=2, ensure_ascii=False)
+        sys.stdout.write("\n")
+    else:
+        print(report(data))
+    return 1 if ("--check" in args and not data["ok"]) else 0
 
 
 # --------------------------------------------------------------------------
@@ -655,6 +705,7 @@ def cmd_init(_args):
 COMMANDS = {
     "init": cmd_init,
     "next-id": cmd_next_id,
+    "check": cmd_check,
 }
 
 # Un hook que revienta nunca debe bloquear al usuario: falla abierto.
