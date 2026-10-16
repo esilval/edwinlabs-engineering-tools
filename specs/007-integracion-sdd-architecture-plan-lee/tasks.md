@@ -98,7 +98,7 @@ contrato ejecuta `architecture.py`.
 
 ### T006 — Skills, README y cierre
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R002, R006, R008
 - **Depende de:** T002, T003, T004, T005
 - **Archivos:** `plugins/sdd/skills/plan/SKILL.md`, `plugins/sdd/skills/implement/SKILL.md`, `plugins/sdd/README.md`

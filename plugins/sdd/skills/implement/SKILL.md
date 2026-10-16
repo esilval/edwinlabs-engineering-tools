@@ -58,6 +58,11 @@ Ocurrirá. Cuando al implementar descubras que el plan es inviable o incompleto:
 2. Explica al usuario qué supuesto del plan falló.
 3. Propón volver a `/sdd:plan` (o a `/sdd:specify` si lo que falla es un
    requisito) y actualizar el artefacto.
+4. Si lo que falta es una **decisión de arquitectura** (afecta a más de una
+   feature o es cara de revertir, y el proyecto tiene `architecture/`), no la
+   tomes en el código: en `/sdd:plan` se propone con
+   `sdd.py propose-adr "<título>"` y la decide el usuario con
+   `/architecture:review`.
 
 Ese es el mecanismo que mantiene la especificación como fuente de verdad. Si el
 código se aleja de la spec en silencio, el plugin entero deja de tener sentido.

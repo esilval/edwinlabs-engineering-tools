@@ -36,6 +36,38 @@ Decide **cómo** se construye lo que la spec describe.
    regla; no la ignores. `trace` avisa si existe constitución y esta sección
    falta.
 
+   **Arquitectura.** Si el proyecto tiene `architecture/`, parte de ella:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py" arch-context
+   ```
+
+   - Si dice que la arquitectura no está aprobada o que la candidata no tiene
+     componente, detente: se resuelve en `architecture` (`/architecture:init`,
+     `/architecture:approve`) antes de planificar.
+   - El plan **no vuelve a decidir** lo que ya decide la arquitectura (stack,
+     persistencia, despliegue…): lo cita (`ADR-0001`) y lo respeta. Añade la
+     sección `## Comprobación de arquitectura` con una fila por decisión
+     vigente y estándar que el plan toca, y cómo lo cumple. `trace` avisa si
+     falta, y da error si el plan cita una decisión que no existe o no está
+     aprobada.
+   - Si el plan necesita una decisión que **afecta a más de una feature o es
+     cara de revertir** y ningún ADR aprobado la cubre, no la tomes en el plan:
+     propónla a la arquitectura y redáctala con el usuario.
+
+     ```bash
+     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py" propose-adr "<título>"
+     ```
+
+     Rellena el archivo que indica (motivo, contexto, decisión, alternativas
+     descartadas, consecuencias) y cítalo en el plan. Dile al usuario que el
+     plan **no se podrá aprobar** hasta que decida la propuesta con
+     `/architecture:review`. No cambies tú su Estado.
+   - Una decisión que solo afecta a esta feature y es barata de cambiar va en
+     el plan, como siempre.
+
+   Sin `architecture/`, sigue como hasta ahora.
+
 6. Para cada decisión relevante, documenta también **la alternativa que
    descartaste y por qué**. Es la parte del plan que más valor tiene dentro de
    seis meses, y la que siempre se omite.

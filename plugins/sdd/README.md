@@ -102,6 +102,43 @@ de candidatas y objetivos y el algoritmo de huella de la aprobación. Si
 `discovery` cambia ese formato o esa huella, la prueba de contrato del selftest
 de `sdd`, que aprueba un producto con el `discovery.py` real, falla en CI.
 
+## Con architecture
+
+Si el proyecto tiene `architecture/` (la deja el plugin `architecture`: atributos
+de calidad, componentes, decisiones ADR y estándares), `sdd` planifica sobre
+ella en lugar de volver a decidir el stack en cada feature. Sin
+`architecture/`, nada de esto se activa y todo funciona como siempre.
+
+- **Contexto para el plan.** `sdd.py arch-context [--json]` da los componentes
+  que alojan la candidata de la feature activa (o todos, si no viene de una
+  candidata), las decisiones vigentes, las propuestas pendientes y los
+  estándares. `/sdd:plan` parte de ahí: cita los ADR que respeta y añade la
+  sección «Comprobación de arquitectura». El JSON trae `architecture`,
+  `approved`, `problems`, `feature`, `candidate`, `components_scope`
+  (`candidate` o `all`), `components`, `adrs`, `proposed` y `standards`; sin
+  `architecture/`, solo `{"architecture": false}`.
+- **Comprobación.** `trace` da error si el plan cita un ADR que no existe o que
+  no está aprobado (uno propuesto se decide antes con `/architecture:review`),
+  avisa si falta la sección de arquitectura, y avisa (sin error) si un plan ya
+  aprobado cita un ADR que se sustituyó después.
+- **Decisiones nuevas.** Si el plan necesita una decisión que afecta a más de
+  una feature o es cara de revertir y ningún ADR la cubre, no la toma: la
+  propone con `sdd.py propose-adr "<título>"`, que escribe el siguiente ADR en
+  `Proposed` con `| Propuesto por | specs/<feature>/plan.md |`. La decide el
+  usuario con `/architecture:review`; hasta entonces el plan no se aprueba.
+  Sale con 1 sin `architecture/` o sin feature activa, y con 2 sin título.
+- **Traspaso.** `/sdd:specify B03` con arquitectura exige que esté aprobada y
+  que la candidata viva en algún componente; si no, no crea nada y dice qué
+  corregir en `architecture`. La fila `Origen` gana un cuarto grupo con los
+  componentes (`B02 · G2 · D1§4 · C2`), y el JSON de `new` los trae en
+  `origin.components` y `context.components`.
+
+`sdd` lee `architecture/` con `scripts/sdd_architecture.py`, copia documentada
+del formato de `architecture.py` (los plugins no comparten código); la plantilla
+`templates/adr.md` es copia de la de `architecture` con Estado `Proposed`. Una
+prueba de contrato del selftest aprueba una arquitectura con el
+`architecture.py` real y comprueba que `sdd` la lee igual.
+
 ## La compuerta
 
 Un hook `PreToolUse` sobre `Write|Edit|NotebookEdit|Bash` bloquea la escritura
@@ -318,6 +355,10 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `W-SPEC-OPEN-QUESTIONS` | Preguntas abiertas que no citan ningún MUST |
 | `W-SPEC-NO-UNWANTED` | Ningún requisito `SI... ENTONCES` |
 | `W-PLAN-NO-CONSTITUTION-CHECK` | Hay constitución y el plan no la contrasta |
+| `E-PLAN-ADR-UNKNOWN` | Con `architecture/`: el plan cita un ADR que no existe |
+| `E-PLAN-ADR-NOT-APPROVED` | Con `architecture/`: el plan cita un ADR en borrador, propuesto, rechazado, cambiado tras aprobarse o sustituido (si el plan no está aprobado) |
+| `W-PLAN-NO-ARCHITECTURE-CHECK` | Con `architecture/`: el plan no tiene la sección «Comprobación de arquitectura» |
+| `W-PLAN-ADR-SUPERSEDED` | Con `architecture/`: un plan aprobado cita un ADR sustituido después |
 | `W-TASK-NO-DONE-WHEN` | Tarea sin «hecho cuando» |
 | `W-TEST-EMPTY` | Prueba vacía (solo `pass`, `...`, comentarios): no cuenta |
 | `W-TEST-NO-ASSERT` | Prueba sin aserción reconocible: cuenta, pero revísala |
