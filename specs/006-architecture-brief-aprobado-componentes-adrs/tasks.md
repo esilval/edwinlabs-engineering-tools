@@ -83,7 +83,7 @@ de contrato es la única que ejecuta `discovery.py`.
 
 ### T005 — Comprobación de decisiones, estándares, citas y preguntas · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R006, R007, R009
 - **Depende de:** T003
 - **Archivos:** `plugins/architecture/scripts/architecture.py`, `plugins/architecture/tests/selftest.py`

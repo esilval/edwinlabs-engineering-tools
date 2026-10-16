@@ -468,9 +468,151 @@ def check_components(root):
     return out
 
 
+# Decisiones que ya no rigen: se conservan como historia y no se les exige
+# forma, motivo ni citas vigentes (podrian citar algo que ya no existe).
+HISTORY = ("rejected", "superseded")
+
+
+def check_adrs(root):
+    out = []
+    known_q = {q["id"] for q in quality(root)}
+    goals = product_goals(root)
+    restrictions = product_restriction_sections(root)
+    by_number = {}
+    for a in adrs(root):
+        by_number.setdefault(a["number"], []).append(a["file"])
+        if a["state"] in HISTORY:
+            continue  # rechazada o sustituida: queda como historia
+        missing = [titles[0] for key, titles in ADR_SECTIONS.items() if not a["sections"][key]]
+        if missing:
+            out.append(_finding(
+                "E-ADR-INCOMPLETE",
+                f"{a['id']} ({a['title']}) no tiene contenido en: {', '.join(missing)}.",
+                a["file"]))
+        motive = a["motivo"]
+        valid = ([f"Q{n}" for n in re.findall(r"(?<![A-Za-z0-9])Q(\d+)(?![0-9])", motive)
+                  if f"Q{n}" in known_q]
+                 + [f"G{g}" for g in GOAL_REF.findall(motive) if f"G{g}" in goals]
+                 + [f"D{d}§{s}" for d, s in DOC_REF.findall(motive)
+                    if f"D{d}§{s}" in restrictions])
+        if not valid:
+            out.append(_finding(
+                "E-ADR-NO-MOTIVE",
+                f"{a['id']} ({a['title']}): el motivo no cita un atributo de calidad (Q1), "
+                "un objetivo del brief (G1) ni la sección de una restricción (D1§5).",
+                a["file"]))
+    for number, files in sorted(by_number.items()):
+        if len(files) > 1:
+            out.append(_finding(
+                "E-ADR-ID-DUPLICATE",
+                f"ADR-{number:04d} está en {len(files)} archivos: {', '.join(files)}. "
+                "Renumera uno con el siguiente libre (next-id ADR).",
+                files[0]))
+    return out
+
+
+def check_standards(root):
+    out = []
+    for s in standards(root):
+        if not ADR_REF.search(s["fields"].get("decision", "")):
+            out.append(_finding(
+                "E-STANDARD-NO-ADR",
+                f"{s['id']} ({s['title']}) no cita la decisión de la que se deriva (ADR-0001).",
+                f"{ARCH_DIR}/standards.md"))
+    return out
+
+
+def check_references(root):
+    """Citas a decisiones, atributos, componentes, objetivos o candidatas que no existen."""
+    known = {
+        "ADR": {a["id"] for a in adrs(root)},
+        "Q": {q["id"] for q in quality(root)},
+        "C": {c["id"] for c in components(root)},
+        "S": {s["id"] for s in standards(root)},
+        "G": set(product_goals(root)),
+        "B": set(product_candidates(root)),
+    }
+    sources = []  # (artefacto, texto, tipos que se comprueban)
+    for q in quality(root):
+        sources.append((f"{ARCH_DIR}/quality.md", q["fields"].get("motivo", ""), "G"))
+    for c in components(root):
+        sources.append((f"{ARCH_DIR}/components.md", c["fields"].get("candidatas", ""), "B"))
+    for s in standards(root):
+        f = s["fields"]
+        sources.append((f"{ARCH_DIR}/standards.md", f.get("decision", ""), "ADR"))
+        sources.append((f"{ARCH_DIR}/standards.md", f.get("detalle", ""), "C"))
+    for a in adrs(root):
+        if a["state"] in HISTORY:
+            continue
+        sources.append((a["file"], a["motivo"], "QG"))
+        sources.append((a["file"], a["sustituye"], "ADR"))
+        # En el cuerpo solo se buscan ADR-NNNN: una «S3» o una «C2» en prosa
+        # pueden no ser citas, un ADR-0042 si lo es.
+        body = (read_text(Path(root) / a["file"]) or "")
+        sources.append((a["file"], body[_header_end(body):], "ADR"))
+    for q in questions(root):
+        cited = ", ".join(q["adrs"] + q["items"])
+        sources.append((f"{ARCH_DIR}/questions.md", cited, "ADR QCS"))
+
+    out, seen = [], set()
+    for artifact, text, kinds in sources:
+        refs = []
+        if "ADR" in kinds:
+            refs += [("ADR", f"ADR-{n}") for n in ADR_REF.findall(text)]
+        for kind in "QCSGB":
+            if kind in kinds.replace("ADR", ""):
+                width = r"\d{2,}" if kind == "B" else r"\d+"
+                refs += [(kind, f"{kind}{n}") for n in
+                         re.findall(rf"(?<![A-Za-z0-9-]){kind}({width})(?![0-9])", text)]
+        for kind, ref in refs:
+            if ref not in known[kind] and (artifact, ref) not in seen:
+                seen.add((artifact, ref))
+                out.append(_finding("E-ARCH-REF-UNKNOWN",
+                                    f"{artifact} cita {ref}, que no existe.", artifact))
+    return out
+
+
+def check_questions(root):
+    out = []
+    for q in questions(root):
+        blocking = q["adrs"] + [i for i in q["items"] if i.startswith("Q")]
+        if q["open"] and blocking:
+            out.append(_finding(
+                "E-ARCH-OPEN-QUESTION",
+                f"Pregunta abierta sobre {', '.join(blocking)}: «{q['text']}». Impide "
+                "aprobar: respóndela y conviértela en decisión o atributo.",
+                f"{ARCH_DIR}/questions.md"))
+    return out
+
+
+PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_*])_[^_\n]+_(?![A-Za-z0-9_*])")
+
+
+def check_templates(root):
+    """Huecos de plantilla (texto en cursiva) que siguen sin rellenar."""
+    out = []
+    files = [f"{ARCH_DIR}/{name}" for name in SET_FILES] + [a["file"] for a in adrs(root)]
+    for rel in files:
+        text = read_text(Path(root) / rel)
+        if text is None:
+            continue
+        # Las instrucciones de las plantillas van en blockquote, y el codigo en
+        # linea (`_cache_`) no es cursiva: ninguno de los dos es un hueco.
+        holes = [m.group(0) for line in text.splitlines()
+                 if not line.lstrip().startswith(">")
+                 for m in PLACEHOLDER.finditer(re.sub(r"`[^`]*`", " ", line))]
+        if holes:
+            out.append(_finding(
+                "E-ARCH-TEMPLATE",
+                f"{rel} conserva {len(holes)} hueco(s) de plantilla, como {holes[0]}.", rel))
+    return out
+
+
 def analyze(root):
     """Todos los hallazgos de la arquitectura, en orden de artefacto."""
-    findings = check_quality(root) + check_components(root)
+    findings = (check_templates(root) + check_quality(root) + check_components(root)
+                + check_adrs(root) + check_standards(root) + check_references(root)
+                + check_questions(root))
     return {"findings": findings,
             "ok": not any(f["severity"] == "error" for f in findings)}
 
@@ -525,6 +667,14 @@ FINDINGS = {
     "E-QUALITY-NO-MOTIVE": "Atributo de calidad sin objetivo ni restricción que lo motive",
     "E-COMPONENT-NO-RESPONSIBILITY": "Componente sin responsabilidad",
     "E-COMPONENT-CANDIDATE-UNPLACED": "Candidata vigente del backlog sin componente",
+    "E-ADR-INCOMPLETE": "Decisión sin contexto, decisión, alternativas o consecuencias",
+    "E-ADR-NO-MOTIVE": "Decisión sin atributo, objetivo ni restricción que la motive",
+    "E-ADR-ID-DUPLICATE": "Dos archivos de decisión con el mismo número",
+    "E-STANDARD-NO-ADR": "Estándar sin la decisión de la que se deriva",
+    "E-ARCH-REF-UNKNOWN": ("Cita a una decisión, atributo, componente, objetivo o "
+                           "candidata inexistente"),
+    "E-ARCH-OPEN-QUESTION": "Pregunta abierta sobre una decisión o un atributo",
+    "E-ARCH-TEMPLATE": "Hueco de plantilla sin rellenar",
 }
 
 

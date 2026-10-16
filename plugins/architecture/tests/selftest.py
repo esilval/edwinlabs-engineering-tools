@@ -508,6 +508,114 @@ def test_F006_R004_candidata_sin_componente():
     expect(len(h) == 1 and "C2" in h[0]["message"], "componente sin el campo", f"{h}")
 
 
+# ----------------------------------------------------------------- T005
+
+def test_F006_R005_adr_incompleto_o_sin_motivo():
+    base = con_arquitectura(proyecto("r005-coherente"))
+    expect(codigos(base) == set(), "la arquitectura de prueba no tiene ningun hallazgo",
+           f"{architecture.analyze(base)['findings']}")
+
+    p = con_arquitectura(proyecto("r005-incompleto"), adrs={
+        "0001-base-de-datos-unica.md": adr("0001", "Base de datos única", completo=False)})
+    h = con_codigo(p, "E-ADR-INCOMPLETE")
+    expect(len(h) == 1 and "ADR-0001" in h[0]["message"] and "consecuencias" in h[0]["message"]
+           and h[0]["artifact"].endswith("0001-base-de-datos-unica.md"),
+           "un ADR sin consecuencias esta incompleto y lo dice", f"{h}")
+    sin_alternativas = adr("0001", "Base de datos única").replace(
+        "- Una base por componente: sin necesidad hoy.", "")
+    p = con_arquitectura(proyecto("r005-sin-alternativas"),
+                         adrs={"0001-base-de-datos-unica.md": sin_alternativas})
+    h = con_codigo(p, "E-ADR-INCOMPLETE")
+    expect(len(h) == 1 and "alternativas" in h[0]["message"],
+           "un ADR sin alternativas descartadas es un error", f"{h}")
+
+    p = con_arquitectura(proyecto("r005-sin-motivo"), adrs={
+        "0001-base-de-datos-unica.md": adr("0001", "Base de datos única", motivo="—")})
+    h = con_codigo(p, "E-ADR-NO-MOTIVE")
+    expect(len(h) == 1 and "ADR-0001" in h[0]["message"],
+           "un ADR que no cita atributo ni objetivo: decision sin motivo", f"{h}")
+
+    p = con_arquitectura(proyecto("r005-duplicado"), adrs={
+        "0001-base-de-datos-unica.md": adr("0001", "Base de datos única"),
+        "0001-otra.md": adr("0001", "Otra"),
+    })
+    h = con_codigo(p, "E-ADR-ID-DUPLICATE")
+    expect(len(h) == 1 and "ADR-0001" in h[0]["message"], "dos archivos con el 0001", f"{h}")
+
+    for estado in ("Rejected", "Superseded by ADR-0001"):
+        historia = adr("0002", "Historia", estado=estado, motivo="Q9", sustituye="ADR-0042",
+                       completo=False)
+        p = con_arquitectura(proyecto(f"r005-historia-{estado.split()[0].lower()}"), adrs={
+            "0001-base-de-datos-unica.md": adr("0001", "Base de datos única"),
+            "0002-historia.md": historia})
+        expect(codigos(p) == set(),
+               f"una decision {estado.split()[0]} queda como historia: ni forma ni citas",
+               f"{architecture.analyze(p)['findings']}")
+
+    cuerpo = adr("0001", "Base de datos única").replace(
+        "Las ventas del día se consultan al cerrar.",
+        "Las ventas del día se consultan al cerrar. Revisa ADR-0042 y `_cache_`.")
+    p = con_arquitectura(proyecto("r005-cuerpo"),
+                         adrs={"0001-base-de-datos-unica.md": cuerpo})
+    expect(any("ADR-0042" in f["message"] for f in con_codigo(p, "E-ARCH-REF-UNKNOWN"))
+           and "E-ARCH-TEMPLATE" not in codigos(p),
+           "un ADR-NNNN inexistente en el cuerpo es error; `_cache_` en codigo no es hueco")
+
+
+def test_F006_R006_estandar_sin_decision():
+    sin = ARQ_STANDARDS.replace("- **Decisión:** ADR-0001", "- **Decisión:** —")
+    p = con_arquitectura(proyecto("r006-sin-decision"), standards=sin)
+    h = con_codigo(p, "E-STANDARD-NO-ADR")
+    expect(len(h) == 1 and "S1" in h[0]["message"] and h[0]["severity"] == "error",
+           "un estandar sin decision de origen es un error", f"{h}")
+
+
+def test_F006_R007_citas_inexistentes():
+    comps = ARQ_COMPONENTS.replace("- **Candidatas:** B02", "- **Candidatas:** B02, B09")
+    stds = ARQ_STANDARDS.replace("- **Decisión:** ADR-0001", "- **Decisión:** ADR-0009")
+    p = con_arquitectura(proyecto("r007-citas"), components=comps, standards=stds)
+    mensajes = [f["message"] for f in con_codigo(p, "E-ARCH-REF-UNKNOWN")]
+    expect(any("B09" in m and "components.md" in m for m in mensajes),
+           "un componente que aloja B09, inexistente: error que la nombra", f"{mensajes}")
+    expect(any("ADR-0009" in m and "standards.md" in m for m in mensajes),
+           "un estandar que cita ADR-0009, inexistente: error que la nombra", f"{mensajes}")
+    detalle = ARQ_STANDARDS.replace("C2 → C1", "C2 → C7")
+    p = con_arquitectura(proyecto("r007-componente"), standards=detalle)
+    expect(any("C7" in f["message"] for f in con_codigo(p, "E-ARCH-REF-UNKNOWN")),
+           "un estandar que cita un componente inexistente tambien")
+
+
+def test_F006_R009_pregunta_abierta_bloquea():
+    abierta = ARQ_QUESTIONS + "\n- [ ] (ADR-0001) ¿La base de datos va en la nube del cliente?\n"
+    p = con_arquitectura(proyecto("r009-abierta"), questions=abierta)
+    h = con_codigo(p, "E-ARCH-OPEN-QUESTION")
+    expect(len(h) == 1 and "ADR-0001" in h[0]["message"] and h[0]["severity"] == "error",
+           "una pregunta abierta sobre ADR-0001 es un error que la nombra", f"{h}")
+    sobre_atributo = ARQ_QUESTIONS + "\n- [ ] (Q1) ¿Cuántas ventas tiene un día malo?\n"
+    p = con_arquitectura(proyecto("r009-atributo"), questions=sobre_atributo)
+    expect(len(con_codigo(p, "E-ARCH-OPEN-QUESTION")) == 1,
+           "tambien bloquea una pregunta abierta sobre un atributo")
+    p = con_arquitectura(proyecto("r009-respondida"))
+    expect("E-ARCH-OPEN-QUESTION" not in codigos(p),
+           "la pregunta respondida de la base no bloquea")
+
+
+def test_F006_R005_huecos_de_plantilla():
+    p = con_producto(proyecto("r005-plantilla"))
+    run(p, "init")
+    nuevo = (PLUGIN / "templates" / "adr.md").read_text(encoding="utf-8")
+    (p / "architecture" / "adr" / "0001-x.md").write_text(
+        nuevo.replace("{{NUMBER}}", "0001").replace("{{TITLE}}", "X")
+        .replace("{{DATE}}", "2026-10-16"), encoding="utf-8")
+    artefactos = {f["artifact"] for f in con_codigo(p, "E-ARCH-TEMPLATE")}
+    expect({"architecture/quality.md", "architecture/components.md", "architecture/standards.md",
+            "architecture/adr/0001-x.md"} <= artefactos,
+           "las plantillas recien copiadas tienen huecos que la comprobacion senala",
+           f"{artefactos}")
+    expect("architecture/questions.md" not in artefactos,
+           "questions.md recien creado no tiene huecos")
+
+
 # --------------------------------------------------------------------------
 
 def cobertura_de_codigos():
