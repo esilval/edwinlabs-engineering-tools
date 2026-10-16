@@ -36,7 +36,7 @@ dependen entre sí, pero comparten el selftest: se ejecutan una detrás de otra.
 
 ### T002 — `next-req` a partir de los requisitos declarados · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd.py`, `plugins/sdd/tests/selftest.py`

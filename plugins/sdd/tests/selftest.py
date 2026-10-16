@@ -910,6 +910,32 @@ def test_F003_R004_obsoleto_no_da_error_en_tarea_cerrada(base):
            f"{hallazgos}")
 
 
+def siguiente_id(base, nombre, spec):
+    return run("next-req", cwd=repo_con_feature(base, nombre, spec=spec)).stdout.strip()
+
+
+def test_F003_R003_siguiente_id_ignora_menciones(base):
+    print("\nF003 · R003: el siguiente ID sale de los requisitos declarados")
+    filas = "".join(f"| R00{n} | MUST | CUANDO X, el sistema DEBERA Y{n}. |\n"
+                    for n in range(1, 7))
+    spec = ("## Problema\n\nLa feature anterior dejo R007 y R009 sin cubrir.\n\n"
+            "| ID | Prioridad | Requisito |\n| - | - | - |\n" + filas
+            + "\nComo en R009 de la otra feature.\n")
+    obtenido = siguiente_id(base, "f003-r003-menciones", spec)
+    expect(obtenido == "R007", "las menciones R007 y R009 en el texto no ocupan ID", obtenido)
+
+    spec = ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
+            + "".join(f"| R00{n} | MUST | CUANDO X, el sistema DEBERA Y{n}. |\n"
+                      for n in range(1, 5))
+            + "| R005 | OBSOLETO | CUANDO X, el sistema DEBERA Y5. |\n")
+    obtenido = siguiente_id(base, "f003-r003-obsoleto", spec)
+    expect(obtenido == "R006", "el ultimo declarado es obsoleto y tambien cuenta", obtenido)
+
+    spec = "".join(f"## R00{n} — algo\n\nEl sistema DEBERA hacer {n}.\n\n" for n in range(1, 4))
+    obtenido = siguiente_id(base, "f003-r003-encabezados", spec)
+    expect(obtenido == "R004", "una spec antigua con encabezados no recicla IDs", obtenido)
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -930,6 +956,7 @@ def main():
         test_F002_R005_ejecucion_bloquea(base)
         test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base)
         test_F003_R004_obsoleto_no_da_error_en_tarea_cerrada(base)
+        test_F003_R003_siguiente_id_ignora_menciones(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

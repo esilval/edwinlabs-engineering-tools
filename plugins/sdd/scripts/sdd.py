@@ -879,15 +879,19 @@ def _approve(args):
 
 
 def cmd_next_req(_args):
-    """Siguiente ID libre. Cuenta los obsoletos: un ID no se recicla nunca."""
+    """
+    Siguiente ID libre. Cuenta los obsoletos: un ID no se recicla nunca. Solo
+    cuentan los requisitos declarados, los mismos que reconoce la
+    trazabilidad: una mencion en el texto (un requisito de otra feature) no
+    ocupa un ID.
+    """
     root = project_root()
     feature = resolve_feature(root)
     if feature is None:
         print("No hay una feature activa.", file=sys.stderr)
         return 1
-    text = (feature / "spec.md").read_text(encoding="utf-8", errors="replace") \
-        if (feature / "spec.md").is_file() else ""
-    used = [int(n) for n in _trace().REQ_ID.findall(text)]
+    reqs = _trace().parse_spec(feature / "spec.md")["requirements"]
+    used = [int(r["id"][1:]) for r in reqs]
     print(f"R{(max(used) if used else 0) + 1:03d}")
     return 0
 
