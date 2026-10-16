@@ -33,6 +33,7 @@ dependencias externas: el plugin no instala nada.
 ```
 /sdd:constitution              # una vez por repositorio
 /sdd:specify <qué construir>   # crea specs/NNN-slug/spec.md
+/sdd:specify B03               # o desde una candidata del backlog de discovery
 /sdd:clarify                   # cierra las preguntas abiertas
 /sdd:approve                   # tú apruebas la siguiente fase pendiente (aquí, spec)
 /sdd:plan                      # decisiones de arquitectura
@@ -59,6 +60,47 @@ specs/
 ├── current          slug de la feature activa
 └── config.json      opcional
 ```
+
+## Desde discovery
+
+Si el proyecto pasó por el plugin `discovery`, cada candidata del backlog
+aprobado se convierte en una feature con `/sdd:specify B03`. El script
+(`sdd.py new B03`) crea la spec con lo que la candidata ya dice:
+
+- **Problema:** el de la candidata.
+- **Contexto:** los objetivos del brief que persigue y sus secciones de origen.
+- **Alcance:** en Dentro, el resultado observable y el alcance; en Fuera, lo
+  que la candidata excluye.
+- **Cabecera:** `| Origen | B03 · G2 · D2§4.2 |`, con la candidata, los
+  objetivos y las secciones, en ese orden. Un grupo vacío se escribe `—`.
+
+Requisitos y criterios los sigue redactando `/sdd:specify`, que recibe del
+script el contexto que debe leer: el brief, los objetivos y el archivo de cada
+sección de origen.
+
+No se crea nada, con salida 1 y el motivo, si:
+
+- `product/brief.md` o `product/backlog.md` faltan (los crea
+  `/discovery:decompose`), no están aprobados o cambiaron después de
+  aprobarse (los aprueba el usuario con `/discovery:approve`);
+- la candidata no existe o está descartada;
+- la candidata ya tiene feature, es decir, alguna spec la lleva como primer
+  elemento de su fila `Origen`.
+
+Se crea, pero con un aviso, si la candidata depende de otra que aún no tiene
+feature (las descartadas no cuentan), o si una sección de origen está en un documento que ya no existe en
+`product/sources/`.
+
+Sin `product/backlog.md`, o con una descripción que no es solo un ID de
+candidata, `/sdd:specify` funciona exactamente igual que siempre. El backlog
+aprobado no se modifica nunca: qué candidatas tienen feature se lee de las
+filas `Origen`.
+
+**Contrato con `discovery`.** `sdd` no importa código de `discovery`: lee sus
+archivos con `scripts/sdd_product.py`, que copia de `discovery.py` el formato
+de candidatas y objetivos y el algoritmo de huella de la aprobación. Si
+`discovery` cambia ese formato o esa huella, la prueba de contrato del selftest
+de `sdd`, que aprueba un producto con el `discovery.py` real, falla en CI.
 
 ## La compuerta
 

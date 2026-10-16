@@ -1198,6 +1198,469 @@ def test_F004_R004_variable_de_entorno_manda(base):
            "con la variable en un proyecto y el cwd en otro, manda la variable", r.stdout)
 
 
+# ------------------------------------------- feature 005: traspaso desde discovery
+# Un producto coherente en el formato de discovery (copia de los fixtures de su
+# selftest): sdd lee esos archivos, no importa codigo de discovery.
+
+DISCOVERY = PLUGIN.parent / "discovery" / "scripts" / "discovery.py"
+
+PRODUCTO_DOC = """# Visión
+
+## Problema
+
+Los comercios no saben cuánto venden cada día.
+
+## Usuarios
+
+Dueños de comercios pequeños.
+
+## Informes
+
+Un resumen diario de ventas.
+
+## Exportación
+
+Bajar los movimientos a una hoja de cálculo.
+"""
+
+PRODUCTO_BRIEF = """# Brief del producto
+
+| Campo  | Valor |
+| ------ | ----- |
+| Estado | Draft |
+
+## Objetivos
+
+### G1 — Que el comercio sepa cuánto vende
+
+- **Origen:** D1§1, D1§2, D1§3
+- **Descripción:** el dueño ve sus ventas del día sin calcularlas.
+
+### G2 — Que el comercio use sus datos fuera
+
+- **Origen:** D1§4
+- **Descripción:** los movimientos salen a otras herramientas.
+
+## Usuarios
+
+- Dueños de comercios pequeños (D1§2)
+
+## Glosario
+
+- **Movimiento:** una venta o una devolución (D1§1)
+
+## Restricciones
+
+- Ninguna en los documentos.
+
+## Invariantes propuestos para la constitución
+
+- Ninguno en los documentos.
+
+## Secciones descartadas
+
+- Ninguna.
+
+## Preguntas
+
+- [x] (D1§3; G1) ¿Diario o semanal?
+  - **Respuesta:** diario.
+"""
+
+PRODUCTO_BACKLOG = """# Backlog del producto
+
+| Campo  | Valor |
+| ------ | ----- |
+| Estado | Draft |
+
+## Candidatas
+
+### B01 — Resumen diario de ventas
+
+- **Estado:** candidata
+- **Objetivos:** G1
+- **Origen:** D1§1, D1§3
+- **Problema:** el dueño no sabe cuánto vendió hoy, cada día.
+- **Resultado observable:** el dueño ve el total del día al cerrar.
+- **Dentro:** total del día y número de ventas.
+- **Fuera:** comparativas entre días.
+- **Depende de:** —
+
+### B02 — Exportar movimientos
+
+- **Estado:** candidata
+- **Objetivos:** G2
+- **Origen:** D1§4
+- **Problema:** el dueño copia a mano sus ventas para su gestor.
+- **Resultado observable:** el dueño descarga sus movimientos en un archivo.
+- **Dentro:** movimientos de un rango de fechas.
+- **Fuera:** envío automático al gestor.
+- **Depende de:** B01
+
+### B03 — Envío automático al gestor
+
+- **Estado:** descartada (fuera del alcance acordado)
+- **Objetivos:** G2
+- **Origen:** D1§4
+- **Problema:** el gestor pide los datos cada mes.
+- **Resultado observable:** el gestor recibe los movimientos sin pedirlos.
+- **Dentro:** —
+- **Fuera:** —
+- **Depende de:** B02
+"""
+
+
+def sdd_product():
+    if str(PLUGIN / "scripts") not in sys.path:
+        sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_product as modulo
+    return modulo
+
+
+def run_discovery(cwd, *args):
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(cwd),
+               CLAUDE_PLUGIN_ROOT=str(DISCOVERY.parent.parent))
+    return subprocess.run([sys.executable, str(DISCOVERY), *args], capture_output=True,
+                          text=True, cwd=str(cwd), env=env, timeout=60)
+
+
+def test_F005_R003_contrato_con_discovery(base):
+    print("\nF005 · R003: la huella de sdd_product coincide con la de discovery")
+    if not DISCOVERY.is_file():
+        print("  (sin plugins/discovery en el repositorio: prueba de contrato omitida)")
+        return
+    sp = sdd_product()
+    p = base / "f005-contrato"
+    (p / "entrada").mkdir(parents=True)
+    (p / "entrada" / "vision.md").write_text(PRODUCTO_DOC, encoding="utf-8")
+    r = run_discovery(p, "ingest", str(p / "entrada" / "vision.md"))
+    expect(r.returncode == 0, "discovery ingiere el documento de prueba", r.stdout + r.stderr)
+    expect(sp.product_approval(p) == {"brief.md": "missing", "backlog.md": "missing"}
+           and "product/brief.md no existe" in sp.approval_problems(p)[0],
+           "sin brief ni backlog: los dos faltan", f"{sp.approval_problems(p)}")
+    (p / "product" / "brief.md").write_text(PRODUCTO_BRIEF, encoding="utf-8")
+    (p / "product" / "backlog.md").write_text(PRODUCTO_BACKLOG, encoding="utf-8")
+    expect(sp.product_approval(p) == {"brief.md": "draft", "backlog.md": "draft"},
+           "antes de aprobar: los dos en draft", f"{sp.product_approval(p)}")
+
+    r = run_discovery(p, "approve")
+    expect(r.returncode == 0, "discovery aprueba el producto de prueba", r.stdout + r.stderr)
+    expect(sp.product_approval(p) == {"brief.md": "approved", "backlog.md": "approved"},
+           "lo que discovery aprueba, sdd_product lo da por aprobado",
+           f"{sp.product_approval(p)}")
+
+    def aviso_de_discovery():
+        r = run_discovery(p, "check", "--json")
+        return [f["message"] for f in json.loads(r.stdout)["findings"]
+                if f["code"] == "W-PRODUCT-NOT-APPROVED"]
+
+    brief = p / "product" / "brief.md"
+    aprobado = brief.read_text(encoding="utf-8")
+    reformateado = aprobado.replace("\n## Usuarios", "\n\n\n## Usuarios   ")
+    brief.write_text(reformateado, encoding="utf-8")
+    expect(reformateado != aprobado and sp.product_approval(p)["brief.md"] == "approved"
+           and not aviso_de_discovery(),
+           "reformatear sin cambiar el contenido: aprobado para los dos plugins",
+           f"{aviso_de_discovery()}")
+
+    brief.write_text(sp.STATUS_ROW.sub(r"\1Approved\3", aprobado, count=1), encoding="utf-8")
+    expect(sp.product_approval(p)["brief.md"] == "draft",
+           "un Approved sin huella no cuenta: draft, como en discovery")
+
+    brief.write_text(aprobado.replace("sin calcularlas", "sin calcularlas a mano"),
+                     encoding="utf-8")
+    codigos = {f["code"]: f["message"] for f in
+               json.loads(run_discovery(p, "check", "--json").stdout)["findings"]}
+    expect(sp.product_approval(p)["brief.md"] == "stale"
+           and "cambió" in codigos.get("W-PRODUCT-NOT-APPROVED", ""),
+           "un brief editado tras aprobarse: cambiado para los dos plugins", f"{codigos}")
+    problemas = sp.approval_problems(p)
+    expect(len(problemas) == 1 and problemas[0].startswith(
+               "product/brief.md cambió después de aprobarse")
+           and "/discovery:approve" in problemas[0],
+           "el motivo nombra el artefacto y lo que le pasa", f"{sp.approval_problems(p)}")
+
+
+PRODUCTO_FUENTE = """# D1 — Visión
+
+| Campo | Valor |
+| ----- | ----- |
+| Documento | D1 |
+| Secciones | 1, 2, 3, 4 |
+
+<!-- discovery:contenido -->
+# Visión
+
+## 1 Problema
+
+Los comercios no saben cuánto venden cada día.
+
+## 2 Usuarios
+
+Dueños de comercios pequeños.
+
+## 3 Informes
+
+Un resumen diario de ventas.
+
+## 4 Exportación
+
+Bajar los movimientos a una hoja de cálculo.
+
+```
+## 4.1 Encabezado de mentira dentro de un bloque de código
+```
+
+### 4.1 Formatos
+
+CSV y hoja de cálculo.
+"""
+
+
+def sella(path):
+    """Aprueba un artefacto de discovery con la huella de sdd_product, como /discovery:approve."""
+    sp = sdd_product()
+    texto = path.read_text(encoding="utf-8")
+    path.write_text(sp.STATUS_ROW.sub(rf"\g<1>Approved · {sp.content_digest(texto)}\3",
+                                      texto, count=1), encoding="utf-8")
+
+
+def con_producto(p, aprobado=True, backlog=PRODUCTO_BACKLOG):
+    """Pone en p un product/ de discovery: brief, backlog y D1 ingerido."""
+    (p / "product" / "sources").mkdir(parents=True)
+    (p / "product" / "sources" / "D1-vision.md").write_text(PRODUCTO_FUENTE, encoding="utf-8")
+    (p / "product" / "brief.md").write_text(PRODUCTO_BRIEF, encoding="utf-8")
+    (p / "product" / "backlog.md").write_text(backlog, encoding="utf-8")
+    if aprobado:
+        sella(p / "product" / "brief.md")
+        sella(p / "product" / "backlog.md")
+    return p
+
+
+def test_F005_R004_lee_candidatas_y_descartadas(base):
+    print("\nF005 · R004: sdd_product lee las candidatas del backlog")
+    sp = sdd_product()
+    p = con_producto(base / "f005-r004-lectura")
+    b02 = sp.candidate(p, "b02")
+    expect(b02 is not None and b02["id"] == "B02" and b02["title"] == "Exportar movimientos"
+           and b02["state"] == "candidata"
+           and b02["fields"]["problema"] == "el dueño copia a mano sus ventas para su gestor."
+           and b02["fields"]["fuera"] == "envío automático al gestor.",
+           "lee B02 (tambien como b02) con su titulo, estado y campos", f"{b02}")
+    expect(sp.candidate(p, "B03")["state"] == "descartada",
+           "B03 esta descartada aunque el Estado lleve un motivo detras")
+    expect(sp.candidate(p, "B09") is None, "B09 no existe: None")
+    expect(sp.refs(b02["fields"]["depende de"])["candidates"] == ["B01"],
+           "las dependencias se leen como citas a candidatas")
+
+
+def test_F005_R006_resuelve_objetivos_y_fuentes(base):
+    print("\nF005 · R006: sdd_product resuelve objetivos y secciones de origen")
+    sp = sdd_product()
+    p = con_producto(base / "f005-r006-lectura")
+    g2 = sp.goals(p).get("G2")
+    expect(g2 == {"id": "G2", "title": "Que el comercio use sus datos fuera",
+                  "description": "los movimientos salen a otras herramientas."},
+           "G2 con su titulo y su descripcion", f"{g2}")
+    fuente = sp.source_section(p, "D1§4")
+    expect(fuente == {"ref": "D1§4", "file": "product/sources/D1-vision.md", "section": "4",
+                      "title": "Exportación"},
+           "D1§4 se resuelve a su archivo, su numero y su titulo", f"{fuente}")
+    sub = sp.source_section(p, "D1§4.1")
+    expect(sub == {"ref": "D1§4.1", "file": "product/sources/D1-vision.md", "section": "4.1",
+                   "title": "Formatos"},
+           "una subseccion (D1§4.1) se resuelve igual, sin tomar la de un bloque de codigo",
+           f"{sub}")
+    perdida = sp.source_section(p, "D7§2")
+    expect(perdida["file"] is None and perdida["title"] is None,
+           "una cita a un documento que no esta: sin archivo, sin excepcion", f"{perdida}")
+    expect(sp.refs("D1§1, D1§3 y G1")["sections"] == ["D1§1", "D1§3"],
+           "las secciones se leen en orden de aparicion")
+
+
+def specs_creadas(p):
+    return sorted(x.name for x in (p / "specs").iterdir()) if (p / "specs").is_dir() else []
+
+
+def test_F005_R001_crea_la_spec_desde_la_candidata(base):
+    print("\nF005 · R001: /sdd:specify B02 crea la spec desde la candidata")
+    for n, arg in enumerate(("B02", "b02")):
+        p = con_producto(base / f"f005-r001-{n}")  # macOS no distingue B02 de b02
+        r = run("new", [arg], cwd=p)
+        creada = json.loads(r.stdout)["feature"] if r.returncode == 0 else None
+        expect(creada == "001-exportar-movimientos",
+               f"new {arg}: el nombre sale del titulo de la candidata", r.stdout + r.stderr)
+        if not creada:
+            continue
+        spec = (p / "specs" / creada / "spec.md").read_text(encoding="utf-8")
+        expect(spec.startswith("# Spec: Exportar movimientos")
+               and "## Problema\n\nel dueño copia a mano sus ventas para su gestor." in spec
+               and "- el dueño descarga sus movimientos en un archivo." in spec
+               and "- movimientos de un rango de fechas." in spec
+               and "### Fuera (non-goals)\n\n- envío automático al gestor." in spec,
+               f"new {arg}: problema, resultado observable, Dentro y Fuera de la candidata")
+        expect("G2 — Que el comercio use sus datos fuera" in spec and "D1§4" in spec,
+               f"new {arg}: el Contexto cita el objetivo y la seccion de origen")
+
+
+def test_F005_R002_origen_en_la_cabecera(base):
+    print("\nF005 · R002: la cabecera registra el origen")
+    p = con_producto(base / "f005-r002")
+    run("new", ["B02"], cwd=p)
+    spec = (p / "specs" / "001-exportar-movimientos" / "spec.md").read_text(encoding="utf-8")
+    cabecera = spec.split("\n## ", 1)[0]
+    expect("| Issue  | —            |\n| Origen | B02 · G2 · D1§4 |\n" in cabecera,
+           "| Origen | B02 · G2 · D1§4 | tras la fila Issue", cabecera)
+    p = con_producto(base / "f005-r002-varios")
+    run("new", ["B01"], cwd=p)
+    spec = next((p / "specs").iterdir()) / "spec.md"
+    expect("| Origen | B01 · G1 · D1§1, D1§3 |" in spec.read_text(encoding="utf-8"),
+           "varias secciones, separadas por comas en su grupo")
+
+
+def niega(p, arg, *fragmentos):
+    """new arg sale con 1, no crea ninguna feature ni mueve .sdd/current, y el
+    motivo contiene los fragmentos."""
+    actual = (p / ".sdd" / "current").read_text() if (p / ".sdd" / "current").is_file() else None
+    r = run("new", [arg], cwd=p)
+    despues = (p / ".sdd" / "current").read_text() if (p / ".sdd" / "current").is_file() else None
+    return (r.returncode == 1 and not specs_creadas(p) and actual == despues
+            and all(f in r.stderr for f in fragmentos)), r.stderr
+
+
+def test_F005_R003_producto_sin_aprobar(base):
+    print("\nF005 · R003: sin el producto aprobado no se crea la feature")
+    p = con_producto(base / "f005-r003-draft", aprobado=False)
+    ok, err = niega(p, "B02", "product/backlog.md no está aprobado", "/discovery:approve")
+    expect(ok, "backlog en Draft: no se crea y se dice que lo aprueba /discovery:approve", err)
+
+    p = con_producto(base / "f005-r003-cambiado")
+    brief = p / "product" / "brief.md"
+    brief.write_text(brief.read_text(encoding="utf-8").replace("sin calcularlas", "al vuelo"),
+                     encoding="utf-8")
+    ok, err = niega(p, "B02", "product/brief.md cambió después de aprobarse")
+    expect(ok, "brief editado tras aprobarse: no se crea y se dice que cambio", err)
+
+    p = con_producto(base / "f005-r003-sin-brief")
+    (p / "product" / "brief.md").unlink()
+    ok, err = niega(p, "B02", "product/brief.md no existe")
+    expect(ok, "backlog sin brief: no se crea y se dice que falta el brief", err)
+
+
+def test_F005_R004_candidata_inexistente_o_descartada(base):
+    print("\nF005 · R004: candidata inexistente o descartada")
+    p = con_producto(base / "f005-r004-b09")
+    ok, err = niega(p, "B09", "B09 no existe")
+    expect(ok, "B09 no existe: no se crea y se dice", err)
+    p = con_producto(base / "f005-r004-b03")
+    ok, err = niega(p, "b03", "B03 está descartada")
+    expect(ok, "B03 descartada: no se crea y se dice", err)
+
+
+def test_F005_R007_sin_backlog_o_sin_id(base):
+    print("\nF005 · R007: sin backlog, o sin un ID, como hasta ahora")
+    p = base / "f005-r007-sin-backlog"
+    p.mkdir()
+    r = run("new", ["B03"], cwd=p)
+    expect(r.returncode == 0 and json.loads(r.stdout)["feature"] == "001-b03",
+           "sin product/backlog.md, B03 es una descripcion mas", r.stdout + r.stderr)
+    spec = (p / "specs" / "001-b03" / "spec.md").read_text(encoding="utf-8")
+    expect("| Origen |" not in spec and spec.startswith("# Spec: B03"), "sin origen")
+
+    p = con_producto(base / "f005-r007-descripcion")
+    r = run("new", ["login con Google"], cwd=p)
+    creada = json.loads(r.stdout)["feature"] if r.returncode == 0 else ""
+    spec = (p / "specs" / creada / "spec.md").read_text(encoding="utf-8") if creada else ""
+    plantilla = (PLUGIN / "templates" / "spec.md").read_text(encoding="utf-8")
+    esperada = (plantilla.replace("{{ID}}", creada).replace("{{TITLE}}", "login con Google")
+                .replace("{{DATE}}", spec.split("| Fecha  | ")[1].split(" ")[0] if spec else ""))
+    expect(creada == "001-login-google" and spec == esperada,
+           "con backlog y una descripcion normal: la plantilla de siempre, sin origen",
+           r.stdout + r.stderr)
+
+
+def test_F005_R008_specs_sin_origen_igual(base):
+    print("\nF005 · R008: una spec sin origen se trata igual con o sin producto al lado")
+    salidas = {}
+    for nombre, producto in (("f005-r008-solo", False), ("f005-r008-con-producto", True)):
+        p = repo_con_feature(base, nombre, spec=SPEC_LISTA)
+        if producto:
+            con_producto(p)
+        quita = lambda s, p=p: s.replace(str(p), "<raiz>")  # noqa: E731
+        salidas[nombre] = (
+            quita(run("status", cwd=p).stdout),
+            json.loads(run("trace", ["--json"], cwd=p).stdout)["requirements"],
+            quita(run("approve", ["--skill"], cwd=p).stdout),
+            (p / "specs" / "001-x" / "spec.md").read_text(encoding="utf-8"),
+        )
+    a, b = salidas["f005-r008-solo"], salidas["f005-r008-con-producto"]
+    for i, que in enumerate(("status", "trace", "approve", "spec aprobada")):
+        expect(a[i] == b[i], f"{que}: identico con un product/ aprobado al lado",
+               f"{a[i]!r} vs {b[i]!r}"[:300])
+
+
+def test_F005_R005_candidata_con_feature(base):
+    print("\nF005 · R005: una candidata con feature no se especifica dos veces")
+    p = con_producto(base / "f005-r005")
+    run("new", ["B02"], cwd=p)
+    antes = specs_creadas(p)
+    actual = (p / ".sdd" / "current").read_text()
+    for arg in ("B02", "b02"):
+        r = run("new", [arg], cwd=p)
+        expect(r.returncode == 1 and "001-exportar-movimientos" in r.stderr
+               and specs_creadas(p) == antes and (p / ".sdd" / "current").read_text() == actual,
+               f"new {arg} otra vez: no se crea y se nombra la existente", r.stderr)
+
+
+def test_F005_R006_contexto_en_el_json(base):
+    print("\nF005 · R006: el JSON de new trae el contexto para redactar")
+    p = con_producto(base / "f005-r006-json")
+    salida = json.loads(run("new", ["B02"], cwd=p).stdout)
+    expect(salida.get("origin") == {"candidate": "B02", "goals": ["G2"], "sections": ["D1§4"]},
+           "origin: candidata, objetivos y secciones", f"{salida.get('origin')}")
+    ctx = salida.get("context") or {}
+    expect(ctx.get("brief") == "product/brief.md"
+           and ctx.get("goals") == [{"id": "G2", "title": "Que el comercio use sus datos fuera",
+                                     "description": "los movimientos salen a otras herramientas."}]
+           and ctx.get("sources") == [{"ref": "D1§4", "file": "product/sources/D1-vision.md",
+                                       "section": "4", "title": "Exportación"}],
+           "context: el brief, G2 con su titulo y D1§4 con su archivo y su seccion", f"{ctx}")
+
+    p = base / "f005-r006-normal"
+    p.mkdir()
+    salida = json.loads(run("new", ["login con Google"], cwd=p).stdout)
+    expect(sorted(salida) == ["dir", "feature", "next", "spec"],
+           "sin traspaso, el JSON de siempre", f"{sorted(salida)}")
+
+
+def test_F005_R009_dependencia_sin_feature(base):
+    print("\nF005 · R009: una dependencia sin feature se avisa sin impedir")
+    p = con_producto(base / "f005-r009")
+    r = run("new", ["B02"], cwd=p)
+    avisos = json.loads(r.stdout).get("warnings", []) if r.returncode == 0 else None
+    expect(r.returncode == 0 and avisos and len(avisos) == 1 and "B01" in avisos[0],
+           "B02 depende de B01 sin feature: se crea y se avisa de B01", r.stdout + r.stderr)
+
+    p = con_producto(base / "f005-r009-hecha")
+    run("new", ["B01"], cwd=p)
+    r = run("new", ["B02"], cwd=p)
+    expect(r.returncode == 0 and json.loads(r.stdout).get("warnings") == [],
+           "con B01 ya especificada, sin avisos", r.stdout + r.stderr)
+
+
+def test_F005_R006_seccion_que_no_se_puede_leer(base):
+    print("\nF005 · R006: una seccion de origen que ya no esta se indica como tal")
+    perdida = PRODUCTO_BACKLOG.replace("- **Origen:** D1§1, D1§3", "- **Origen:** D1§1, D7§2")
+    p = con_producto(base / "f005-r006-fuente", backlog=perdida)
+    r = run("new", ["B01"], cwd=p)
+    salida = json.loads(r.stdout) if r.returncode == 0 else {}
+    fuentes = {s["ref"]: s["file"] for s in salida.get("context", {}).get("sources", [])}
+    expect(fuentes == {"D1§1": "product/sources/D1-vision.md", "D7§2": None}
+           and any("D7§2" in a for a in salida.get("warnings", [])),
+           "D7§2 sin archivo en el contexto y con aviso; la feature se crea",
+           r.stdout + r.stderr)
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -1228,6 +1691,19 @@ def main():
         test_F004_R001_raiz_desde_subdirectorio(base)
         test_F004_R003_sin_datos_usa_el_directorio_actual(base)
         test_F004_R004_variable_de_entorno_manda(base)
+        test_F005_R003_contrato_con_discovery(base)
+        test_F005_R004_lee_candidatas_y_descartadas(base)
+        test_F005_R006_resuelve_objetivos_y_fuentes(base)
+        test_F005_R001_crea_la_spec_desde_la_candidata(base)
+        test_F005_R002_origen_en_la_cabecera(base)
+        test_F005_R003_producto_sin_aprobar(base)
+        test_F005_R004_candidata_inexistente_o_descartada(base)
+        test_F005_R007_sin_backlog_o_sin_id(base)
+        test_F005_R008_specs_sin_origen_igual(base)
+        test_F005_R005_candidata_con_feature(base)
+        test_F005_R006_contexto_en_el_json(base)
+        test_F005_R009_dependencia_sin_feature(base)
+        test_F005_R006_seccion_que_no_se_puede_leer(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

@@ -25,6 +25,20 @@ Descripción de la feature: `$ARGUMENTS`
    plantilla, y la marca como feature activa. **No crees el directorio a mano**:
    la numeración y el puntero de feature activa son responsabilidad del script.
 
+   **Traspaso desde `discovery`.** Si la descripción es el ID de una candidata
+   del backlog (`B03`) y existe `product/backlog.md`, el script crea la feature
+   desde esa candidata:
+   - Si sale con código 1, muestra al usuario el motivo tal cual y detente: el
+     script ya dice qué falta y cómo resolverlo. No crees nada a mano ni lo
+     intentes con otra descripción.
+   - Si el JSON trae `origin`, la spec ya tiene Problema, Contexto, Alcance y la
+     fila `Origen`, tomados del producto aprobado. Lee lo que indica `context`:
+     el brief (`brief`), los objetivos (`goals`) y cada sección de origen en su
+     archivo (`sources`: `file` y `section`). Parte de esas secciones: matízalas
+     si hace falta, pero no las reescribas desde cero ni toques la fila `Origen`.
+   - Si trae `warnings`, enséñaselos al usuario al terminar: dependencias
+     sin feature o secciones cuyo documento ya no está en `product/sources/`.
+
 3. Lee `specs/constitution.md` si existe. Es una restricción, no una sugerencia.
 
 4. Explora el repositorio lo justo para entender el contexto: dónde vivirá el
