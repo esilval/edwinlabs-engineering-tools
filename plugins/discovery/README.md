@@ -30,8 +30,12 @@ usan `scripts/discovery.py`, que también se puede llamar a mano:
 | `approve [--skill]` | Aprueba brief y backlog | 0, o 1 si se niega; con `--skill`, siempre 0 |
 | `guard`, `audit` | Hooks de la aprobación (leen JSON por stdin) | — |
 
-La raíz del proyecto sale de `CLAUDE_PROJECT_DIR` o, si no está, del
-directorio de trabajo.
+La raíz del proyecto sale de `CLAUDE_PROJECT_DIR`, que se usa tal cual. Si no
+está (la inyección de una skill no la recibe), se sube desde el directorio de
+trabajo hasta el primero que contiene `product/`, sin salir del repositorio git
+(se detiene en el primer `.git`). Si no lo encuentra, se usa el directorio de
+trabajo. Así `/discovery:approve` funciona aunque la sesión esté dentro de
+`product/sources/`.
 
 ## Artefactos
 
@@ -129,8 +133,12 @@ Origen de un objetivo o de una candidata viva, o desde los descartes.
 ejecuta el script por inyección `` !`…` ``, fuera de la herramienta Bash.
 
 - Un hook `PreToolUse` sobre `Write|Edit|Bash` deniega cualquier escritura que
-  apruebe el brief o el backlog, y cualquier comando que llame a
-  `discovery.py approve`. Nunca devuelve `allow`.
+  apruebe el brief o el backlog, y cualquier comando que **ejecute**
+  `discovery.py approve`: directamente, encadenado (`&&`, `;`) o dentro de una
+  sustitución `$(…)` o con comillas invertidas que se ejecute. Mencionarlo no
+  bloquea: un mensaje de commit, la descripción de un PR, un `grep` entre
+  comillas simples o el cuerpo de un heredoc son texto. Si el comando no se
+  puede analizar, se busca la orden en su texto. Nunca devuelve `allow`.
 - Un hook `PostToolUse` sobre Bash restaura el Estado si un comando opaco lo
   cambió.
 - Si el brief o el backlog cambian después de aprobarse, dejan de estar
@@ -139,9 +147,13 @@ ejecuta el script por inyección `` !`…` ``, fuera de la herramienta Bash.
 
 Límites conocidos:
 
-- El guard deniega cualquier comando que **mencione** `discovery.py approve`,
-  también un `grep` que lo busque. Es el mismo criterio que usa `sdd`; el
-  mensaje documenta el escape.
+- El guard no ve una aprobación lanzada por un script, `bash -c "…"` o una
+  tubería a `sh`: eso lo revierte la auditoría. Un `\$(…)` escapado fuera de
+  comillas dobles o una mención sin comillas (`echo python3 discovery.py
+  approve`) se bloquean aunque no se ejecuten: peca de prudente.
+- El analizador de comandos es una copia del de `sdd`
+  (`plugins/sdd/scripts/sdd_bash.py`): los plugins no comparten código. Un
+  arreglo en uno se replica en el otro.
 - Si `product/` no existe todavía, un comando que lo cree con el brief ya
   aprobado no pasa por la auditoría: los hooks no actúan sin `product/`.
 - Una edición múltiple (`MultiEdit`) no se analiza; solo `Write`, `Edit` y Bash.

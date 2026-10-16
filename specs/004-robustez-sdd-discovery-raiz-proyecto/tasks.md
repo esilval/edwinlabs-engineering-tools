@@ -79,7 +79,7 @@ registradas en su ejecución. Las pruebas de la raíz quitan
 
 ### T005 — READMEs y cierre
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002, R005
 - **Depende de:** T001, T002, T003, T004
 - **Archivos:** `plugins/sdd/README.md`, `plugins/discovery/README.md`

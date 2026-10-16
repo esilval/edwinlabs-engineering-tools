@@ -805,6 +805,8 @@ def test_F002_R010_otros_lenguajes_como_antes(base):
                f"{encontrados}")
 
 
+# Equivalentes a MENCIONES y EJECUCIONES de plugins/discovery/tests/selftest.py,
+# que prueba la copia del analizador en discovery.py: si cambian aqui, alli.
 MENCIONES = [
     "git commit -q -m 'sdd: la compuerta ya no bloquea sdd.py approve ni set_status(x)'",
     'gh pr create --title t --body "Corrige: python3 sdd.py approve y set_status(texto, v)"',
