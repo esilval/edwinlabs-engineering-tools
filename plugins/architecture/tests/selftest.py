@@ -432,6 +432,82 @@ def test_F006_R005_numeracion_no_reutiliza():
            "sin architecture/, el primero es ADR-0001")
 
 
+# ----------------------------------------------------------------- T004
+
+def con_codigo(root, code):
+    """
+    Hallazgos de un codigo. Solo cuenta como probado si de verdad se emitio:
+    una prueba que afirma su ausencia no demuestra que sea alcanzable.
+    """
+    out = [f for f in architecture.analyze(root)["findings"] if f["code"] == code]
+    if out:
+        PROBADOS.add(code)
+    return out
+
+
+def codigos(root):
+    return {f["code"] for f in architecture.analyze(root)["findings"]}
+
+
+def test_F006_R002_atributo_no_medible_o_sin_motivo():
+    p = con_arquitectura(proyecto("r002-coherente"))
+    expect(not ({"E-QUALITY-NOT-MEASURABLE", "E-QUALITY-NO-MOTIVE"} & codigos(p)),
+           "la arquitectura de prueba no tiene hallazgos de atributos", f"{codigos(p)}")
+
+    vago = ARQ_QUALITY.replace(
+        "al cerrar la caja, el total del día aparece en menos de 2 segundos con 5000 ventas",
+        "el sistema es escalable")
+    p = con_arquitectura(proyecto("r002-vago"), quality=vago)
+    h = con_codigo(p, "E-QUALITY-NOT-MEASURABLE")
+    expect(len(h) == 1 and "Q1" in h[0]["message"],
+           "«el sistema es escalable» sin cifra: atributo no medible", f"{h}")
+    citado = ARQ_QUALITY.replace(
+        "al cerrar la caja, el total del día aparece en menos de 2 segundos con 5000 ventas",
+        "el sistema es escalable, como pide G1 y dice D1§3")
+    p = con_arquitectura(proyecto("r002-solo-citas"), quality=citado)
+    expect(len(con_codigo(p, "E-QUALITY-NOT-MEASURABLE")) == 1,
+           "los numeros de una cita (G1, D1§3) no cuentan como cifra")
+
+    for nombre, motivo in (("sin-cita", "porque sí"), ("objetivo-inexistente", "G9"),
+                           ("seccion-que-no-es-restriccion", "D1§4")):
+        texto = ARQ_QUALITY.replace("- **Motivo:** G2", f"- **Motivo:** {motivo}")
+        p = con_arquitectura(proyecto(f"r002-{nombre}"), quality=texto)
+        h = con_codigo(p, "E-QUALITY-NO-MOTIVE")
+        expect(len(h) == 1 and "Q2" in h[0]["message"],
+               f"motivo {motivo!r}: atributo sin motivo", f"{h}")
+
+    texto = ARQ_QUALITY.replace("- **Motivo:** G2", "- **Motivo:** D1§3")
+    p = con_arquitectura(proyecto("r002-restriccion"), quality=texto)
+    expect("E-QUALITY-NO-MOTIVE" not in codigos(p),
+           "un motivo que cita la seccion de una restriccion del brief (D1§3) vale")
+
+
+def test_F006_R004_candidata_sin_componente():
+    base = con_arquitectura(proyecto("r004-coherente"))
+    expect(not ({"E-COMPONENT-NO-RESPONSIBILITY", "E-COMPONENT-CANDIDATE-UNPLACED"}
+                & codigos(base)),
+           "la arquitectura de prueba no tiene hallazgos de componentes", f"{codigos(base)}")
+    sin_b02 =ARQ_COMPONENTS.replace("- **Candidatas:** B02", "- **Candidatas:** —")
+    p = con_arquitectura(proyecto("r004-sin-b02"), components=sin_b02)
+    h = con_codigo(p, "E-COMPONENT-CANDIDATE-UNPLACED")
+    expect(len(h) == 1 and "B02" in h[0]["message"] and h[0]["severity"] == "error",
+           "B02 sin componente: error que la nombra", f"{h}")
+    expect(not any("B03" in x["message"] for x in h),
+           "B03 esta descartada: ningun error por ella")
+
+    sin_resp = ARQ_COMPONENTS.replace(
+        "- **Responsabilidad:** genera archivos de movimientos a partir de las ventas",
+        "- **Responsabilidad:** —")
+    p = con_arquitectura(proyecto("r004-sin-responsabilidad"), components=sin_resp)
+    h = con_codigo(p, "E-COMPONENT-NO-RESPONSIBILITY")
+    expect(len(h) == 1 and "C2" in h[0]["message"], "componente con responsabilidad «—»", f"{h}")
+    sin_campo = ARQ_COMPONENTS.replace(
+        "- **Responsabilidad:** genera archivos de movimientos a partir de las ventas\n", "")
+    p = con_arquitectura(proyecto("r004-sin-campo"), components=sin_campo)
+    h = con_codigo(p, "E-COMPONENT-NO-RESPONSIBILITY")
+    expect(len(h) == 1 and "C2" in h[0]["message"], "componente sin el campo", f"{h}")
+
+
 # --------------------------------------------------------------------------
 
 def cobertura_de_codigos():

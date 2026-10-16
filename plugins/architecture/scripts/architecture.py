@@ -402,6 +402,80 @@ def cmd_next_id(args):
 
 
 # --------------------------------------------------------------------------
+# Comprobacion de coherencia (D3)
+# --------------------------------------------------------------------------
+
+def _finding(code, message, artifact):
+    return {"code": code, "severity": "error" if code.startswith("E-") else "warning",
+            "message": message, "artifact": artifact}
+
+
+def cited_motive(root, motive):
+    """
+    Lo que un Motivo cita y existe: objetivos Gn del brief y secciones Dn§x
+    que citan sus restricciones (D3). Lista vacia si no cita nada valido.
+    """
+    goals = product_goals(root)
+    restrictions = product_restriction_sections(root)
+    valid = [f"G{g}" for g in GOAL_REF.findall(motive or "") if f"G{g}" in goals]
+    valid += [f"D{d}§{s}" for d, s in DOC_REF.findall(motive or "")
+              if f"D{d}§{s}" in restrictions]
+    return valid
+
+
+# Citas que no son una medida: su numero no cuenta como cifra del escenario.
+CITATION = re.compile(r"(?<![A-Za-z0-9])(?:ADR-\d+|D\d+§[\d.]+|[GBQCS]\d+)(?![0-9])")
+
+
+def check_quality(root):
+    out = []
+    for q in quality(root):
+        f = q["fields"]
+        if not re.search(r"\d", CITATION.sub(" ", f.get("escenario", ""))):
+            out.append(_finding(
+                "E-QUALITY-NOT-MEASURABLE",
+                f"{q['id']} ({q['title']}): el escenario no tiene ninguna cifra. Escríbelo "
+                "con estímulo, respuesta y medida («p95 < 300 ms con 500 peticiones/s»).",
+                f"{ARCH_DIR}/quality.md"))
+        if not cited_motive(root, f.get("motivo", "")):
+            out.append(_finding(
+                "E-QUALITY-NO-MOTIVE",
+                f"{q['id']} ({q['title']}): el motivo no cita un objetivo del brief (G1) ni "
+                "la sección de una de sus restricciones (D1§5).",
+                f"{ARCH_DIR}/quality.md"))
+    return out
+
+
+def check_components(root):
+    out = []
+    placed = set()
+    for c in components(root):
+        f = c["fields"]
+        if not re.sub(r"[\s—–-]", "", f.get("responsabilidad", "")):
+            out.append(_finding(
+                "E-COMPONENT-NO-RESPONSIBILITY",
+                f"{c['id']} ({c['title']}) no dice qué hace: falta la responsabilidad.",
+                f"{ARCH_DIR}/components.md"))
+        placed |= {f"B{b}" for b in CAND_REF.findall(f.get("candidatas", ""))}
+    for cid, cand in product_candidates(root).items():
+        if cand["state"] == "descartada" or cid in placed:
+            continue
+        out.append(_finding(
+            "E-COMPONENT-CANDIDATE-UNPLACED",
+            f"{cid} ({cand['title']}) no vive en ningún componente: añádela a las "
+            "candidatas del componente que la implementa.",
+            f"{ARCH_DIR}/components.md"))
+    return out
+
+
+def analyze(root):
+    """Todos los hallazgos de la arquitectura, en orden de artefacto."""
+    findings = check_quality(root) + check_components(root)
+    return {"findings": findings,
+            "ok": not any(f["severity"] == "error" for f in findings)}
+
+
+# --------------------------------------------------------------------------
 # init
 # --------------------------------------------------------------------------
 
@@ -444,8 +518,14 @@ COMMANDS = {
 # Un hook que revienta nunca debe bloquear al usuario: falla abierto.
 HOOKS = {"guard", "audit"}
 
-# Codigos de hallazgo declarados: el selftest exige probar cada uno.
-FINDINGS = {}
+# Codigos de hallazgo declarados: el selftest exige probar cada uno. Son
+# contrato publico (prefijos reservados en el registro comun de la serie).
+FINDINGS = {
+    "E-QUALITY-NOT-MEASURABLE": "Atributo de calidad sin cifra en su escenario",
+    "E-QUALITY-NO-MOTIVE": "Atributo de calidad sin objetivo ni restricción que lo motive",
+    "E-COMPONENT-NO-RESPONSIBILITY": "Componente sin responsabilidad",
+    "E-COMPONENT-CANDIDATE-UNPLACED": "Candidata vigente del backlog sin componente",
+}
 
 
 def main(argv):

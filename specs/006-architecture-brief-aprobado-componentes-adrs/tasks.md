@@ -71,7 +71,7 @@ de contrato es la única que ejecuta `discovery.py`.
 
 ### T004 — Comprobación de atributos y componentes · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R002, R004
 - **Depende de:** T003
 - **Archivos:** `plugins/architecture/scripts/architecture.py`, `plugins/architecture/tests/selftest.py`
