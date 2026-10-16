@@ -4,7 +4,7 @@
 | ------ | ------------------ |
 | Spec   | `spec.md`          |
 | Fecha  | 2026-10-16         |
-| Estado | Approved · 6162afe4f25d              |
+| Estado | Approved · 160f9ffc338d              |
 
 > Este documento describe **cómo**. Si aquí aparece un requisito nuevo que no
 > está en `spec.md`, el sitio correcto es `spec.md`, no aquí.
@@ -144,7 +144,10 @@ real en una prueba de contrato, como ya hace `sdd`.
     `| Producto | brief <huella> · backlog <huella> |` y sella con
     `Approved · <huella>`:
     - `quality.md`, `components.md`, `standards.md` y `questions.md`;
-    - cada ADR en `Draft`.
+    - cada ADR en `Draft`;
+    - cada ADR aprobado que cambió después de aprobarse. Si no, un ADR aprobado
+      que se edita quedaría en aviso para siempre: `review` solo decide
+      propuestos, y el resto del conjunto sí se vuelve a sellar al editarlo.
     Los ADR `Proposed`, `Rejected` o `Superseded` no se tocan.
   - **`review ADR-NNNN aceptar|rechazar`:** solo para ADR `Proposed`. Aceptar
     exige que ese ADR no tenga errores propios. Lo sella y, si su campo

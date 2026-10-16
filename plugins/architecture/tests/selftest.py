@@ -449,6 +449,11 @@ def codigos(root):
     return {f["code"] for f in architecture.analyze(root)["findings"]}
 
 
+def errores(root):
+    """Codigos de error: una arquitectura sin aprobar siempre trae avisos."""
+    return {c for c in codigos(root) if c.startswith("E-")}
+
+
 def test_F006_R002_atributo_no_medible_o_sin_motivo():
     p = con_arquitectura(proyecto("r002-coherente"))
     expect(not ({"E-QUALITY-NOT-MEASURABLE", "E-QUALITY-NO-MOTIVE"} & codigos(p)),
@@ -512,7 +517,7 @@ def test_F006_R004_candidata_sin_componente():
 
 def test_F006_R005_adr_incompleto_o_sin_motivo():
     base = con_arquitectura(proyecto("r005-coherente"))
-    expect(codigos(base) == set(), "la arquitectura de prueba no tiene ningun hallazgo",
+    expect(errores(base) == set(), "la arquitectura de prueba no tiene ningun error",
            f"{architecture.analyze(base)['findings']}")
 
     p = con_arquitectura(proyecto("r005-incompleto"), adrs={
@@ -548,7 +553,7 @@ def test_F006_R005_adr_incompleto_o_sin_motivo():
         p = con_arquitectura(proyecto(f"r005-historia-{estado.split()[0].lower()}"), adrs={
             "0001-base-de-datos-unica.md": adr("0001", "Base de datos única"),
             "0002-historia.md": historia})
-        expect(codigos(p) == set(),
+        expect(errores(p) == set(),
                f"una decision {estado.split()[0]} queda como historia: ni forma ni citas",
                f"{architecture.analyze(p)['findings']}")
 
@@ -624,6 +629,9 @@ def test_F006_R008_check_en_ci():
     r = run(ok, "check", "--check")
     expect(r.returncode == 0 and "OK: sin errores." in r.stdout,
            "sin errores, --check sale con 0", r.stdout + r.stderr)
+    base = json.loads(run(ok, "check", "--json").stdout)
+    expect(base["counts"]["errors"] == 0 and base["counts"]["warnings"] > 0,
+           "los hallazgos de la base son todos avisos", f"{base['counts']}")
 
     sin_b02 = ARQ_COMPONENTS.replace("- **Candidatas:** B02", "- **Candidatas:** —")
     mal = con_arquitectura(proyecto("r008-error"), components=sin_b02)
@@ -649,22 +657,163 @@ def test_F006_R008_check_en_ci():
     expect(r.returncode == 1 and json.loads(r.stdout)["ok"] is False,
            "--json --check: el mismo JSON y salida 1")
 
-    # Solo avisos no hacen fallar: aqui se simula uno, porque los avisos reales
-    # (aprobacion y producto) llegan con la tarea de aprobacion.
-    def solo_un_aviso(root):
-        return [architecture._finding("W-ARCH-NOT-APPROVED", "simulado", "architecture/x")]
-    original = architecture.check_templates
-    architecture.check_templates = solo_un_aviso
-    try:
-        data = architecture.analyze(ok)
-    finally:
-        architecture.check_templates = original
-    expect(data["ok"] and data["counts"]["warnings"] == 1,
-           "un aviso no hace fallar la comprobacion", f"{data['counts']}")
+    # La arquitectura de prueba no tiene errores pero esta sin aprobar: solo
+    # avisos reales (W-ARCH-NOT-APPROVED), que no hacen fallar en CI.
+    r = run(ok, "check", "--check")
+    expect(r.returncode == 0 and "W-ARCH-NOT-APPROVED" in r.stdout
+           and "E-" not in r.stdout,
+           "con solo avisos, --check sale con 0", r.stdout)
 
     r = run(ok, "check", "--chek")
     expect(r.returncode == 2 and "argumento desconocido" in r.stderr,
            "un argumento desconocido sale con 2")
+
+
+# ----------------------------------------------------------------- T007
+
+def estado(p, rel):
+    texto = (p / rel).read_text(encoding="utf-8")
+    return architecture.doc_status(texto)
+
+
+def foto(p):
+    """Contenido de architecture/, para comprobar que una negativa no cambia nada."""
+    base = p / "architecture"
+    return {str(x.relative_to(base)): x.read_bytes() for x in sorted(base.rglob("*"))
+            if x.is_file()}
+
+
+DOS_ADR = {
+    "0001-base-de-datos-unica.md": adr("0001", "Base de datos única"),
+    "0002-despliegue.md": adr("0002", "Despliegue en un solo servidor", motivo="Q2"),
+}
+
+
+def test_F006_R010_aprueba_el_conjunto():
+    adrs = dict(DOS_ADR)
+    adrs["0003-cache.md"] = adr("0003", "Caché de totales", estado="Proposed")
+    adrs["0004-rechazada.md"] = adr("0004", "Rechazada", estado="Rejected")
+    p = con_arquitectura(proyecto("r010-aprueba"), adrs=adrs)
+    r = run(p, "approve")
+    expect(r.returncode == 0, "una arquitectura coherente se aprueba", r.stdout + r.stderr)
+    for rel in ("architecture/quality.md", "architecture/components.md",
+                "architecture/standards.md", "architecture/questions.md",
+                "architecture/adr/0001-base-de-datos-unica.md",
+                "architecture/adr/0002-despliegue.md"):
+        texto = (p / rel).read_text(encoding="utf-8")
+        expect(architecture.artifact_state(texto) == "approved",
+               f"{rel} queda sellado con la huella de su contenido", estado(p, rel))
+    expect(estado(p, "architecture/adr/0003-cache.md") == "Proposed"
+           and "ADR-0003" in r.stdout,
+           "un ADR propuesto no se toca y se dice que espera la revision", r.stdout)
+    expect(estado(p, "architecture/adr/0004-rechazada.md") == "Rejected",
+           "un ADR rechazado no se toca")
+    comp = p / "architecture" / "components.md"
+    vacia = architecture.PRODUCT_ROW.sub("| Producto |  |", comp.read_text(encoding="utf-8"))
+    expect(architecture.recorded_product(p) and "| Producto |  |" in vacia
+           and architecture.PRODUCT_ROW.search(
+               architecture.with_product_row(vacia, {"brief": "a" * 12, "backlog": "b" * 12})),
+           "una fila Producto vacia se rellena en su sitio")
+    huellas = architecture.product_digests(p)
+    expect(architecture.recorded_product(p) == huellas,
+           "components.md guarda la huella del brief y del backlog", f"{huellas}")
+    expect("W-ARCH-NOT-APPROVED" not in codigos(p),
+           "tras aprobar no queda ningun aviso de aprobacion")
+    r = run(p, "approve")
+    expect(r.returncode == 0 and "ya estaba aprobada" in r.stdout,
+           "aprobar dos veces no cambia nada")
+
+    sin_b02 = ARQ_COMPONENTS.replace("- **Candidatas:** B02", "- **Candidatas:** —")
+    p = con_arquitectura(proyecto("r010-errores"), components=sin_b02)
+    antes = foto(p)
+    r = run(p, "approve")
+    expect(r.returncode == 1 and "E-COMPONENT-CANDIDATE-UNPLACED" in r.stderr
+           and foto(p) == antes,
+           "con un error se niega, lista los errores y no cambia nada", r.stderr)
+
+    p = con_arquitectura(proyecto("r010-producto"))
+    backlog = p / "product" / "backlog.md"
+    backlog.write_text(backlog.read_text(encoding="utf-8").replace("Approved", "Draft", 1),
+                       encoding="utf-8")
+    r = run(p, "approve")
+    expect(r.returncode == 1 and "product/backlog.md no está aprobado" in r.stderr,
+           "sin el producto aprobado no se aprueba la arquitectura", r.stderr)
+    r = run(p, "approve", "--skill")
+    expect(r.returncode == 0 and "no está aprobado" in r.stdout,
+           "con --skill, la negativa sale por stdout con 0", r.stdout)
+
+
+def test_F006_R009_pregunta_abierta_impide_aprobar():
+    abierta = ARQ_QUESTIONS + "\n- [ ] (ADR-0002) ¿Un servidor aguanta el cierre de 50 cajas?\n"
+    p = con_arquitectura(proyecto("r009-aprobar"), questions=abierta, adrs=DOS_ADR)
+    antes = foto(p)
+    r = run(p, "approve")
+    expect(r.returncode == 1 and "E-ARCH-OPEN-QUESTION" in r.stderr
+           and "ADR-0002" in r.stderr and foto(p) == antes,
+           "una pregunta abierta sobre ADR-0002 impide aprobar y se nombra", r.stderr)
+
+
+def test_F006_R011_cambio_tras_aprobar():
+    p = con_arquitectura(proyecto("r011-cambio"))
+    run(p, "approve")
+    comp = p / "architecture" / "components.md"
+    comp.write_text(comp.read_text(encoding="utf-8").replace(
+        "registra ventas y calcula los totales del día",
+        "registra ventas, devoluciones y calcula los totales del día"), encoding="utf-8")
+    h = con_codigo(p, "W-ARCH-NOT-APPROVED")
+    expect(len(h) == 1 and h[0]["artifact"] == "architecture/components.md"
+           and "cambió después de aprobarse" in h[0]["message"],
+           "editar un componente tras aprobar: aviso que nombra components.md", f"{h}")
+
+    # Un ADR aprobado que se edita deja de contar como aprobado y approve lo
+    # vuelve a sellar (D4), igual que el resto del conjunto.
+    p = con_arquitectura(proyecto("r011-adr"))
+    run(p, "approve")
+    rel = "architecture/adr/0001-base-de-datos-unica.md"
+    d = p / rel
+    d.write_text(d.read_text(encoding="utf-8").replace(
+        "Una sola base de datos relacional", "Una sola base de datos relacional gestionada"),
+        encoding="utf-8")
+    h = con_codigo(p, "W-ARCH-NOT-APPROVED")
+    expect(len(h) == 1 and h[0]["artifact"] == rel and "cambió" in h[0]["message"],
+           "editar un ADR aprobado: aviso que lo nombra", f"{h}")
+    r = run(p, "approve")
+    expect(r.returncode == 0 and rel in r.stdout
+           and architecture.artifact_state(d.read_text(encoding="utf-8")) == "approved",
+           "y approve lo vuelve a sellar con la huella nueva", r.stdout + r.stderr)
+
+    p = con_arquitectura(proyecto("r011-formato"))
+    run(p, "approve")
+    q = p / "architecture" / "quality.md"
+    q.write_text(q.read_text(encoding="utf-8").replace("\n## Atributos", "\n\n\n## Atributos   "),
+                 encoding="utf-8")
+    expect("W-ARCH-NOT-APPROVED" not in codigos(p),
+           "reformatear sin cambiar el contenido sigue aprobado")
+
+
+def test_F006_R014_producto_cambiado():
+    p = con_arquitectura(proyecto("r014-producto"))
+    run(p, "approve")
+    nueva = PRODUCTO_BACKLOG + """
+### B04 — Avisos de stock
+
+- **Estado:** candidata
+- **Objetivos:** G1
+- **Origen:** D1§3
+- **Problema:** el dueño se queda sin producto sin darse cuenta.
+- **Resultado observable:** el dueño recibe un aviso cuando un producto baja de un umbral.
+- **Dentro:** un umbral por producto.
+- **Fuera:** pedidos automáticos.
+- **Depende de:** B01
+"""
+    con_producto(p, backlog=nueva)  # el backlog se reaprueba con una candidata nueva
+    h = con_codigo(p, "W-ARCH-PRODUCT-CHANGED")
+    expect(len(h) == 1 and "product/backlog.md" in h[0]["message"]
+           and "product/brief.md" not in h[0]["message"],
+           "avisa de que el producto cambio desde la arquitectura y dice que fue el backlog",
+           f"{h}")
+    expect(any("B04" in f["message"] for f in con_codigo(p, "E-COMPONENT-CANDIDATE-UNPLACED")),
+           "y da error por la candidata nueva sin componente")
 
 
 # --------------------------------------------------------------------------

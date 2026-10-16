@@ -406,6 +406,10 @@ def cmd_next_id(args):
 # --------------------------------------------------------------------------
 
 def _finding(code, message, artifact):
+    # Los codigos son contrato publico: emitir uno sin declararlo es un fallo
+    # del plugin, no un hallazgo.
+    if code not in FINDINGS:
+        raise ValueError(f"codigo de hallazgo no declarado: {code}")
     return {"code": code, "severity": "error" if code.startswith("E-") else "warning",
             "message": message, "artifact": artifact}
 
@@ -608,6 +612,50 @@ def check_templates(root):
     return out
 
 
+PRODUCT_ROW = re.compile(r"^\|\s*Producto\s*\|\s*([^|\n]*?)\s*\|\s*$", re.M)
+
+
+def recorded_product(root):
+    """{'brief': huella, 'backlog': huella} de la fila Producto de
+    components.md, o None si la arquitectura nunca se aprobo."""
+    text = read_arch(root, "components.md") or ""
+    m = PRODUCT_ROW.search(text, 0, _header_end(text))
+    if not m:
+        return None
+    pairs = re.findall(r"(brief|backlog)\s+([0-9a-f]{12})", m.group(1))
+    return dict(pairs) if pairs else None
+
+
+def check_approval(root):
+    """W-ARCH-NOT-APPROVED por artefacto sin aprobar o cambiado (R011), y
+    W-ARCH-PRODUCT-CHANGED si el producto cambio desde la aprobacion (R014)."""
+    out = []
+    targets = [(f"{ARCH_DIR}/{n}", artifact_state(read_arch(root, n))) for n in SET_FILES]
+    targets += [(a["file"], a["state"]) for a in adrs(root) if a["state"] in ("draft", "stale")]
+    for rel, state in targets:
+        if state == "draft":
+            out.append(_finding("W-ARCH-NOT-APPROVED",
+                                f"{rel} no está aprobado. Lo aprueba el usuario con "
+                                "/architecture:approve.", rel))
+        elif state == "stale":
+            out.append(_finding("W-ARCH-NOT-APPROVED",
+                                f"{rel} cambió después de aprobarse: ya no cuenta como "
+                                "aprobado. El usuario lo revisa y aprueba de nuevo con "
+                                "/architecture:approve.", rel))
+    recorded = recorded_product(root)
+    if recorded:
+        current = product_digests(root)
+        changed = [k for k in ("brief", "backlog") if recorded.get(k) != current.get(k)]
+        if changed:
+            out.append(_finding(
+                "W-ARCH-PRODUCT-CHANGED",
+                f"El producto cambió desde que se aprobó la arquitectura "
+                f"({', '.join(f'product/{k}.md' for k in changed)}): revisa si la "
+                "arquitectura sigue valiendo y apruébala de nuevo.",
+                f"{ARCH_DIR}/components.md"))
+    return out
+
+
 SCHEMA = "architecture.check/v1"
 
 
@@ -618,7 +666,7 @@ def analyze(root):
     """
     findings = (check_templates(root) + check_quality(root) + check_components(root)
                 + check_adrs(root) + check_standards(root) + check_references(root)
-                + check_questions(root))
+                + check_questions(root) + check_approval(root))
     errors = sum(1 for f in findings if f["severity"] == "error")
     return {
         "schema": SCHEMA,
@@ -668,6 +716,105 @@ def cmd_check(args):
 
 
 # --------------------------------------------------------------------------
+# Aprobacion del conjunto (D4). Solo la lanza el usuario, con
+# /architecture:approve; los hooks impiden que el modelo la escriba.
+# --------------------------------------------------------------------------
+
+def set_status(text, value):
+    """Devuelve (texto_nuevo, cambiado?). Copia de discovery.py."""
+    end = _header_end(text)
+    head, n = STATUS_ROW.subn(lambda m: m.group(1) + value + m.group(3), text[:end], count=1)
+    return head + text[end:], bool(n)
+
+
+def with_product_row(text, digests):
+    """components.md con la fila Producto actualizada (o añadida tras Estado)."""
+    value = f"brief {digests['brief']} · backlog {digests['backlog']}"
+    end = _header_end(text)
+    head, rest = text[:end], text[end:]
+    if PRODUCT_ROW.search(head):
+        # Por posicion: con la fila vacia, replace('') pondria el valor al
+        # principio de la linea.
+        head = PRODUCT_ROW.sub(lambda m: (m.string[m.start(0):m.start(1)] + value
+                                          + m.string[m.end(1):m.end(0)]), head, count=1)
+    else:
+        lines = head.split("\n")
+        for i, line in enumerate(lines):
+            if STATUS_ROW.match(line):
+                lines.insert(i + 1, f"| Producto | {value} |")
+                break
+        head = "\n".join(lines)
+    return head + rest
+
+
+def approve(root):
+    """
+    Sella el conjunto con 'Approved · <huella>' si el producto esta aprobado y
+    la comprobacion no da errores. Sella quality, components, standards,
+    questions y los ADR en Draft (o cambiados tras aprobarse); los Proposed,
+    Rejected y Superseded no se tocan: se deciden con review. Devuelve
+    (ok, lineas_de_mensaje).
+    """
+    problems = product_problems(root)
+    if problems:
+        return False, (["No se puede aprobar la arquitectura: el producto de discovery "
+                        "no está aprobado."] + [f"  - {p}" for p in problems])
+    missing = [n for n in SET_FILES if read_arch(root, n) is None]
+    if missing:
+        return False, [f"No se puede aprobar: falta architecture/{' y architecture/'.join(missing)}."
+                       " Lo crea /architecture:init."]
+    data = analyze(root)
+    errors = [f for f in data["findings"] if f["severity"] == "error"]
+    if errors:
+        return False, (["No se puede aprobar la arquitectura: la comprobación da errores."]
+                       + [f"  [{f['code']}] {f['message']}" for f in errors])
+
+    texts = {f"{ARCH_DIR}/{n}": read_arch(root, n) for n in SET_FILES}
+    comp = f"{ARCH_DIR}/components.md"
+    texts[comp] = with_product_row(texts[comp], product_digests(root))
+    for a in adrs(root):
+        if a["state"] in ("draft", "stale", "approved"):
+            texts[a["file"]] = read_text(Path(root) / a["file"])
+
+    sealed, already = {}, True
+    for rel, text in texts.items():
+        stamp = f"Approved · {content_digest(text)}"
+        if doc_status(text) == stamp:
+            continue
+        already = False
+        new, changed = set_status(text, stamp)
+        if not changed:
+            return False, [f"{rel} no tiene la fila '| Estado | ... |' en la cabecera. "
+                           "Añádela y vuelve a aprobar."]
+        sealed[rel] = (new, stamp)
+    if already:
+        return True, ["La arquitectura ya estaba aprobada."]
+    for rel, (new, _stamp) in sealed.items():
+        (Path(root) / rel).write_text(new, encoding="utf-8")
+    skipped = [a["id"] for a in adrs(root) if a["state"] == "proposed"]
+    lines = [f"{rel} aprobado ({stamp})." for rel, (_n, stamp) in sealed.items()]
+    if skipped:
+        lines.append(f"Sin tocar, pendientes de /architecture:review: {', '.join(skipped)}.")
+    return True, lines
+
+
+def cmd_approve(args):
+    """
+    Con --skill (lo usa /architecture:approve) todo va a stdout y sale siempre
+    con 0: el resultado lo lee el modelo como texto, no como codigo de salida.
+    """
+    try:
+        ok, lines = approve(project_root())
+    except Exception as exc:  # noqa: BLE001
+        if "--skill" not in args:
+            raise
+        ok, lines = False, [f"No se pudo aprobar: error inesperado ({exc})."]
+    stream = sys.stdout if (ok or "--skill" in args) else sys.stderr
+    print("\n".join(lines), file=stream)
+    return 0 if (ok or "--skill" in args) else 1
+
+
+# --------------------------------------------------------------------------
 # init
 # --------------------------------------------------------------------------
 
@@ -706,6 +853,7 @@ COMMANDS = {
     "init": cmd_init,
     "next-id": cmd_next_id,
     "check": cmd_check,
+    "approve": cmd_approve,
 }
 
 # Un hook que revienta nunca debe bloquear al usuario: falla abierto.
@@ -726,6 +874,8 @@ FINDINGS = {
                            "candidata inexistente"),
     "E-ARCH-OPEN-QUESTION": "Pregunta abierta sobre una decisión o un atributo",
     "E-ARCH-TEMPLATE": "Hueco de plantilla sin rellenar",
+    "W-ARCH-NOT-APPROVED": "Artefacto sin aprobar o cambiado después de aprobarse",
+    "W-ARCH-PRODUCT-CHANGED": "El producto cambió desde la aprobación de la arquitectura",
 }
 
 

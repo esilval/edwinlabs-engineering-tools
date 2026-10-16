@@ -108,7 +108,7 @@ de contrato es la única que ejecuta `discovery.py`.
 
 ### T007 — Aprobación, cambios tras aprobar y huella del producto
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R009, R010, R011, R014
 - **Depende de:** T006
 - **Archivos:** `plugins/architecture/scripts/architecture.py`, `plugins/architecture/tests/selftest.py`
