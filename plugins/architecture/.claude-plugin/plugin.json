@@ -1,0 +1,8 @@
+{
+  "name": "architecture",
+  "displayName": "Architecture",
+  "description": "De producto aprobado a arquitectura: atributos de calidad medibles, componentes, decisiones (ADR) y estándares comprobables, con aprobación del usuario y trazabilidad objetivo -> componente -> decisión.",
+  "author": { "name": "Edwin Silva" },
+  "license": "MIT",
+  "keywords": ["architecture", "adr", "components", "quality-attributes", "spec-driven"]
+}

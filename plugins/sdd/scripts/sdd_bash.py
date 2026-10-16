@@ -18,9 +18,10 @@ Write y Edit declaran el archivo que tocan; Bash no. Para que `sed -i` o
 El analizador no pretende ser un parser de shell completo. Lo que no entiende
 lo deja pasar y lo recoge la capa 2.
 
-invokes_approve y sus ayudantes tienen una copia adaptada en
-plugins/discovery/scripts/discovery.py: los plugins no comparten codigo. Un
-arreglo en una copia se replica en la otra.
+invokes_approve y sus ayudantes tienen copias adaptadas en
+plugins/discovery/scripts/discovery.py y plugins/architecture/scripts/
+architecture.py: los plugins no comparten codigo. Un arreglo en una copia se
+replica en las otras.
 """
 
 import hashlib

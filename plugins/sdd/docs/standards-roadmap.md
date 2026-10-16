@@ -306,7 +306,7 @@ los plugins del marketplace:
 | `*-SPEC-*` | el documento de spec en conjunto | en uso |
 | `*-PLAN-*` | `plan.md` frente a la spec y la constitución | en uso |
 | `*-TEST-*` | evidencia de prueba (forma de citar requisitos) | en uso |
-| `*-ARCH-*` | dirección de dependencias y capas | fase 3 |
+| `*-ARCH-*` | la arquitectura en conjunto: citas, preguntas, aprobación, capas y dirección de dependencias (plugin `architecture`; antes reservado para la fase 3) | en uso |
 | `*-CONTRACT-*` | contratos de API | fase 4 |
 | `*-DEP-*` | dependencias y ADRs | fase 5 |
 | `*-TDD-*` | orden rojo-verde | fase 6 |
@@ -318,6 +318,10 @@ los plugins del marketplace:
 | `*-FEATURE-*` | candidatas individuales (plugin `discovery`) | en uso |
 | `*-QUESTION-*` | preguntas del brief (plugin `discovery`) | en uso |
 | `*-PRODUCT-*` | el producto en conjunto (plugin `discovery`) | en uso |
+| `*-ADR-*` | decisiones de arquitectura (plugin `architecture`) | en uso |
+| `*-QUALITY-*` | atributos de calidad (plugin `architecture`) | en uso |
+| `*-COMPONENT-*` | componentes y candidatas que alojan (plugin `architecture`) | en uso |
+| `*-STANDARD-*` | estándares comprobables (plugin `architecture`) | en uso |
 
 **Política de compatibilidad del schema `sdd.trace/v1`:** añadir códigos nuevos
 es aditivo y no rompe a un consumidor que filtre por `severity`. Renombrar o
