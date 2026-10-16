@@ -1041,6 +1041,81 @@ def test_F003_R002_auditoria_silenciosa_sin_cambios(base):
         sin_permiso.chmod(0o644)
 
 
+SPEC_DOS_MUST = SPEC_BASE.replace("| R002 | SHOULD |", "| R002 | MUST |")
+
+CITAS_FUERA = '''# F001-R002: comentario de modulo, fuera de toda prueba
+
+
+def test_F001_R003_otra():
+    assert otra()
+
+
+def ayudante():
+    return 1  # F001-R002 en una funcion que no es prueba
+
+
+def main():
+    test_F001_R001_algo(base)
+'''
+
+
+def test_F003_R005_cita_fuera_de_prueba_no_cuenta(base):
+    print("\nF003 · R005: en Python, una cita fuera de una prueba no cuenta")
+    p = repo_con_feature(base, "f003-r005", spec=SPEC_DOS_MUST,
+                         archivos={"tests/test_fuera.py": CITAS_FUERA})
+    r001, r002 = evidencia(p, "R001"), evidencia(p, "R002")
+    expect(r001 == [], "la llamada desde main() no es evidencia ni se atribuye a otra prueba",
+           f"{r001}")
+    expect(r002 == [], "un comentario de modulo o de un ayudante no es evidencia", f"{r002}")
+
+
+DENTRO = '''import unittest
+
+
+def test_F001_R001_algo():
+    assert login() is True
+
+
+class PruebaLogin(unittest.TestCase):
+    def test_x(self):
+        # F001-R002
+        self.assertTrue(login())
+'''
+
+
+def test_F003_R006_nombre_y_cuerpo_cuentan(base):
+    print("\nF003 · R006: el nombre y el cuerpo de una prueba Python siguen contando")
+    p = repo_con_feature(base, "f003-r006", spec=SPEC_DOS_MUST,
+                         archivos={"tests/test_dentro.py": DENTRO})
+    r001, r002 = evidencia(p, "R001"), evidencia(p, "R002")
+    expect(r001 == ["tests/test_dentro.py::test_F001_R001_algo"],
+           "la prueba con asercion cuenta a su nombre", f"{r001}")
+    expect(r002 == ["tests/test_dentro.py::test_x"],
+           "el comentario dentro de un metodo de clase cuenta a nombre del metodo", f"{r002}")
+
+
+def test_F003_R006_python_sin_ast_usa_la_atribucion_anterior(base):
+    print("\nF003 · R006: si ast no puede analizar el archivo, se atribuye como antes")
+    roto = "def test_F001_R001_algo():\n    assert login()\n\ndef roto(:\n"
+    p = repo_con_feature(base, "f003-r006-sin-ast", spec=SPEC_DOS_MUST,
+                         archivos={"tests/test_roto.py": roto})
+    r = run("trace", ["--json"], cwd=p)
+    r001 = evidencia(p, "R001")
+    expect(r.returncode in (0, 1) and "Traceback" not in r.stderr
+           and r001 == ["tests/test_roto.py::test_F001_R001_algo"],
+           "un archivo que ast rechaza sigue dando la evidencia de su prueba",
+           f"{r001} {r.stderr!r}")
+
+
+def test_F003_R007_otros_lenguajes_identicos(base):
+    print("\nF003 · R007: fuera de Python la atribucion no cambia")
+    p = repo_con_feature(base, "f003-r007", spec=SPEC_DOS_MUST, archivos=OTROS_LENGUAJES)
+    for rid, esperada in ESPERADO.items():
+        encontrados = evidencia(p, rid)
+        expect(encontrados == esperada,
+               f"{rid}: evidencia identica a la anterior, etiquetas incluidas", f"{encontrados}")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -1064,6 +1139,10 @@ def main():
         test_F003_R003_siguiente_id_ignora_menciones(base)
         test_F003_R001_auditoria_revierte_otra_feature(base)
         test_F003_R002_auditoria_silenciosa_sin_cambios(base)
+        test_F003_R005_cita_fuera_de_prueba_no_cuenta(base)
+        test_F003_R006_nombre_y_cuerpo_cuentan(base)
+        test_F003_R006_python_sin_ast_usa_la_atribucion_anterior(base)
+        test_F003_R007_otros_lenguajes_identicos(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

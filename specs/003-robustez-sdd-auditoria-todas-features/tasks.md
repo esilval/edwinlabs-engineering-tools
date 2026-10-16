@@ -59,7 +59,7 @@ dependen entre sí, pero comparten el selftest: se ejecutan una detrás de otra.
 
 ### T004 — Atribución por función de prueba en Python
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R006, R007
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd_trace.py`, `plugins/sdd/tests/selftest.py`
