@@ -76,7 +76,7 @@ dependen entre sí, pero comparten el selftest: se ejecutan una detrás de otra.
 
 ### T005 — README y cierre
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R005
 - **Depende de:** T001, T002, T003, T004
 - **Archivos:** `plugins/sdd/README.md`
