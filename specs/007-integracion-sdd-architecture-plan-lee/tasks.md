@@ -43,7 +43,7 @@ contrato ejecuta `architecture.py`.
 
 ### T002 — Trazabilidad de las decisiones que cita el plan · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R004, R005, R001
 - **Depende de:** T001
 - **Archivos:** `plugins/sdd/scripts/sdd_trace.py`, `plugins/sdd/tests/selftest.py`

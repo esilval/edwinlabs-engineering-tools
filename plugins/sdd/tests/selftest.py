@@ -380,13 +380,19 @@ def test_trazabilidad(base):
     (p2 / "specs" / "001-x" / "spec.md").write_text(SPEC_BASE, encoding="utf-8")
     check("W-REQ-NO-TASK" in codigos(p2), "W-REQ-NO-TASK")
 
+    print("\nPlanes contra la arquitectura (feature 007)")
+    arquitectura = codigos_plan_arquitectura(base)
+    check(len(arquitectura) == 4, "los cuatro codigos de plan contra arquitectura se emiten",
+          f"{sorted(arquitectura)}")
+
     sys.path.insert(0, str(PLUGIN / "scripts"))
     import sdd_trace
     declarados = set(sdd_trace.FINDINGS)
     probados = set(FIXTURES) | {"E-REQ-NO-TASK", "E-REQ-NO-TEST",
                                 "E-REQ-NO-CRITERIA", "W-REQ-NO-TASK",
                                 "W-TEST-UNSCOPED", "W-TASK-NO-DONE-WHEN",
-                                "W-TEST-EMPTY", "W-TEST-NO-ASSERT"} | set(planes)
+                                "W-TEST-EMPTY", "W-TEST-NO-ASSERT"} | set(planes) \
+        | arquitectura
     check(declarados == probados,
           f"los {len(declarados)} codigos declarados estan cubiertos",
           f"sin probar: {sorted(declarados - probados)}")
@@ -1835,6 +1841,115 @@ def test_F007_R009_contrato_con_architecture(base):
            f"{sa.approval_problems(p)}")
 
 
+def plan_con_adrs(*citas, seccion=True):
+    """Plan coherente de la feature 001-x que cita las decisiones dadas."""
+    texto = PLAN_LISTO
+    if seccion:
+        texto += ("\n## Comprobación de arquitectura\n\n| Decisión | Cómo |\n| - | - |\n"
+                  + "".join(f"| {c} | se respeta |\n" for c in citas))
+    elif citas:
+        texto += "\nApoyado en " + ", ".join(citas) + ".\n"
+    return texto
+
+
+def proyecto_plan(base, nombre, *citas, seccion=True, aprobado=False, arquitectura=True):
+    """Feature 001-x con spec y plan, y una arquitectura aprobada si se pide."""
+    p = repo_con_feature(base, nombre, spec=SPEC_LISTA)
+    plan = p / "specs" / "001-x" / "plan.md"
+    plan.write_text(plan_con_adrs(*citas, seccion=seccion), encoding="utf-8")
+    if aprobado:
+        sys.path.insert(0, str(PLUGIN / "scripts"))
+        import sdd_trace
+        texto = plan.read_text(encoding="utf-8")
+        plan.write_text(sdd_trace.set_status(
+            texto, f"Approved · {sdd_trace.content_digest(texto, 'plan.md')}")[0],
+            encoding="utf-8")
+    if arquitectura:
+        con_arquitectura(p)
+    return p
+
+
+def hallazgos_de(p, code):
+    return [f for f in traza(p)["findings"] if f["code"] == code]
+
+
+def codigos_plan_arquitectura(base):
+    """Los cuatro codigos de la feature 007, emitidos de verdad (para la cobertura)."""
+    vistos = set()
+    p = proyecto_plan(base, "tr-arq-codigos", "ADR-0009", "ADR-0004", seccion=False)
+    vistos |= {f["code"] for f in traza(p)["findings"]}
+    p = proyecto_plan(base, "tr-arq-sustituida", "ADR-0002", aprobado=True)
+    d = p / "architecture" / "adr" / "0002-despliegue.md"
+    texto = d.read_text(encoding="utf-8")
+    d.write_text(texto.replace(architecture_lee().product.doc_status(texto),
+                               "Superseded by ADR-0004"), encoding="utf-8")
+    vistos |= {f["code"] for f in traza(p)["findings"]}
+    return vistos & {"E-PLAN-ADR-UNKNOWN", "E-PLAN-ADR-NOT-APPROVED",
+                     "W-PLAN-NO-ARCHITECTURE-CHECK", "W-PLAN-ADR-SUPERSEDED"}
+
+
+def test_F007_R003_plan_cita_adr_no_aprobado(base):
+    print("\nF007 · R003: el plan solo se apoya en decisiones aprobadas")
+    p = proyecto_plan(base, "f007-r003-inexistente", "ADR-0009")
+    h = hallazgos_de(p, "E-PLAN-ADR-UNKNOWN")
+    expect(len(h) == 1 and "ADR-0009" in h[0]["message"] and h[0]["severity"] == "error",
+           "citar ADR-0009, inexistente: error que la nombra", f"{h}")
+    p = proyecto_plan(base, "f007-r003-propuesta", "ADR-0004")
+    h = hallazgos_de(p, "E-PLAN-ADR-NOT-APPROVED")
+    expect(len(h) == 1 and "ADR-0004" in h[0]["message"]
+           and "/architecture:review" in h[0]["message"],
+           "citar ADR-0004 propuesta: error que remite a /architecture:review", f"{h}")
+    p = proyecto_plan(base, "f007-r003-rechazada", "ADR-0003")
+    expect(len(hallazgos_de(p, "E-PLAN-ADR-NOT-APPROVED")) == 1,
+           "citar ADR-0003 rechazada tambien es error")
+    p = proyecto_plan(base, "f007-r003-aprobada", "ADR-0001")
+    codigos_p = {f["code"] for f in traza(p)["findings"]}
+    expect(not codigos_p & {"E-PLAN-ADR-UNKNOWN", "E-PLAN-ADR-NOT-APPROVED"},
+           "citar ADR-0001 aprobada no da nada", f"{codigos_p}")
+
+
+def test_F007_R004_plan_sin_comprobacion_de_arquitectura(base):
+    print("\nF007 · R004: con arquitectura, el plan se contrasta con ella")
+    p = proyecto_plan(base, "f007-r004-sin", "ADR-0001", seccion=False)
+    h = hallazgos_de(p, "W-PLAN-NO-ARCHITECTURE-CHECK")
+    expect(len(h) == 1 and h[0]["severity"] == "warning",
+           "sin la seccion 'Comprobacion de arquitectura': aviso", f"{h}")
+    p = proyecto_plan(base, "f007-r004-con", "ADR-0001")
+    expect(not hallazgos_de(p, "W-PLAN-NO-ARCHITECTURE-CHECK"), "con la seccion: ninguno")
+
+
+def test_F007_R005_adr_sustituido_tras_aprobar(base):
+    print("\nF007 · R005: una decision sustituida tras aprobar el plan se avisa")
+    sa = architecture_lee()
+    for aprobado in (True, False):
+        p = proyecto_plan(base, f"f007-r005-{'aprobado' if aprobado else 'borrador'}",
+                          "ADR-0002", aprobado=aprobado)
+        d = p / "architecture" / "adr" / "0002-despliegue.md"
+        texto = d.read_text(encoding="utf-8")
+        d.write_text(texto.replace(sa.product.doc_status(texto), "Superseded by ADR-0004"),
+                     encoding="utf-8")
+        avisos = hallazgos_de(p, "W-PLAN-ADR-SUPERSEDED")
+        errores = hallazgos_de(p, "E-PLAN-ADR-NOT-APPROVED")
+        if aprobado:
+            expect(len(avisos) == 1 and "ADR-0004" in avisos[0]["message"] and not errores,
+                   "plan aprobado: aviso que nombra ADR-0004 y ningun error",
+                   f"{avisos} {errores}")
+        else:
+            expect(not avisos and len(errores) == 1,
+                   "plan sin aprobar: error, no aviso", f"{avisos} {errores}")
+
+
+def test_F007_R001_trace_sin_arquitectura_igual(base):
+    print("\nF007 · R001: sin architecture/ la trazabilidad no cambia")
+    con = proyecto_plan(base, "f007-r001-cita", "ADR-0009", "ADR-0004", seccion=False,
+                        arquitectura=False)
+    sin = proyecto_plan(base, "f007-r001-sin-cita", seccion=False, arquitectura=False)
+    a, b = traza(con), traza(sin)
+    expect(a["findings"] == b["findings"] and a["requirements"] == b["requirements"],
+           "un plan que cita ADR da los mismos hallazgos que uno que no",
+           f"{a['findings']} vs {b['findings']}")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -1880,6 +1995,10 @@ def main():
         test_F005_R006_seccion_que_no_se_puede_leer(base)
         test_F007_R002_lee_la_arquitectura(base)
         test_F007_R009_contrato_con_architecture(base)
+        test_F007_R003_plan_cita_adr_no_aprobado(base)
+        test_F007_R004_plan_sin_comprobacion_de_arquitectura(base)
+        test_F007_R005_adr_sustituido_tras_aprobar(base)
+        test_F007_R001_trace_sin_arquitectura_igual(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
