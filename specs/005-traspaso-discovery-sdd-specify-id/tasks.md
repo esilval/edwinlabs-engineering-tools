@@ -85,7 +85,7 @@ huella de `sdd_product`, salvo en la prueba de contrato.
 
 ### T005 — Skill `specify`, README y cierre
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R003, R006
 - **Depende de:** T004
 - **Archivos:** `plugins/sdd/skills/specify/SKILL.md`, `plugins/sdd/README.md`
