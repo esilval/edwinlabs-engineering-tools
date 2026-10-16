@@ -393,6 +393,20 @@ def prepare_handoff(root, cid):
     if cid in taken:
         return None, (f"No se crea la feature: {cid} ya tiene una, {taken[cid]} "
                       f"(fila Origen de specs/{taken[cid]}/spec.md).")
+    # Con architecture/ (feature 007, D5): la arquitectura tiene que estar
+    # aprobada y alojar la candidata en algun componente.
+    sa = _architecture()
+    hosts = None
+    if sa.exists(root):
+        arch_problems = sa.approval_problems(root)
+        if arch_problems:
+            return None, (f"No se crea la feature desde {cid}: la arquitectura no está "
+                          "aprobada.\n" + "".join(f"  - {x}\n" for x in arch_problems))
+        hosts = [c["id"] for c in sa.components(root) if cid in c["candidates"]]
+        if not hosts:
+            return None, (f"No se crea la feature: {cid} no vive en ningún componente de "
+                          "architecture/components.md. Se corrige en architecture "
+                          "(/architecture:init) y se aprueba con /architecture:approve.")
     fields = cand["fields"]
     goal_ids = p.refs(fields.get("objetivos"))["goals"]
     all_goals = p.goals(root)
@@ -403,6 +417,8 @@ def prepare_handoff(root, cid):
         "sections": [p.source_section(root, s)
                      for s in p.refs(fields.get("origen"))["sections"]],
     }
+    if hosts is not None:
+        handoff["components"] = hosts  # solo con arquitectura: Origen de 4 grupos
     # Avisos que no impiden crear la feature: dependencias sin feature (R009)
     # y secciones de origen que ya no se pueden leer como contexto (R006).
     warnings = []
@@ -442,7 +458,7 @@ def features_by_origin(root):
 
 def handoff_json(handoff):
     """Campos que el traspaso añade a la salida de new (D5)."""
-    return {
+    out = {
         "origin": {"candidate": handoff["candidate"]["id"],
                    "goals": [g["id"] for g in handoff["goals"]],
                    "sections": [s["ref"] for s in handoff["sections"]]},
@@ -450,16 +466,23 @@ def handoff_json(handoff):
                     "goals": handoff["goals"], "sources": handoff["sections"]},
         "warnings": handoff["warnings"],
     }
+    if "components" in handoff:  # feature 007: con arquitectura
+        out["origin"]["components"] = handoff["components"]
+        out["context"]["components"] = handoff["components"]
+    return out
 
 
 def origin_value(handoff):
     """
     'B03 · G2 · D2§4.2': candidata, objetivos y secciones, siempre en ese orden
     y separados por ' · '. Un grupo vacio se escribe '—' para no mover los demas.
+    Con arquitectura, un cuarto grupo con los componentes: 'B03 · G2 · D2§4.2 · C2'.
     """
     parts = [handoff["candidate"]["id"],
              ", ".join(g["id"] for g in handoff["goals"]),
              ", ".join(s["ref"] for s in handoff["sections"])]
+    if "components" in handoff:
+        parts.append(", ".join(handoff["components"]))
     return " · ".join(x or "—" for x in parts)
 
 

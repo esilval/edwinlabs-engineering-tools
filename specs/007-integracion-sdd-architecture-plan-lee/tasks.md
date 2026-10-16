@@ -84,7 +84,7 @@ contrato ejecuta `architecture.py`.
 
 ### T005 — Traspaso con arquitectura · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R007, R008, R001
 - **Depende de:** T001
 - **Archivos:** `plugins/sdd/scripts/sdd.py`, `plugins/sdd/tests/selftest.py`

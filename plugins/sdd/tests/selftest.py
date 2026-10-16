@@ -2051,6 +2051,59 @@ def test_F007_R006_propone_una_decision(base):
                f"{de_la_propuesta}")
 
 
+def test_F007_R007_origen_con_componentes(base):
+    print("\nF007 · R007: el traspaso registra los componentes de la candidata")
+    p = base / "f007-r007"
+    p.mkdir()
+    con_arquitectura(p)
+    r = run("new", ["B02"], cwd=p)
+    salida = json.loads(r.stdout) if r.returncode == 0 else {}
+    spec = (p / "specs" / "001-exportar-movimientos" / "spec.md").read_text(encoding="utf-8") \
+        if salida else ""
+    expect("| Origen | B02 · G2 · D1§4 · C2 |" in spec,
+           "| Origen | B02 · G2 · D1§4 · C2 |", r.stdout + r.stderr)
+    expect(salida.get("origin", {}).get("components") == ["C2"]
+           and salida.get("context", {}).get("components") == ["C2"],
+           "el JSON de new trae los componentes en origin y context")
+
+
+def test_F007_R008_traspaso_sin_arquitectura_lista(base):
+    print("\nF007 · R008: el traspaso se niega si la arquitectura no esta lista")
+    sin_b02 = ARQ_COMPONENTS.replace("- **Candidatas:** B02", "- **Candidatas:** —")
+    p = base / "f007-r008-sin-componente"
+    p.mkdir()
+    con_arquitectura(p, components=sin_b02)
+    ok, err = niega(p, "B02", "B02 no vive en ningún componente", "/architecture:init")
+    expect(ok, "B02 sin componente: no se crea y se dice que se corrige en architecture", err)
+
+    p = base / "f007-r008-sin-aprobar"
+    p.mkdir()
+    con_arquitectura(p, aprobada=False)
+    ok, err = niega(p, "B02", "la arquitectura no está aprobada", "/architecture:approve")
+    expect(ok, "arquitectura sin aprobar: no se crea y se remite a /architecture:approve", err)
+
+    p = base / "f007-r008-cambiada"
+    p.mkdir()
+    con_arquitectura(p)
+    comp = p / "architecture" / "components.md"
+    comp.write_text(comp.read_text(encoding="utf-8").replace("registra ventas",
+                                                             "registra ventas y cobros"),
+                    encoding="utf-8")
+    ok, err = niega(p, "B02", "components.md cambió después de aprobarse",
+                    "/architecture:approve")
+    expect(ok, "arquitectura cambiada tras aprobarse: no se crea y se dice cual", err)
+
+
+def test_F007_R001_traspaso_sin_arquitectura_igual(base):
+    print("\nF007 · R001: sin architecture/, el traspaso es el de siempre")
+    p = con_producto(base / "f007-r001-traspaso")
+    r = run("new", ["B02"], cwd=p)
+    spec = (p / "specs" / "001-exportar-movimientos" / "spec.md").read_text(encoding="utf-8")
+    expect("| Origen | B02 · G2 · D1§4 |\n" in spec
+           and "components" not in json.loads(r.stdout)["origin"],
+           "Origen de tres grupos y sin componentes en el JSON", spec[:400])
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -2103,6 +2156,9 @@ def main():
         test_F007_R002_contexto_de_planificacion(base)
         test_F007_R001_contexto_sin_arquitectura(base)
         test_F007_R006_propone_una_decision(base)
+        test_F007_R007_origen_con_componentes(base)
+        test_F007_R008_traspaso_sin_arquitectura_lista(base)
+        test_F007_R001_traspaso_sin_arquitectura_igual(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
