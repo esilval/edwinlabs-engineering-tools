@@ -1478,6 +1478,127 @@ def test_F005_R006_resuelve_objetivos_y_fuentes(base):
            "las secciones se leen en orden de aparicion")
 
 
+def specs_creadas(p):
+    return sorted(x.name for x in (p / "specs").iterdir()) if (p / "specs").is_dir() else []
+
+
+def test_F005_R001_crea_la_spec_desde_la_candidata(base):
+    print("\nF005 · R001: /sdd:specify B02 crea la spec desde la candidata")
+    for n, arg in enumerate(("B02", "b02")):
+        p = con_producto(base / f"f005-r001-{n}")  # macOS no distingue B02 de b02
+        r = run("new", [arg], cwd=p)
+        creada = json.loads(r.stdout)["feature"] if r.returncode == 0 else None
+        expect(creada == "001-exportar-movimientos",
+               f"new {arg}: el nombre sale del titulo de la candidata", r.stdout + r.stderr)
+        if not creada:
+            continue
+        spec = (p / "specs" / creada / "spec.md").read_text(encoding="utf-8")
+        expect(spec.startswith("# Spec: Exportar movimientos")
+               and "## Problema\n\nel dueño copia a mano sus ventas para su gestor." in spec
+               and "- el dueño descarga sus movimientos en un archivo." in spec
+               and "- movimientos de un rango de fechas." in spec
+               and "### Fuera (non-goals)\n\n- envío automático al gestor." in spec,
+               f"new {arg}: problema, resultado observable, Dentro y Fuera de la candidata")
+        expect("G2 — Que el comercio use sus datos fuera" in spec and "D1§4" in spec,
+               f"new {arg}: el Contexto cita el objetivo y la seccion de origen")
+
+
+def test_F005_R002_origen_en_la_cabecera(base):
+    print("\nF005 · R002: la cabecera registra el origen")
+    p = con_producto(base / "f005-r002")
+    run("new", ["B02"], cwd=p)
+    spec = (p / "specs" / "001-exportar-movimientos" / "spec.md").read_text(encoding="utf-8")
+    cabecera = spec.split("\n## ", 1)[0]
+    expect("| Issue  | —            |\n| Origen | B02 · G2 · D1§4 |\n" in cabecera,
+           "| Origen | B02 · G2 · D1§4 | tras la fila Issue", cabecera)
+    p = con_producto(base / "f005-r002-varios")
+    run("new", ["B01"], cwd=p)
+    spec = next((p / "specs").iterdir()) / "spec.md"
+    expect("| Origen | B01 · G1 · D1§1, D1§3 |" in spec.read_text(encoding="utf-8"),
+           "varias secciones, separadas por comas en su grupo")
+
+
+def niega(p, arg, *fragmentos):
+    """new arg sale con 1, no crea ninguna feature ni mueve .sdd/current, y el
+    motivo contiene los fragmentos."""
+    actual = (p / ".sdd" / "current").read_text() if (p / ".sdd" / "current").is_file() else None
+    r = run("new", [arg], cwd=p)
+    despues = (p / ".sdd" / "current").read_text() if (p / ".sdd" / "current").is_file() else None
+    return (r.returncode == 1 and not specs_creadas(p) and actual == despues
+            and all(f in r.stderr for f in fragmentos)), r.stderr
+
+
+def test_F005_R003_producto_sin_aprobar(base):
+    print("\nF005 · R003: sin el producto aprobado no se crea la feature")
+    p = con_producto(base / "f005-r003-draft", aprobado=False)
+    ok, err = niega(p, "B02", "product/backlog.md no está aprobado", "/discovery:approve")
+    expect(ok, "backlog en Draft: no se crea y se dice que lo aprueba /discovery:approve", err)
+
+    p = con_producto(base / "f005-r003-cambiado")
+    brief = p / "product" / "brief.md"
+    brief.write_text(brief.read_text(encoding="utf-8").replace("sin calcularlas", "al vuelo"),
+                     encoding="utf-8")
+    ok, err = niega(p, "B02", "product/brief.md cambió después de aprobarse")
+    expect(ok, "brief editado tras aprobarse: no se crea y se dice que cambio", err)
+
+    p = con_producto(base / "f005-r003-sin-brief")
+    (p / "product" / "brief.md").unlink()
+    ok, err = niega(p, "B02", "product/brief.md no existe")
+    expect(ok, "backlog sin brief: no se crea y se dice que falta el brief", err)
+
+
+def test_F005_R004_candidata_inexistente_o_descartada(base):
+    print("\nF005 · R004: candidata inexistente o descartada")
+    p = con_producto(base / "f005-r004-b09")
+    ok, err = niega(p, "B09", "B09 no existe")
+    expect(ok, "B09 no existe: no se crea y se dice", err)
+    p = con_producto(base / "f005-r004-b03")
+    ok, err = niega(p, "b03", "B03 está descartada")
+    expect(ok, "B03 descartada: no se crea y se dice", err)
+
+
+def test_F005_R007_sin_backlog_o_sin_id(base):
+    print("\nF005 · R007: sin backlog, o sin un ID, como hasta ahora")
+    p = base / "f005-r007-sin-backlog"
+    p.mkdir()
+    r = run("new", ["B03"], cwd=p)
+    expect(r.returncode == 0 and json.loads(r.stdout)["feature"] == "001-b03",
+           "sin product/backlog.md, B03 es una descripcion mas", r.stdout + r.stderr)
+    spec = (p / "specs" / "001-b03" / "spec.md").read_text(encoding="utf-8")
+    expect("| Origen |" not in spec and spec.startswith("# Spec: B03"), "sin origen")
+
+    p = con_producto(base / "f005-r007-descripcion")
+    r = run("new", ["login con Google"], cwd=p)
+    creada = json.loads(r.stdout)["feature"] if r.returncode == 0 else ""
+    spec = (p / "specs" / creada / "spec.md").read_text(encoding="utf-8") if creada else ""
+    plantilla = (PLUGIN / "templates" / "spec.md").read_text(encoding="utf-8")
+    esperada = (plantilla.replace("{{ID}}", creada).replace("{{TITLE}}", "login con Google")
+                .replace("{{DATE}}", spec.split("| Fecha  | ")[1].split(" ")[0] if spec else ""))
+    expect(creada == "001-login-google" and spec == esperada,
+           "con backlog y una descripcion normal: la plantilla de siempre, sin origen",
+           r.stdout + r.stderr)
+
+
+def test_F005_R008_specs_sin_origen_igual(base):
+    print("\nF005 · R008: una spec sin origen se trata igual con o sin producto al lado")
+    salidas = {}
+    for nombre, producto in (("f005-r008-solo", False), ("f005-r008-con-producto", True)):
+        p = repo_con_feature(base, nombre, spec=SPEC_LISTA)
+        if producto:
+            con_producto(p)
+        quita = lambda s, p=p: s.replace(str(p), "<raiz>")  # noqa: E731
+        salidas[nombre] = (
+            quita(run("status", cwd=p).stdout),
+            json.loads(run("trace", ["--json"], cwd=p).stdout)["requirements"],
+            quita(run("approve", ["--skill"], cwd=p).stdout),
+            (p / "specs" / "001-x" / "spec.md").read_text(encoding="utf-8"),
+        )
+    a, b = salidas["f005-r008-solo"], salidas["f005-r008-con-producto"]
+    for i, que in enumerate(("status", "trace", "approve", "spec aprobada")):
+        expect(a[i] == b[i], f"{que}: identico con un product/ aprobado al lado",
+               f"{a[i]!r} vs {b[i]!r}"[:300])
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -1511,6 +1632,12 @@ def main():
         test_F005_R003_contrato_con_discovery(base)
         test_F005_R004_lee_candidatas_y_descartadas(base)
         test_F005_R006_resuelve_objetivos_y_fuentes(base)
+        test_F005_R001_crea_la_spec_desde_la_candidata(base)
+        test_F005_R002_origen_en_la_cabecera(base)
+        test_F005_R003_producto_sin_aprobar(base)
+        test_F005_R004_candidata_inexistente_o_descartada(base)
+        test_F005_R007_sin_backlog_o_sin_id(base)
+        test_F005_R008_specs_sin_origen_igual(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

@@ -54,7 +54,7 @@ huella de `sdd_product`, salvo en la prueba de contrato.
 
 ### T003 — `sdd.py new` en modo traspaso: crear o negarse
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002, R003, R004, R007, R008
 - **Depende de:** T001, T002
 - **Archivos:** `plugins/sdd/scripts/sdd.py`, `plugins/sdd/tests/selftest.py`

@@ -352,6 +352,99 @@ def render_template(name, mapping, plugin_root):
     return text
 
 
+def _product():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import sdd_product
+    return sdd_product
+
+
+# Un ID de candidata del backlog de discovery: B03, b12.
+CANDIDATE_ARG = re.compile(r"^[Bb]\d+$")
+
+
+def prepare_handoff(root, cid):
+    """
+    Lee la candidata cid del producto de discovery. Devuelve (handoff, None)
+    o (None, motivo) si no se puede crear la feature: producto sin aprobar o
+    cambiado, candidata inexistente o descartada. No escribe nada.
+    """
+    p = _product()
+    cid = cid.upper()
+    problems = p.approval_problems(root)
+    if problems:
+        return None, (f"No se crea la feature desde {cid}: el producto de discovery no "
+                      "está aprobado.\n" + "".join(f"  - {x}\n" for x in problems))
+    cand = p.candidate(root, cid)
+    if cand is None:
+        return None, f"No se crea la feature: {cid} no existe en product/backlog.md."
+    if cand["state"] == "descartada":
+        motivo = re.sub(r"^\S+\s*", "", cand["fields"].get("estado", "")).strip(" ()")
+        return None, (f"No se crea la feature: {cid} está descartada en product/backlog.md"
+                      + (f" ({motivo})." if motivo else "."))
+    fields = cand["fields"]
+    goal_ids = p.refs(fields.get("objetivos"))["goals"]
+    all_goals = p.goals(root)
+    return {
+        "candidate": cand,
+        "goals": [all_goals.get(g, {"id": g, "title": None, "description": ""})
+                  for g in goal_ids],
+        "sections": [p.source_section(root, s)
+                     for s in p.refs(fields.get("origen"))["sections"]],
+    }, None
+
+
+def origin_value(handoff):
+    """
+    'B03 · G2 · D2§4.2': candidata, objetivos y secciones, siempre en ese orden
+    y separados por ' · '. Un grupo vacio se escribe '—' para no mover los demas.
+    """
+    parts = [handoff["candidate"]["id"],
+             ", ".join(g["id"] for g in handoff["goals"]),
+             ", ".join(s["ref"] for s in handoff["sections"])]
+    return " · ".join(x or "—" for x in parts)
+
+
+def _replace_section(text, title, body):
+    """Sustituye el cuerpo de '## title' hasta el siguiente encabezado de nivel 2."""
+    pattern = re.compile(rf"(^## {re.escape(title)}[^\n]*\n)(.*?)(?=^## |\Z)", re.M | re.S)
+    return pattern.sub(lambda m: m.group(1) + "\n" + body.strip() + "\n\n", text, count=1)
+
+
+def fill_from_candidate(text, handoff):
+    """Problema, Contexto, Alcance y la fila Origen de la spec, desde la candidata (D3)."""
+    cand = handoff["candidate"]
+    f = cand["fields"]
+    missing = "No consta en la candidata."
+    text = _replace_section(text, "Problema", f.get("problema") or missing)
+
+    lines = [f"Feature creada desde la candidata {cand['id']} «{cand['title']}» de "
+             "`product/backlog.md`, con el producto de discovery aprobado.", ""]
+    for g in handoff["goals"]:
+        if g["title"] is None:
+            lines.append(f"- **{g['id']}:** no está en `product/brief.md`.")
+        else:
+            lines.append(f"- **{g['id']} — {g['title']}:** {g['description']}")
+    for s in handoff["sections"]:
+        where = f"`{s['file']}`" if s["file"] else "documento no encontrado en product/sources/"
+        title = f" «{s['title']}»" if s["title"] else ""
+        lines.append(f"- **Origen {s['ref']}**{title}: {where}")
+    text = _replace_section(text, "Contexto", "\n".join(lines))
+
+    inside = [x for x in (f.get("resultado observable"), f.get("dentro")) if x and x != "—"]
+    outside = [x for x in (f.get("fuera"),) if x and x != "—"]
+    text = _replace_section(
+        text, "Alcance",
+        "### Dentro\n\n" + "".join(f"- {x}\n" for x in (inside or [missing]))
+        + "\n### Fuera (non-goals)\n\n" + "".join(f"- {x}\n" for x in (outside or [missing])))
+
+    row = f"| Origen | {origin_value(handoff)} |\n"
+    issue = re.compile(r"^\|\s*Issue\s*\|[^\n]*\n", re.M)
+    if issue.search(text):
+        return issue.sub(lambda m: m.group(0) + row, text, count=1)
+    return re.sub(r"^(\|\s*Estado\s*\|[^\n]*\n)", lambda m: m.group(1) + row, text,
+                  count=1, flags=re.M)
+
+
 def cmd_new(args):
     description = " ".join(args).strip()
     if not description:
@@ -362,6 +455,17 @@ def cmd_new(args):
     plugin_root = os.environ.get(
         "CLAUDE_PLUGIN_ROOT", str(Path(__file__).resolve().parent.parent)
     )
+
+    # Traspaso desde discovery (D1): solo con un ID de candidata y un backlog.
+    # Cualquier otra descripcion sigue el camino de siempre.
+    handoff = None
+    if (CANDIDATE_ARG.match(description)
+            and (root / "product" / "backlog.md").is_file()):
+        handoff, refusal = prepare_handoff(root, description)
+        if refusal:
+            print(refusal.rstrip(), file=sys.stderr)
+            return 1
+        description = handoff["candidate"]["title"] or handoff["candidate"]["id"]
 
     specs_dir(root).mkdir(parents=True, exist_ok=True)
     number = next_number(root)
@@ -378,9 +482,10 @@ def cmd_new(args):
         "TITLE": description,
         "DATE": datetime.date.today().isoformat(),
     }
-    (feature / "spec.md").write_text(
-        render_template("spec.md", mapping, plugin_root), encoding="utf-8"
-    )
+    spec_text = render_template("spec.md", mapping, plugin_root)
+    if handoff:
+        spec_text = fill_from_candidate(spec_text, handoff)
+    (feature / "spec.md").write_text(spec_text, encoding="utf-8")
 
     sdd = root / ".sdd"
     sdd.mkdir(exist_ok=True)
