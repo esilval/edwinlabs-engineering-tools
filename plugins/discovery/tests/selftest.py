@@ -1149,6 +1149,70 @@ def test_F004_R004_variable_de_entorno_manda():
            "con la variable en un proyecto y el cwd en otro, manda la variable", r.stdout[:200])
 
 
+# ------------------------------------------------- feature 004 (sdd) · T003
+# Listas equivalentes a MENCIONES y EJECUCIONES del selftest de sdd: las dos
+# copias del analizador deben dar lo mismo.
+
+MENCIONES = [
+    "git commit -q -m 'discovery: la compuerta ya no bloquea discovery.py approve'",
+    'gh pr create --title t --body "Corrige: python3 discovery.py approve en texto"',
+    "cat > notas.md <<'EOF'\npython3 plugins/discovery/scripts/discovery.py approve\nEOF",
+    'echo "para aprobar: python3 discovery.py approve"',
+    "grep -rn 'discovery.py approve' plugins/discovery/README.md",
+    "git commit -m 'la compuerta ya no bloquea `python3 discovery.py approve`'",
+    "gh pr create --title t --body 'Ahora `discovery.py approve` solo se bloquea si se ejecuta'",
+    "git commit -m 'cita $(python3 discovery.py approve) en texto'",
+]
+
+EJECUCIONES = [
+    "python3 discovery.py approve",
+    "python3 /x/plugins/discovery/scripts/discovery.py approve --skill",
+    'python3 "$HOME/plugins/discovery/scripts/discovery.py" approve',
+    "cd plugins/discovery && python3 scripts/discovery.py approve",
+    "ls; FOO=1 python3 discovery.py approve",
+    "echo `python3 discovery.py approve`",
+    'echo "$(python3 discovery.py approve)"',
+    'git commit -m "$(python3 /x/discovery.py approve)"',
+    "x=$(cd y && python3 discovery.py approve)",
+    "python3 discovery.py approve; echo $'it\\'s'",
+]
+
+
+def test_F004_R005_mencion_no_bloquea():
+    root = producto_ok("f004-r005")
+    for cmd in MENCIONES:
+        corto = cmd.splitlines()[0][:50]
+        expect(not discovery.invokes_approve(cmd), f"no es ejecucion: {corto!r}")
+        r = hook(root, "guard", "Bash", {"command": cmd})
+        expect(deniega(r) is False, f"la compuerta no bloquea: {corto!r}", r.stdout)
+    expect(not discovery.invokes_approve('echo "sin cerrar'),
+           "un comando que no se analiza y no contiene la orden: no")
+
+
+def test_F004_R006_ejecucion_bloquea():
+    root = producto_ok("f004-r006")
+    for cmd in EJECUCIONES:
+        expect(discovery.invokes_approve(cmd), f"es ejecucion: {cmd!r}")
+        r = hook(root, "guard", "Bash", {"command": cmd})
+        expect(deniega(r) is True, f"bloquea: {cmd!r}", r.stdout)
+        expect("allow" not in r.stdout, f"nunca devuelve allow: {cmd!r}")
+
+
+def test_F004_R007_auditoria_revierte():
+    root = producto_ok("f004-r007")
+    opaco = "bash -c 'python3 plugins/discovery/scripts/discovery.py approve --skill'"
+    r = hook(root, "guard", "Bash", {"command": opaco}, tool_use_id="f4")
+    expect(deniega(r) is False, "la compuerta deja pasar un bash -c", r.stdout)
+    backlog = root / "product" / "backlog.md"
+    texto = backlog.read_text(encoding="utf-8")
+    backlog.write_text(discovery.set_status(texto, "Approved · 0123456789ab")[0],
+                       encoding="utf-8")
+    r = hook(root, "audit", "Bash", {}, tool_use_id="f4")
+    expect(r.returncode == 2 and estado(root, "backlog.md") == "Draft"
+           and "backlog.md" in r.stderr,
+           "y la auditoria devuelve el backlog a Draft y avisa", r.stderr)
+
+
 def main():
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_") and callable(f)]
     try:

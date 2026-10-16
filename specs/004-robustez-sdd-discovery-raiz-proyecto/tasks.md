@@ -57,7 +57,7 @@ registradas en su ejecución. Las pruebas de la raíz quitan
 
 ### T003 — La compuerta de `discovery` distingue ejecutar de mencionar
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R006, R007
 - **Depende de:** T002
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`
