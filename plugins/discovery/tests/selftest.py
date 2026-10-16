@@ -1072,6 +1072,83 @@ def cobertura_de_codigos():
 
 # --------------------------------------------------------------------------
 
+# ------------------------------------------------- feature 004 (sdd) · T002
+
+def run_sin_raiz(cwd, *args):
+    """Como run, pero sin CLAUDE_PROJECT_DIR: como la inyeccion de una skill."""
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(PLUGIN))
+    env.pop("CLAUDE_PROJECT_DIR", None)
+    return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True,
+                          text=True, cwd=str(cwd), env=env, timeout=60)
+
+
+def test_F004_R002_raiz_desde_subdirectorio():
+    root = producto_ok("f004-r002")
+    sources = root / "product" / "sources"
+    desde_sub = run_sin_raiz(sources, "check", "--json")
+    desde_raiz = run(root, "check", "--json")
+    expect(desde_sub.returncode == 0 and desde_sub.stdout == desde_raiz.stdout
+           and json.loads(desde_sub.stdout)["ok"],
+           "check desde product/sources/ analiza el brief y el backlog del proyecto",
+           desde_sub.stdout[:200] + desde_sub.stderr)
+
+    # Segun la version de Python, is_dir() lanza PermissionError o devuelve
+    # False ante un directorio sin permiso: se fuerza la excepcion.
+    cerrado = root / "cerrado"
+    (cerrado / "x").mkdir(parents=True)
+    original = Path.is_dir
+
+    def is_dir_sin_permiso(ruta):
+        if cerrado in ruta.parents:
+            raise PermissionError(13, "sin permiso", str(ruta))
+        return original(ruta)
+
+    Path.is_dir = is_dir_sin_permiso
+    try:
+        hallado = discovery.find_upwards(cerrado / "x", ("product",))
+    finally:
+        Path.is_dir = original
+    expect(hallado == root, "un directorio sin permiso cuenta como vacio y se sigue subiendo",
+           f"{hallado}")
+
+
+def test_F004_R003_sin_product_usa_el_directorio_actual():
+    # Fuera del repositorio hay un producto con contenido: si la busqueda se
+    # saliera del repo, la salida cambiaria.
+    fuera = producto_ok("f004-r003")
+    de_fuera = run(fuera, "check", "--json").stdout
+    for variante, crea_git in (("carpeta", lambda g: g.mkdir()),
+                               ("archivo de worktree", lambda g: g.write_text("gitdir: x\n"))):
+        repo = fuera / f"repo-{variante.split()[0]}"
+        (repo / "sub").mkdir(parents=True)
+        crea_git(repo / ".git")  # basta con que exista: es el tope de la busqueda
+        sin = run_sin_raiz(repo / "sub", "check", "--json")
+        como_hoy = run(repo / "sub", "check", "--json")
+        expect((sin.returncode, sin.stdout) == (como_hoy.returncode, como_hoy.stdout)
+               and sin.stdout != de_fuera,
+               f"sin product/ en el repo (.git como {variante}): como hoy, sin usar el de fuera",
+               f"{sin.stdout[:200]!r} vs {como_hoy.stdout[:200]!r}")
+        guardada = os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        try:
+            raiz = discovery.project_root({"cwd": str(repo / "sub")})
+        finally:
+            if guardada is not None:
+                os.environ["CLAUDE_PROJECT_DIR"] = guardada
+        expect(raiz == (repo / "sub").resolve(),
+               f"la raiz es el directorio actual (.git como {variante})", f"{raiz}")
+
+
+def test_F004_R004_variable_de_entorno_manda():
+    a = producto_ok("f004-r004-a")
+    b = proyecto("f004-r004-b")
+    (b / "product" / "sources").mkdir(parents=True)
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(PLUGIN), CLAUDE_PROJECT_DIR=str(a))
+    r = subprocess.run([sys.executable, str(SCRIPT), "check", "--json"], capture_output=True,
+                       text=True, cwd=str(b / "product" / "sources"), env=env, timeout=60)
+    expect(r.stdout == run(a, "check", "--json").stdout and json.loads(r.stdout)["ok"],
+           "con la variable en un proyecto y el cwd en otro, manda la variable", r.stdout[:200])
+
+
 def main():
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_") and callable(f)]
     try:

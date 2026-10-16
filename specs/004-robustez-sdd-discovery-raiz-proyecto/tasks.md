@@ -43,7 +43,7 @@ registradas en su ejecución. Las pruebas de la raíz quitan
 
 ### T002 — Raíz del proyecto en `discovery` · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R002, R003, R004
 - **Depende de:** —
 - **Archivos:** `plugins/discovery/scripts/discovery.py`, `plugins/discovery/tests/selftest.py`

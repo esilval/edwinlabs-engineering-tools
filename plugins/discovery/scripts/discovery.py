@@ -43,15 +43,38 @@ PRODUCT_DIR = "product"
 # --------------------------------------------------------------------------
 
 def project_root(payload=None):
-    """Raiz del proyecto. CLAUDE_PROJECT_DIR es la fuente autoritativa."""
-    for candidate in (
-        os.environ.get("CLAUDE_PROJECT_DIR"),
-        (payload or {}).get("cwd"),
-        os.getcwd(),
-    ):
-        if candidate:
-            return Path(candidate).resolve()
-    return Path.cwd().resolve()
+    """
+    Raiz del proyecto. CLAUDE_PROJECT_DIR es la fuente autoritativa y se usa
+    tal cual. Sin ella (la inyeccion de comandos de una skill no la recibe),
+    se sube desde el cwd hasta el directorio que contiene product/.
+    """
+    env = os.environ.get("CLAUDE_PROJECT_DIR")
+    if env:
+        return Path(env).resolve()
+    start = Path((payload or {}).get("cwd") or os.getcwd()).resolve()
+    return find_upwards(start, (PRODUCT_DIR,)) or start
+
+
+def find_upwards(start, markers):
+    """
+    El directorio mas cercano, desde start hacia arriba, que contiene alguno de
+    los directorios markers, o None. Se detiene en el primer directorio con
+    .git (carpeta, o archivo en un worktree) despues de examinarlo: la busqueda
+    no sale del repositorio. Un directorio que no se puede leer cuenta como
+    vacio.
+
+    Copia de find_upwards en plugins/sdd/scripts/sdd.py: los plugins no
+    comparten codigo. Un arreglo en una se replica en la otra.
+    """
+    for directory in (start, *start.parents):
+        try:
+            if any((directory / m).is_dir() for m in markers):
+                return directory
+            if (directory / ".git").exists():
+                return None
+        except OSError:
+            continue
+    return None
 
 
 def product_root(root):
