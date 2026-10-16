@@ -448,6 +448,28 @@ def code_view(content, suffix):
     return ["".join(line) for line in chars]
 
 
+def python_test_spans(lines):
+    """
+    [(primera_linea, ultima_linea, nombre)] de cada funcion cuyo nombre empieza
+    por test, tambien metodos de clase y funciones anidadas. Lineas 1-based,
+    desde el `def` (no el decorador) hasta el final del cuerpo.
+
+    Se analizan las mismas lineas que devuelve splitlines(), como en code_view,
+    para que la numeracion coincida. None si el archivo no se puede analizar
+    (sintaxis invalida o de una version mas nueva): entonces se usa la
+    atribucion de siempre.
+    """
+    import ast
+    try:
+        tree = ast.parse("\n".join(lines) + "\n")
+    except (SyntaxError, ValueError, MemoryError, RecursionError):
+        return None
+    return [(node.lineno, node.end_lineno, node.name)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test")]
+
+
 def scan_tests(root, extra_globs=None):
     """
     Devuelve (scoped, bare):
@@ -474,7 +496,9 @@ def scan_tests(root, extra_globs=None):
             if "R" not in content:
                 continue
             lines = content.splitlines()
-            view = code_view(content, path.suffix.lower())
+            suffix = path.suffix.lower()
+            view = code_view(content, suffix)
+            spans = python_test_spans(lines) if suffix == ".py" else None
             for i, line in enumerate(view):
                 hits = [((int(f), "R" + r), scoped)
                         for f, r in SCOPED_REQ_ID.findall(line)]
@@ -483,12 +507,22 @@ def scan_tests(root, extra_globs=None):
                 if not hits:
                     continue
                 label, kind = None, "ok"
-                for j in range(i, max(-1, i - 25), -1):
-                    d = TEST_DECL.search(view[j])
-                    if d:
-                        label = next(g for g in d.groups() if g)
-                        kind = test_body_kind(lines, j, path.suffix.lower())
-                        break
+                if spans is not None:
+                    # Python: la cita es de la funcion de prueba que la contiene,
+                    # la mas interior; fuera de toda prueba no cuenta (main(),
+                    # ayudantes, nivel de modulo).
+                    inside = [s for s in spans if s[0] <= i + 1 <= s[1]]
+                    if not inside:
+                        continue
+                    start, _end, label = max(inside, key=lambda s: s[0])
+                    kind = test_body_kind(lines, start - 1, suffix)
+                else:
+                    for j in range(i, max(-1, i - 25), -1):
+                        d = TEST_DECL.search(view[j])
+                        if d:
+                            label = next(g for g in d.groups() if g)
+                            kind = test_body_kind(lines, j, suffix)
+                            break
                 ref = f"{rel.as_posix()}::{label}" if label else rel.as_posix()
                 for key, bucket in hits:
                     if bucket is scoped:
@@ -758,7 +792,10 @@ def analyze(root, feature, config):
     for t in tasks:
         if t["state"] != "done":
             continue
-        sin_test = [rid for rid in t["requirements"] if not tests_by_req.get(rid)]
+        # Un requisito obsoleto ya no se puede probar: citarlo en una tarea
+        # cerrada es historia, no una tarea sin prueba.
+        sin_test = [rid for rid in t["requirements"]
+                    if rid not in obsolete and not tests_by_req.get(rid)]
         if sin_test:
             add("E-DONE-NO-TEST",
                 f"La tarea {t['id']} esta cerrada pero "

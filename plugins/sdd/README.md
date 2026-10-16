@@ -146,7 +146,10 @@ Write y Edit declaran el archivo que tocan; Bash no. Para que `sed -i` o
      puede deshacer el comando, y borrar trabajo por su cuenta no es asunto
      de un hook.
    - Un artefacto que pasó a aprobado: se devuelve a su Estado anterior. Ahí
-     revertir sí es seguro: solo restaura un campo.
+     revertir sí es seguro: solo restaura un campo. Se vigilan los artefactos
+     de **todas** las features, no solo de la activa, así que tampoco se
+     escapa un comando que cambie `.sdd/current`, apruebe otra feature y deje
+     el puntero como estaba.
 
 Límites:
 - Sin git, la auditoría no corre y solo queda la prevención.
@@ -158,9 +161,17 @@ Límites:
 - La prevención no ve una aprobación lanzada por un script, `bash -c "…"`, una
   tubería a `sh`, un heredoc que se pasa a un intérprete, o uno sin comillas
   cuya sustitución la ejecute: eso lo revierte la auditoría.
-- **La auditoría solo vigila la feature activa.** Un comando que cambie
-  `.sdd/current`, apruebe otra feature y vuelva a dejar el puntero no se
-  detecta. Pendiente de una feature propia.
+- La auditoría no distingue de dónde viene una aprobación. Si el modelo lanza
+  un `git checkout`, `pull` o `rebase` que trae la versión aprobada de un
+  artefacto que en tu copia estaba en Draft, también se revierte, y el modelo
+  recibe la instrucción de avisarte. Lanza tú esos comandos con `!`, que no
+  pasa por los hooks, o usa `SDD_BYPASS=1`.
+- Un artefacto que no existía antes del comando no se vigila: un script que
+  cree una feature con artefactos ya aprobados no se revierte. Vigilarlo
+  revertiría también las features que llegan aprobadas con un `git pull`.
+- Un artefacto que no se puede leer (por ejemplo, sin permiso) se salta: la
+  compuerta falla abierta para ese comando y los demás siguen vigilados. Uno
+  con bytes que no son UTF-8 sí se lee y se vigila.
 - Un `\$(…)` escapado fuera de comillas dobles que contenga la orden se
   bloquea aunque no se ejecute, igual que una mención sin comillas
   (`echo python3 sdd.py approve`): peca de prudente.
@@ -205,6 +216,15 @@ def test_otro_caso():
 En **archivos de prueba Python**, una cita dentro de un texto no cuenta, tampoco
 en un docstring: un `"def test_F001_R001_x(): …"` escrito como dato en un test
 no es una prueba. Si el archivo no se puede tokenizar, se lee tal cual.
+
+Además, en Python solo cuentan **el nombre y el cuerpo de una prueba**: una
+función o un método cuyo nombre empieza por `test`. Una cita en un comentario de
+módulo, encima del `def`, en un decorador, en un ayudante o en la llamada que
+hace un `main()` no es evidencia de ninguna prueba. Dentro de una prueba
+anidada, la cita es de la más interior. Si el archivo no se puede analizar (por
+ejemplo, sintaxis de una versión de Python más nueva), se atribuye como en los
+demás lenguajes: a la última prueba declarada encima, hasta 25 líneas; si no
+hay ninguna, al archivo, sin nombre de prueba.
 
 En los demás lenguajes las citas cuentan dondequiera que estén, también dentro
 de un texto. Distinguir allí un dato de un título de prueba

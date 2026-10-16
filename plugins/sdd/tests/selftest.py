@@ -871,6 +871,253 @@ def test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base):
            "y la auditoria devuelve el Estado a Draft", r.stderr)
 
 
+# ------------------------------------------- feature 003: robustez de sdd
+
+SPEC_CON_OBSOLETO = ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
+                     "| R001 | OBSOLETO | CUANDO X, el sistema DEBERA Y. "
+                     "(reemplazado por R002) |\n"
+                     "| R002 | MUST | CUANDO X, el sistema DEBERA Z. |\n"
+                     "| R003 | MUST | CUANDO V, el sistema DEBERA W. |\n"
+                     "\n## Criterios de aceptacion\n"
+                     "### R002\n- **Dado** a **cuando** b **entonces** c\n"
+                     "### R003\n- **Dado** a **cuando** b **entonces** c\n")
+
+
+def tarea_cerrada(*rids):
+    return ("### T001 — a\n- **Estado:** `[x]`\n"
+            f"- **Requisitos:** {', '.join(rids)}\n- **Depende de:** —\n")
+
+
+def test_F003_R004_obsoleto_no_da_error_en_tarea_cerrada(base):
+    print("\nF003 · R004: una tarea cerrada no da error por un requisito obsoleto")
+    prueba = {"tests/test_z.py": "def test_F001_R002_z():\n    assert z()\n"}
+    p = repo_con_feature(base, "f003-r004-obsoleto", spec=SPEC_CON_OBSOLETO,
+                         archivos=prueba)
+    (p / "specs" / "001-x" / "tasks.md").write_text(tarea_cerrada("R001", "R002"),
+                                                     encoding="utf-8")
+    hallazgos = [f for f in traza(p)["findings"] if f["code"] == "E-DONE-NO-TEST"]
+    expect(not hallazgos,
+           "obsoleto sin prueba + vigente con prueba: sin E-DONE-NO-TEST",
+           f"{hallazgos}")
+
+    p = repo_con_feature(base, "f003-r004-vigente", spec=SPEC_CON_OBSOLETO,
+                         archivos=prueba)
+    (p / "specs" / "001-x" / "tasks.md").write_text(tarea_cerrada("R001", "R003"),
+                                                     encoding="utf-8")
+    hallazgos = [f["message"] for f in traza(p)["findings"] if f["code"] == "E-DONE-NO-TEST"]
+    expect(len(hallazgos) == 1 and "R003" in hallazgos[0] and "R001" not in hallazgos[0],
+           "un vigente sin prueba sigue dando E-DONE-NO-TEST, sin nombrar el obsoleto",
+           f"{hallazgos}")
+
+
+def siguiente_id(base, nombre, spec):
+    return run("next-req", cwd=repo_con_feature(base, nombre, spec=spec)).stdout.strip()
+
+
+def test_F003_R003_siguiente_id_ignora_menciones(base):
+    print("\nF003 · R003: el siguiente ID sale de los requisitos declarados")
+    filas = "".join(f"| R00{n} | MUST | CUANDO X, el sistema DEBERA Y{n}. |\n"
+                    for n in range(1, 7))
+    spec = ("## Problema\n\nLa feature anterior dejo R007 y R009 sin cubrir.\n\n"
+            "| ID | Prioridad | Requisito |\n| - | - | - |\n" + filas
+            + "\nComo en R009 de la otra feature.\n")
+    obtenido = siguiente_id(base, "f003-r003-menciones", spec)
+    expect(obtenido == "R007", "las menciones R007 y R009 en el texto no ocupan ID", obtenido)
+
+    spec = ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
+            + "".join(f"| R00{n} | MUST | CUANDO X, el sistema DEBERA Y{n}. |\n"
+                      for n in range(1, 5))
+            + "| R005 | OBSOLETO | CUANDO X, el sistema DEBERA Y5. |\n")
+    obtenido = siguiente_id(base, "f003-r003-obsoleto", spec)
+    expect(obtenido == "R006", "el ultimo declarado es obsoleto y tambien cuenta", obtenido)
+
+    spec = "".join(f"## R00{n} — algo\n\nEl sistema DEBERA hacer {n}.\n\n" for n in range(1, 4))
+    obtenido = siguiente_id(base, "f003-r003-encabezados", spec)
+    expect(obtenido == "R004", "una spec antigua con encabezados no recicla IDs", obtenido)
+
+
+def artefacto(estado, cuerpo="x"):
+    return f"# A\n\n| Campo | Valor |\n| - | - |\n| Estado | {estado} |\n\n{cuerpo}\n"
+
+
+def repo_dos_features(base, nombre):
+    """001-a y 002-b con spec, plan y tasks en Draft; activa la 002."""
+    p = base / nombre
+    for slug in ("001-a", "002-b"):
+        (p / "specs" / slug).mkdir(parents=True)
+        for fname in ("spec.md", "plan.md", "tasks.md"):
+            (p / "specs" / slug / fname).write_text(artefacto("Draft"), encoding="utf-8")
+    (p / ".sdd").mkdir()
+    (p / ".sdd" / "current").write_text("002-b\n")
+    return p
+
+
+def aprueba_a_mano(path, estado="Approved · 0123456789ab"):
+    texto = path.read_text(encoding="utf-8")
+    viejo = texto.split("| Estado | ", 1)[1].split(" |", 1)[0]
+    path.write_text(texto.replace(f"| Estado | {viejo} |", f"| Estado | {estado} |", 1),
+                    encoding="utf-8")
+
+
+def estado_de(path):
+    return path.read_text(encoding="utf-8").split("| Estado | ", 1)[1].split(" |", 1)[0]
+
+
+def test_F003_R001_auditoria_revierte_otra_feature(base):
+    print("\nF003 · R001: la auditoria protege la aprobacion de todas las features")
+    p = repo_dos_features(base, "f003-r001-otra")
+    spec = p / "specs" / "001-a" / "spec.md"
+    bash_bloquea(p, "python3 opaco.py", "f3a")
+    aprueba_a_mano(spec)
+    r = audita(p, "f3a")
+    expect(r.returncode == 2 and estado_de(spec) == "Draft" and "001-a/spec.md" in r.stderr,
+           "con la 002 activa, aprobar el spec de la 001 se revierte y se avisa",
+           f"{r.returncode} {estado_de(spec)!r} {r.stderr!r}")
+    expect("Detente y dile al usuario" in r.stderr and r.stderr.count("Detente") == 1,
+           "el aviso pide detenerse y avisar al usuario, una sola vez", r.stderr)
+
+    p = repo_dos_features(base, "f003-r001-puntero")
+    plan = p / "specs" / "001-a" / "plan.md"
+    bash_bloquea(p, "python3 opaco.py", "f3b")
+    (p / ".sdd" / "current").write_text("001-a\n")
+    aprueba_a_mano(plan)
+    (p / ".sdd" / "current").write_text("002-b\n")
+    r = audita(p, "f3b")
+    expect(r.returncode == 2 and estado_de(plan) == "Draft",
+           "cambiar el puntero, aprobar y restaurarlo: el plan de la 001 vuelve a Draft",
+           f"{r.returncode} {estado_de(plan)!r}")
+
+    p = repo_dos_features(base, "f003-r001-huella")
+    tasks = p / "specs" / "001-a" / "tasks.md"
+    aprueba_a_mano(tasks, "Approved · 111111111111")
+    bash_bloquea(p, "python3 opaco.py", "f3c")
+    aprueba_a_mano(tasks, "Approved · 222222222222")
+    r = audita(p, "f3c")
+    expect(r.returncode == 2 and estado_de(tasks) == "Approved · 111111111111",
+           "una huella reescrita en otra feature recupera la anterior",
+           f"{r.returncode} {estado_de(tasks)!r}")
+
+
+def test_F003_R002_auditoria_silenciosa_sin_cambios(base):
+    print("\nF003 · R002: sin cambios de Estado, la auditoria no avisa ni escribe")
+    p = repo_dos_features(base, "f003-r002-nada")
+    artefactos = sorted((p / "specs").rglob("*.md"))
+    antes = {a: a.read_bytes() for a in artefactos}
+    bash_bloquea(p, "python3 nada.py", "f3d")
+    r = audita(p, "f3d")
+    expect(r.returncode == 0 and not r.stderr and all(a.read_bytes() == antes[a]
+                                                      for a in artefactos),
+           "varias features y un comando que no toca nada: exit 0, sin aviso, sin escrituras",
+           f"{r.returncode} {r.stderr!r}")
+
+    p = base / "f003-r002-sin-specs"
+    p.mkdir()
+    (p / "a.txt").write_text("x\n")
+    bash_bloquea(p, "python3 nada.py", "f3e")
+    r = audita(p, "f3e")
+    expect(r.returncode == 0 and not r.stderr and sorted(x.name for x in p.iterdir()) == ["a.txt"],
+           "sin specs/: la auditoria no hace nada", f"{r.returncode} {r.stderr!r}")
+
+    p = repo_dos_features(base, "f003-r002-ilegible")
+    roto = p / "specs" / "002-b" / "plan.md"
+    roto.write_bytes(b"\xff\xfe| Estado | Draft |\n\x80\x81")
+    sin_permiso = p / "specs" / "002-b" / "tasks.md"
+    sin_permiso.chmod(0)
+    spec = p / "specs" / "001-a" / "spec.md"
+    # Un comando sin destinos visibles y otro con uno: la compuerta evalua el
+    # destino antes de guardar la instantanea.
+    comandos = [("python3 opaco.py", "f3f"), ("echo x > src/a.py; python3 opaco.py", "f3g")]
+    try:
+        for cmd, tid in comandos:
+            r_guard = run("guard", stdin=bash_payload(cmd, p, tid), cwd=p)
+            aprueba_a_mano(spec)
+            r = audita(p, tid)
+            # main() convierte cualquier excepcion en "sdd.py: <error>" por stderr.
+            expect(r_guard.returncode == 0 and not r_guard.stderr and "sdd.py:" not in r.stderr,
+                   f"artefactos ilegibles (no UTF-8, sin permiso): {cmd!r} no hace fallar "
+                   "ni la compuerta ni la auditoria", f"{r_guard.stderr!r} {r.stderr!r}")
+            expect(r.returncode == 2 and estado_de(spec) == "Draft",
+                   f"y los demas artefactos siguen protegidos: {cmd!r}",
+                   f"{r.returncode} {estado_de(spec)!r}")
+    finally:
+        sin_permiso.chmod(0o644)
+
+
+SPEC_DOS_MUST = SPEC_BASE.replace("| R002 | SHOULD |", "| R002 | MUST |")
+
+CITAS_FUERA = '''# F001-R002: comentario de modulo, fuera de toda prueba
+
+
+def test_F001_R003_otra():
+    assert otra()
+
+
+def ayudante():
+    return 1  # F001-R002 en una funcion que no es prueba
+
+
+def main():
+    test_F001_R001_algo(base)
+'''
+
+
+def test_F003_R005_cita_fuera_de_prueba_no_cuenta(base):
+    print("\nF003 · R005: en Python, una cita fuera de una prueba no cuenta")
+    p = repo_con_feature(base, "f003-r005", spec=SPEC_DOS_MUST,
+                         archivos={"tests/test_fuera.py": CITAS_FUERA})
+    r001, r002 = evidencia(p, "R001"), evidencia(p, "R002")
+    expect(r001 == [], "la llamada desde main() no es evidencia ni se atribuye a otra prueba",
+           f"{r001}")
+    expect(r002 == [], "un comentario de modulo o de un ayudante no es evidencia", f"{r002}")
+
+
+DENTRO = '''import unittest
+
+
+def test_F001_R001_algo():
+    assert login() is True
+
+
+class PruebaLogin(unittest.TestCase):
+    def test_x(self):
+        # F001-R002
+        self.assertTrue(login())
+'''
+
+
+def test_F003_R006_nombre_y_cuerpo_cuentan(base):
+    print("\nF003 · R006: el nombre y el cuerpo de una prueba Python siguen contando")
+    p = repo_con_feature(base, "f003-r006", spec=SPEC_DOS_MUST,
+                         archivos={"tests/test_dentro.py": DENTRO})
+    r001, r002 = evidencia(p, "R001"), evidencia(p, "R002")
+    expect(r001 == ["tests/test_dentro.py::test_F001_R001_algo"],
+           "la prueba con asercion cuenta a su nombre", f"{r001}")
+    expect(r002 == ["tests/test_dentro.py::test_x"],
+           "el comentario dentro de un metodo de clase cuenta a nombre del metodo", f"{r002}")
+
+
+def test_F003_R006_python_sin_ast_usa_la_atribucion_anterior(base):
+    print("\nF003 · R006: si ast no puede analizar el archivo, se atribuye como antes")
+    roto = "def test_F001_R001_algo():\n    assert login()\n\ndef roto(:\n"
+    p = repo_con_feature(base, "f003-r006-sin-ast", spec=SPEC_DOS_MUST,
+                         archivos={"tests/test_roto.py": roto})
+    r = run("trace", ["--json"], cwd=p)
+    r001 = evidencia(p, "R001")
+    expect(r.returncode in (0, 1) and "Traceback" not in r.stderr
+           and r001 == ["tests/test_roto.py::test_F001_R001_algo"],
+           "un archivo que ast rechaza sigue dando la evidencia de su prueba",
+           f"{r001} {r.stderr!r}")
+
+
+def test_F003_R007_otros_lenguajes_identicos(base):
+    print("\nF003 · R007: fuera de Python la atribucion no cambia")
+    p = repo_con_feature(base, "f003-r007", spec=SPEC_DOS_MUST, archivos=OTROS_LENGUAJES)
+    for rid, esperada in ESPERADO.items():
+        encontrados = evidencia(p, rid)
+        expect(encontrados == esperada,
+               f"{rid}: evidencia identica a la anterior, etiquetas incluidas", f"{encontrados}")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -890,6 +1137,14 @@ def main():
         test_F002_R004_mencion_no_bloquea(base)
         test_F002_R005_ejecucion_bloquea(base)
         test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base)
+        test_F003_R004_obsoleto_no_da_error_en_tarea_cerrada(base)
+        test_F003_R003_siguiente_id_ignora_menciones(base)
+        test_F003_R001_auditoria_revierte_otra_feature(base)
+        test_F003_R002_auditoria_silenciosa_sin_cambios(base)
+        test_F003_R005_cita_fuera_de_prueba_no_cuenta(base)
+        test_F003_R006_nombre_y_cuerpo_cuentan(base)
+        test_F003_R006_python_sin_ast_usa_la_atribucion_anterior(base)
+        test_F003_R007_otros_lenguajes_identicos(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
