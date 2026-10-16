@@ -20,6 +20,13 @@
       "source": "./plugins/discovery",
       "category": "development",
       "keywords": ["discovery", "product", "backlog", "spec-driven"]
+    },
+    {
+      "name": "architecture",
+      "description": "De producto aprobado a arquitectura: atributos de calidad medibles, componentes, decisiones (ADR) y estandares comprobables, con aprobacion del usuario y trazabilidad objetivo -> componente -> decision.",
+      "source": "./plugins/architecture",
+      "category": "development",
+      "keywords": ["architecture", "adr", "components", "spec-driven"]
     }
   ]
 }

@@ -30,7 +30,7 @@ de contrato es la única que ejecuta `discovery.py`.
 
 ### T001 — Esqueleto del plugin y reserva de prefijos
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008, R015
 - **Depende de:** —
 - **Archivos:** `plugins/architecture/.claude-plugin/plugin.json`, `plugins/architecture/scripts/architecture.py`, `plugins/architecture/tests/selftest.py`, `plugins/architecture/README.md`, `.claude-plugin/marketplace.json`, `plugins/sdd/docs/standards-roadmap.md`
