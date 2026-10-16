@@ -43,15 +43,38 @@ PRODUCT_DIR = "product"
 # --------------------------------------------------------------------------
 
 def project_root(payload=None):
-    """Raiz del proyecto. CLAUDE_PROJECT_DIR es la fuente autoritativa."""
-    for candidate in (
-        os.environ.get("CLAUDE_PROJECT_DIR"),
-        (payload or {}).get("cwd"),
-        os.getcwd(),
-    ):
-        if candidate:
-            return Path(candidate).resolve()
-    return Path.cwd().resolve()
+    """
+    Raiz del proyecto. CLAUDE_PROJECT_DIR es la fuente autoritativa y se usa
+    tal cual. Sin ella (la inyeccion de comandos de una skill no la recibe),
+    se sube desde el cwd hasta el directorio que contiene product/.
+    """
+    env = os.environ.get("CLAUDE_PROJECT_DIR")
+    if env:
+        return Path(env).resolve()
+    start = Path((payload or {}).get("cwd") or os.getcwd()).resolve()
+    return find_upwards(start, (PRODUCT_DIR,)) or start
+
+
+def find_upwards(start, markers):
+    """
+    El directorio mas cercano, desde start hacia arriba, que contiene alguno de
+    los directorios markers, o None. Se detiene en el primer directorio con
+    .git (carpeta, o archivo en un worktree) despues de examinarlo: la busqueda
+    no sale del repositorio. Un directorio que no se puede leer cuenta como
+    vacio.
+
+    Copia de find_upwards en plugins/sdd/scripts/sdd.py: los plugins no
+    comparten codigo. Un arreglo en una se replica en la otra.
+    """
+    for directory in (start, *start.parents):
+        try:
+            if any((directory / m).is_dir() for m in markers):
+                return directory
+            if (directory / ".git").exists():
+                return None
+        except OSError:
+            continue
+    return None
 
 
 def product_root(root):
@@ -991,7 +1014,136 @@ def cmd_approve(args):
 # --------------------------------------------------------------------------
 
 APPROVABLE = (BRIEF, BACKLOG)
-APPROVE_CALL = re.compile(r"discovery\.py['\"]?\s+approve\b")
+# Solo para comandos que no se pueden analizar por palabras.
+APPROVE_TEXT = re.compile(r"discovery\.py['\"]?\s+approve\b")
+
+
+# --------------------------------------------------------------------------
+# Analisis de comandos: ejecutar la orden de aprobar frente a mencionarla.
+#
+# Copia adaptada de plugins/sdd/scripts/sdd_bash.py (invokes_approve y sus
+# ayudantes): los plugins no comparten codigo. Un arreglo en una copia se
+# replica en la otra, y los dos selftests usan listas de casos equivalentes.
+# --------------------------------------------------------------------------
+
+_WRAPPERS = {"sudo", "env", "command", "nohup", "time", "nice", "builtin", "exec"}
+_SEPARATORS = {";", "&&", "||", "|", "|&", "&", "(", ")", ";;"}
+_REDIRECTS = {">", ">>", ">|", "&>", "&>>", "<", "<<", "<<<", "<<-", "<>", ">&", "<&"}
+_HEREDOC = re.compile(
+    r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|$)",
+    re.S,
+)
+
+
+def _strip_heredocs(command):
+    """Quita el cuerpo de los heredocs: es texto, no comandos."""
+    return _HEREDOC.sub(lambda m: m.group(0).split("\n", 1)[0], command)
+
+
+def _command_segments(command):
+    """Palabras de cada comando simple, sin redirecciones ni su destino."""
+    import shlex
+    lex = shlex.shlex(command.replace("\n", " ; "), posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    lex.commenters = ""
+    tokens = list(lex)  # ValueError si las comillas no cierran
+    segments, seg, i = [], [], 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in _SEPARATORS:
+            segments.append(seg)
+            seg = []
+        elif tok in _REDIRECTS:
+            i += 1  # el siguiente token es el destino o la entrada
+        else:
+            seg.append(tok)
+        i += 1
+    segments.append(seg)
+    return segments
+
+
+def _command_words(seg):
+    """Quita asignaciones VAR=x y envoltorios como sudo o env."""
+    words = list(seg)
+    while words and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0])
+                     or os.path.basename(words[0]) in _WRAPPERS):
+        words.pop(0)
+    return words
+
+
+def _substitutions(command):
+    """
+    Contenido de las sustituciones `…` y $(…) que bash ejecutaria. Se recorre
+    respetando las comillas: dentro de comillas simples no hay sustitucion, y
+    una \\$( o \\` escapada tampoco lo es. Dentro de comillas dobles si.
+    """
+    found, i, n, single = [], 0, len(command), False
+    while i < n:
+        ch = command[i]
+        if single:
+            if ch == "'":
+                single = False
+            i += 1
+            continue
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            if command.count('"', 0, i) % 2 == 0:
+                single = True
+            i += 1
+            continue
+        if ch == "`":
+            j = i + 1
+            while j < n and command[j] != "`":
+                j += 2 if command[j] == "\\" else 1
+            if j >= n:
+                break
+            found.append(command[i + 1:j])
+            i = j + 1
+            continue
+        if command.startswith("$(", i) and not command.startswith("$((", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if command[j] == "\\":
+                    j += 2
+                    continue
+                if command[j] == "(":
+                    depth += 1
+                elif command[j] == ")":
+                    depth -= 1
+                j += 1
+            if depth:
+                break
+            found.append(command[i + 2:j - 1])
+            i = j
+            continue
+        i += 1
+    return found
+
+
+def invokes_approve(command):
+    """
+    True si el comando **ejecuta** la orden de aprobar: en algun segmento, una
+    palabra cuyo nombre de archivo es discovery.py seguida de approve, tambien
+    dentro de una sustitucion que se ejecuta. Una mencion (un mensaje de
+    commit, la descripcion de un PR, un heredoc) no cuenta. Lo que no se puede
+    analizar se evalua por su texto; lo que esta compuerta no ve (un script,
+    bash -c) lo revierte la auditoria de PostToolUse.
+    """
+    command = _strip_heredocs(command or "")
+    if any(invokes_approve(inner) for inner in _substitutions(command)):
+        return True
+    try:
+        segments = _command_segments(command)
+    except ValueError:
+        return bool(APPROVE_TEXT.search(command))
+    for seg in segments:
+        words = _command_words(seg)
+        for word, nxt in zip(words, words[1:]):
+            if os.path.basename(word) == "discovery.py" and nxt == "approve":
+                return True
+    return False
 
 
 def claims_approval(text):
@@ -1075,7 +1227,7 @@ def cmd_guard(_args):
     tool_input = payload.get("tool_input") or {}
 
     if payload.get("tool_name") == "Bash":
-        if APPROVE_CALL.search(tool_input.get("command") or ""):
+        if invokes_approve(tool_input.get("command") or ""):
             return deny(APPROVAL_REASON)
         # Lo que un comando opaco cambie lo revisa la auditoria de PostToolUse.
         path = _snapshot_path(root, payload)

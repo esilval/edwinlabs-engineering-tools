@@ -805,6 +805,8 @@ def test_F002_R010_otros_lenguajes_como_antes(base):
                f"{encontrados}")
 
 
+# Equivalentes a MENCIONES y EJECUCIONES de plugins/discovery/tests/selftest.py,
+# que prueba la copia del analizador en discovery.py: si cambian aqui, alli.
 MENCIONES = [
     "git commit -q -m 'sdd: la compuerta ya no bloquea sdd.py approve ni set_status(x)'",
     'gh pr create --title t --body "Corrige: python3 sdd.py approve y set_status(texto, v)"',
@@ -1118,6 +1120,84 @@ def test_F003_R007_otros_lenguajes_identicos(base):
                f"{rid}: evidencia identica a la anterior, etiquetas incluidas", f"{encontrados}")
 
 
+# ------------------------------------------- feature 004: raiz del proyecto
+
+def run_sin_raiz(sub, args=(), cwd=None):
+    """Como run, pero sin CLAUDE_PROJECT_DIR: como la inyeccion de una skill."""
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(PLUGIN))
+    env.pop("CLAUDE_PROJECT_DIR", None)
+    return subprocess.run([sys.executable, str(SDD), sub, *args], capture_output=True,
+                          text=True, cwd=str(cwd), env=env, timeout=60)
+
+
+def test_F004_R001_raiz_desde_subdirectorio(base):
+    print("\nF004 · R001: sdd encuentra la raiz desde un subdirectorio")
+    p = repo_con_feature(base, "f004-r001", spec=SPEC_LISTA)
+    feat = p / "specs" / "001-x"
+    r = run_sin_raiz("status", cwd=feat)
+    expect(r.returncode == 0 and "001-x" in r.stdout,
+           "status desde specs/<feature>/ muestra la feature activa", r.stdout + r.stderr)
+
+    r = run_sin_raiz("approve", ["--skill"], cwd=feat)
+    expect("aprobado" in r.stdout and "| Estado | Approved" in (feat / "spec.md").read_text(),
+           "aprobar desde specs/<feature>/ aprueba la spec de esa feature", r.stdout)
+
+    (p / "src" / "specs").mkdir(parents=True)
+    (p / "src" / "componentes").mkdir()
+    r = run_sin_raiz("status", cwd=p / "src" / "componentes")
+    expect("001-x" in r.stdout, "un src/specs/ mas cercano no gana a .sdd/", r.stdout)
+
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd
+    # Segun la version de Python, is_dir() lanza PermissionError o devuelve
+    # False ante un directorio sin permiso: se fuerza la excepcion.
+    cerrado = p / "cerrado"
+    (cerrado / "x").mkdir(parents=True)
+    original = Path.is_dir
+
+    def is_dir_sin_permiso(ruta):
+        if cerrado in ruta.parents:
+            raise PermissionError(13, "sin permiso", str(ruta))
+        return original(ruta)
+
+    Path.is_dir = is_dir_sin_permiso
+    try:
+        hallado = sdd.find_upwards(cerrado / "x", (".sdd",))
+    finally:
+        Path.is_dir = original
+    expect(hallado == p, "un directorio sin permiso cuenta como vacio y se sigue subiendo",
+           f"{hallado}")
+
+
+def test_F004_R003_sin_datos_usa_el_directorio_actual(base):
+    print("\nF004 · R003: sin datos hacia arriba, el directorio actual, sin salir del repo")
+    fuera = base / "f004-r003"
+    (fuera / "specs" / "001-ajena").mkdir(parents=True)  # fuera del repositorio
+    repo = fuera / "repo"
+    (repo / "sub").mkdir(parents=True)
+    (repo / ".git").mkdir()  # basta con que exista: es el tope de la busqueda
+    sin = run_sin_raiz("status", cwd=repo / "sub")
+    como_hoy = run("status", cwd=repo / "sub")
+    expect((sin.returncode, sin.stdout) == (como_hoy.returncode, como_hoy.stdout)
+           and "001-ajena" not in sin.stdout + sin.stderr,
+           "sin datos en el repo: como hoy, sin usar el specs/ de fuera",
+           f"{sin.stdout!r} vs {como_hoy.stdout!r}")
+
+
+def test_F004_R004_variable_de_entorno_manda(base):
+    print("\nF004 · R004: CLAUDE_PROJECT_DIR se usa tal cual")
+    a = repo_con_feature(base, "f004-r004-a")
+    b = base / "f004-r004-b"
+    (b / "specs" / "007-otra").mkdir(parents=True)
+    (b / ".sdd").mkdir()
+    (b / ".sdd" / "current").write_text("007-otra\n")
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(PLUGIN), CLAUDE_PROJECT_DIR=str(a))
+    r = subprocess.run([sys.executable, str(SDD), "status"], capture_output=True, text=True,
+                       cwd=str(b / "specs" / "007-otra"), env=env, timeout=60)
+    expect("001-x" in r.stdout and "007-otra" not in r.stdout,
+           "con la variable en un proyecto y el cwd en otro, manda la variable", r.stdout)
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -1145,6 +1225,9 @@ def main():
         test_F003_R006_nombre_y_cuerpo_cuentan(base)
         test_F003_R006_python_sin_ast_usa_la_atribucion_anterior(base)
         test_F003_R007_otros_lenguajes_identicos(base)
+        test_F004_R001_raiz_desde_subdirectorio(base)
+        test_F004_R003_sin_datos_usa_el_directorio_actual(base)
+        test_F004_R004_variable_de_entorno_manda(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

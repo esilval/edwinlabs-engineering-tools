@@ -131,7 +131,8 @@ def test_F001_R016_huella_detecta_cambio():
 
 
 def test_huella_de_texto():
-    # Base de la deteccion de duplicados; el criterio de R002 lo prueba T003.
+    # Base de la deteccion de duplicados. El rechazo de un documento repetido
+    # tiene su propia prueba, la del duplicado rechazado.
     a, b = "# Vision\n\nTexto.\n", "# Vision\nTexto.\n"
     expect(discovery.text_digest(a) == discovery.text_digest(b),
            "el mismo contenido con otro formato tiene la misma huella")
@@ -1071,6 +1072,162 @@ def cobertura_de_codigos():
 
 
 # --------------------------------------------------------------------------
+
+# ------------------------------------------------- feature 004 (sdd) · T002
+
+def run_sin_raiz(cwd, *args):
+    """Como run, pero sin CLAUDE_PROJECT_DIR: como la inyeccion de una skill."""
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(PLUGIN))
+    env.pop("CLAUDE_PROJECT_DIR", None)
+    return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True,
+                          text=True, cwd=str(cwd), env=env, timeout=60)
+
+
+def test_F004_R002_raiz_desde_subdirectorio():
+    root = producto_ok("f004-r002")
+    sources = root / "product" / "sources"
+    desde_sub = run_sin_raiz(sources, "check", "--json")
+    desde_raiz = run(root, "check", "--json")
+    expect(desde_sub.returncode == 0 and desde_sub.stdout == desde_raiz.stdout
+           and json.loads(desde_sub.stdout)["ok"],
+           "check desde product/sources/ analiza el brief y el backlog del proyecto",
+           desde_sub.stdout[:200] + desde_sub.stderr)
+
+    # Segun la version de Python, is_dir() lanza PermissionError o devuelve
+    # False ante un directorio sin permiso: se fuerza la excepcion.
+    cerrado = root / "cerrado"
+    (cerrado / "x").mkdir(parents=True)
+    original = Path.is_dir
+
+    def is_dir_sin_permiso(ruta):
+        if cerrado in ruta.parents:
+            raise PermissionError(13, "sin permiso", str(ruta))
+        return original(ruta)
+
+    Path.is_dir = is_dir_sin_permiso
+    try:
+        hallado = discovery.find_upwards(cerrado / "x", ("product",))
+    finally:
+        Path.is_dir = original
+    expect(hallado == root, "un directorio sin permiso cuenta como vacio y se sigue subiendo",
+           f"{hallado}")
+
+
+def test_F004_R003_sin_product_usa_el_directorio_actual():
+    # Fuera del repositorio hay un producto con contenido: si la busqueda se
+    # saliera del repo, la salida cambiaria.
+    fuera = producto_ok("f004-r003")
+    de_fuera = run(fuera, "check", "--json").stdout
+    for variante, crea_git in (("carpeta", lambda g: g.mkdir()),
+                               ("archivo de worktree", lambda g: g.write_text("gitdir: x\n"))):
+        repo = fuera / f"repo-{variante.split()[0]}"
+        (repo / "sub").mkdir(parents=True)
+        crea_git(repo / ".git")  # basta con que exista: es el tope de la busqueda
+        sin = run_sin_raiz(repo / "sub", "check", "--json")
+        como_hoy = run(repo / "sub", "check", "--json")
+        expect((sin.returncode, sin.stdout) == (como_hoy.returncode, como_hoy.stdout)
+               and sin.stdout != de_fuera,
+               f"sin product/ en el repo (.git como {variante}): como hoy, sin usar el de fuera",
+               f"{sin.stdout[:200]!r} vs {como_hoy.stdout[:200]!r}")
+        guardada = os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        try:
+            raiz = discovery.project_root({"cwd": str(repo / "sub")})
+        finally:
+            if guardada is not None:
+                os.environ["CLAUDE_PROJECT_DIR"] = guardada
+        expect(raiz == (repo / "sub").resolve(),
+               f"la raiz es el directorio actual (.git como {variante})", f"{raiz}")
+
+
+def test_F004_R004_variable_de_entorno_manda():
+    a = producto_ok("f004-r004-a")
+    b = proyecto("f004-r004-b")
+    (b / "product" / "sources").mkdir(parents=True)
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(PLUGIN), CLAUDE_PROJECT_DIR=str(a))
+    r = subprocess.run([sys.executable, str(SCRIPT), "check", "--json"], capture_output=True,
+                       text=True, cwd=str(b / "product" / "sources"), env=env, timeout=60)
+    expect(r.stdout == run(a, "check", "--json").stdout and json.loads(r.stdout)["ok"],
+           "con la variable en un proyecto y el cwd en otro, manda la variable", r.stdout[:200])
+
+
+# ------------------------------------------------- feature 004 (sdd) · T003
+# Listas equivalentes a MENCIONES y EJECUCIONES del selftest de sdd: las dos
+# copias del analizador deben dar lo mismo.
+
+MENCIONES = [
+    "git commit -q -m 'discovery: la compuerta ya no bloquea discovery.py approve'",
+    'gh pr create --title t --body "Corrige: python3 discovery.py approve en texto"',
+    "cat > notas.md <<'EOF'\npython3 plugins/discovery/scripts/discovery.py approve\nEOF",
+    'echo "para aprobar: python3 discovery.py approve"',
+    "grep -rn 'discovery.py approve' plugins/discovery/README.md",
+    "git commit -m 'la compuerta ya no bloquea `python3 discovery.py approve`'",
+    "gh pr create --title t --body 'Ahora `discovery.py approve` solo se bloquea si se ejecuta'",
+    "git commit -m 'cita $(python3 discovery.py approve) en texto'",
+]
+
+EJECUCIONES = [
+    "python3 discovery.py approve",
+    "python3 /x/plugins/discovery/scripts/discovery.py approve --skill",
+    'python3 "$HOME/plugins/discovery/scripts/discovery.py" approve',
+    "cd plugins/discovery && python3 scripts/discovery.py approve",
+    "ls; FOO=1 python3 discovery.py approve",
+    "echo `python3 discovery.py approve`",
+    'echo "$(python3 discovery.py approve)"',
+    'git commit -m "$(python3 /x/discovery.py approve)"',
+    "x=$(cd y && python3 discovery.py approve)",
+    "python3 discovery.py approve; echo $'it\\'s'",
+]
+
+
+def test_F004_R005_mencion_no_bloquea():
+    root = producto_ok("f004-r005")
+    for cmd in MENCIONES:
+        corto = cmd.splitlines()[0][:50]
+        expect(not discovery.invokes_approve(cmd), f"no es ejecucion: {corto!r}")
+        r = hook(root, "guard", "Bash", {"command": cmd})
+        expect(deniega(r) is False, f"la compuerta no bloquea: {corto!r}", r.stdout)
+    expect(not discovery.invokes_approve('echo "sin cerrar'),
+           "un comando que no se analiza y no contiene la orden: no")
+
+
+def test_F004_R006_ejecucion_bloquea():
+    root = producto_ok("f004-r006")
+    for cmd in EJECUCIONES:
+        expect(discovery.invokes_approve(cmd), f"es ejecucion: {cmd!r}")
+        r = hook(root, "guard", "Bash", {"command": cmd})
+        expect(deniega(r) is True, f"bloquea: {cmd!r}", r.stdout)
+        expect("allow" not in r.stdout, f"nunca devuelve allow: {cmd!r}")
+
+
+def test_F004_R007_auditoria_revierte():
+    root = producto_ok("f004-r007")
+    opaco = "bash -c 'python3 plugins/discovery/scripts/discovery.py approve --skill'"
+    r = hook(root, "guard", "Bash", {"command": opaco}, tool_use_id="f4")
+    expect(deniega(r) is False, "la compuerta deja pasar un bash -c", r.stdout)
+    backlog = root / "product" / "backlog.md"
+    texto = backlog.read_text(encoding="utf-8")
+    backlog.write_text(discovery.set_status(texto, "Approved · 0123456789ab")[0],
+                       encoding="utf-8")
+    r = hook(root, "audit", "Bash", {}, tool_use_id="f4")
+    expect(r.returncode == 2 and estado(root, "backlog.md") == "Draft"
+           and "backlog.md" in r.stderr,
+           "y la auditoria devuelve el backlog a Draft y avisa", r.stderr)
+
+
+# ------------------------------------------------- feature 004 (sdd) · T004
+
+def test_F004_R008_sin_citas_sin_prefijo():
+    # La trazabilidad de sdd cuenta como cita ambigua un ID de requisito sin el
+    # prefijo de feature en un archivo de pruebas, y avisa en cada feature.
+    import re
+    con_prefijo = re.compile(r"(?<![A-Za-z0-9])F\d{3,}[_-]R\d{2,}(?![0-9])")
+    sin_prefijo = re.compile(r"(?<![A-Za-z0-9])R\d{2,}(?![0-9])")
+    texto = Path(__file__).read_text(encoding="utf-8")
+    sueltas = [n for n, linea in enumerate(texto.splitlines(), 1)
+               if sin_prefijo.search(con_prefijo.sub(" ", linea))]
+    expect(not sueltas, "el selftest no cita ningun requisito sin prefijo de feature",
+           f"lineas {sueltas}")
+
 
 def main():
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_") and callable(f)]

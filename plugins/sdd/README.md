@@ -352,6 +352,16 @@ Para desactivarlo: `SDD_NO_QUALITY=1`, o `{"quality": {"enabled": false}}`.
   en `/**` son prefijos; el resto son globs contra la ruta relativa y contra el
   nombre del archivo.
 
+## Cómo se resuelve la raíz del proyecto
+
+`CLAUDE_PROJECT_DIR`, si está, se usa tal cual. Si no (la inyección de una
+skill como `/sdd:approve` no la recibe), se sube desde el directorio de trabajo
+hasta el primero que contiene `.sdd/` y, si ninguno lo tiene, hasta el primero
+que contiene `specs/`. `.sdd/` va primero porque es exclusivo del plugin: una
+carpeta `specs/` de pruebas en `src/` no se confunde con la raíz. La búsqueda no
+sale del repositorio git (se detiene en el primer `.git`), y si no encuentra
+nada se usa el directorio de trabajo.
+
 ## Cómo se resuelve la feature activa
 
 Por orden de prioridad:
