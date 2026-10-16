@@ -44,7 +44,7 @@ dependen entre sí, pero comparten el selftest: se ejecutan una detrás de otra.
 
 ### T003 — Auditoría de los artefactos de todas las features · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd.py`, `plugins/sdd/tests/selftest.py`

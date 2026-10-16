@@ -672,15 +672,24 @@ def guard_bash(payload, root, cfg):
             )
         if is_exempt(rel, exempt):
             continue
-        reason = gate_reason(root, cfg, rel.as_posix())
+        try:
+            reason = gate_reason(root, cfg, rel.as_posix())
+        except OSError:
+            continue  # artefacto ilegible: falla abierto y sigue a la instantanea
         if reason:
             return deny(reason + BASH_NOTE)
 
     # Lo que el analizador no ve lo recoge la auditoria de PostToolUse.
-    feature = resolve_feature(root)
+    try:
+        gate = gate_reason(root, cfg, "codigo del proyecto")
+    except OSError:
+        # Un artefacto ilegible: la compuerta falla abierta, pero la
+        # instantanea de aprobaciones se guarda igual para no dejar de
+        # proteger los demas artefactos.
+        gate = None
     snapshot = {
-        "approved": phase_approvals(feature) if (approval and feature) else {},
-        "gate": gate_reason(root, cfg, "codigo del proyecto"),
+        "approved": all_approvals(root) if approval else {},
+        "gate": gate,
     }
     if snapshot["gate"]:
         snapshot["files"] = b.dirty_files(root)
@@ -688,14 +697,24 @@ def guard_bash(payload, root, cfg):
     return passthrough()
 
 
-def phase_approvals(feature):
-    """{archivo: valor del campo Estado} de los artefactos de fase."""
+def all_approvals(root):
+    """
+    {"NNN-slug/archivo": valor del campo Estado} de los artefactos de fase de
+    todas las features. No solo la activa: un comando puede aprobar otra
+    feature, o cambiar el puntero, aprobar y dejarlo como estaba. Un artefacto
+    que no se puede leer se omite: la auditoria no bloquea por eso.
+    """
     t = _trace()
     out = {}
-    for fname, _s, _p in PHASES:
-        path = feature / fname
-        if path.is_file():
-            out[fname] = t.doc_status(path.read_text(encoding="utf-8", errors="replace"))
+    for feature in feature_dirs(root):
+        for fname, _s, _p in PHASES:
+            path = feature / fname
+            try:
+                if path.is_file():
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                    out[f"{feature.name}/{fname}"] = t.doc_status(text)
+            except OSError:
+                continue
     return out
 
 
@@ -719,20 +738,34 @@ def cmd_audit(_args):
     t = _trace()
     messages = []
 
-    feature = resolve_feature(root)
+    # Se compara por "NNN-slug/archivo", sin resolver la feature activa: el
+    # comando pudo cambiarla. Una instantanea de una version anterior (claves
+    # sin "/") no se puede ubicar y se ignora. Solo se aceptan claves de la
+    # forma feature/artefacto: la instantanea vive en un directorio temporal y
+    # no debe poder dirigir una escritura fuera de specs/.
+    phase_files = {fname for fname, _s, _p in PHASES}
     before = snap.get("approved") or {}
-    if feature and cfg.get("approval", True):
-        for fname, old in before.items():
-            path = feature / fname
-            if not path.is_file():
+    if cfg.get("approval", True):
+        for key, old in before.items():
+            slug, _sep, fname = str(key).partition("/")
+            if not (FEATURE_RE.fullmatch(slug) and fname in phase_files):
                 continue
-            text = path.read_text(encoding="utf-8", errors="replace")
+            path = specs_dir(root) / key
+            try:
+                if not path.is_file():
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
             if t.is_approved(text) and t.doc_status(text) != old:
                 restored, ok = t.set_status(text, old or "Draft")
                 if ok:
-                    path.write_text(restored, encoding="utf-8")
+                    try:
+                        path.write_text(restored, encoding="utf-8")
+                    except OSError:
+                        continue
                     messages.append(
-                        f"El comando cambio el campo Estado de {feature.name}/{fname} "
+                        f"El comando cambio el campo Estado de {key} "
                         f"hacia una aprobacion. Se ha devuelto a '{old or 'Draft'}': "
                         "la aprobacion es del usuario, con /sdd:approve."
                     )

@@ -936,6 +936,111 @@ def test_F003_R003_siguiente_id_ignora_menciones(base):
     expect(obtenido == "R004", "una spec antigua con encabezados no recicla IDs", obtenido)
 
 
+def artefacto(estado, cuerpo="x"):
+    return f"# A\n\n| Campo | Valor |\n| - | - |\n| Estado | {estado} |\n\n{cuerpo}\n"
+
+
+def repo_dos_features(base, nombre):
+    """001-a y 002-b con spec, plan y tasks en Draft; activa la 002."""
+    p = base / nombre
+    for slug in ("001-a", "002-b"):
+        (p / "specs" / slug).mkdir(parents=True)
+        for fname in ("spec.md", "plan.md", "tasks.md"):
+            (p / "specs" / slug / fname).write_text(artefacto("Draft"), encoding="utf-8")
+    (p / ".sdd").mkdir()
+    (p / ".sdd" / "current").write_text("002-b\n")
+    return p
+
+
+def aprueba_a_mano(path, estado="Approved · 0123456789ab"):
+    texto = path.read_text(encoding="utf-8")
+    viejo = texto.split("| Estado | ", 1)[1].split(" |", 1)[0]
+    path.write_text(texto.replace(f"| Estado | {viejo} |", f"| Estado | {estado} |", 1),
+                    encoding="utf-8")
+
+
+def estado_de(path):
+    return path.read_text(encoding="utf-8").split("| Estado | ", 1)[1].split(" |", 1)[0]
+
+
+def test_F003_R001_auditoria_revierte_otra_feature(base):
+    print("\nF003 · R001: la auditoria protege la aprobacion de todas las features")
+    p = repo_dos_features(base, "f003-r001-otra")
+    spec = p / "specs" / "001-a" / "spec.md"
+    bash_bloquea(p, "python3 opaco.py", "f3a")
+    aprueba_a_mano(spec)
+    r = audita(p, "f3a")
+    expect(r.returncode == 2 and estado_de(spec) == "Draft" and "001-a/spec.md" in r.stderr,
+           "con la 002 activa, aprobar el spec de la 001 se revierte y se avisa",
+           f"{r.returncode} {estado_de(spec)!r} {r.stderr!r}")
+
+    p = repo_dos_features(base, "f003-r001-puntero")
+    plan = p / "specs" / "001-a" / "plan.md"
+    bash_bloquea(p, "python3 opaco.py", "f3b")
+    (p / ".sdd" / "current").write_text("001-a\n")
+    aprueba_a_mano(plan)
+    (p / ".sdd" / "current").write_text("002-b\n")
+    r = audita(p, "f3b")
+    expect(r.returncode == 2 and estado_de(plan) == "Draft",
+           "cambiar el puntero, aprobar y restaurarlo: el plan de la 001 vuelve a Draft",
+           f"{r.returncode} {estado_de(plan)!r}")
+
+    p = repo_dos_features(base, "f003-r001-huella")
+    tasks = p / "specs" / "001-a" / "tasks.md"
+    aprueba_a_mano(tasks, "Approved · 111111111111")
+    bash_bloquea(p, "python3 opaco.py", "f3c")
+    aprueba_a_mano(tasks, "Approved · 222222222222")
+    r = audita(p, "f3c")
+    expect(r.returncode == 2 and estado_de(tasks) == "Approved · 111111111111",
+           "una huella reescrita en otra feature recupera la anterior",
+           f"{r.returncode} {estado_de(tasks)!r}")
+
+
+def test_F003_R002_auditoria_silenciosa_sin_cambios(base):
+    print("\nF003 · R002: sin cambios de Estado, la auditoria no avisa ni escribe")
+    p = repo_dos_features(base, "f003-r002-nada")
+    artefactos = sorted((p / "specs").rglob("*.md"))
+    antes = {a: a.read_bytes() for a in artefactos}
+    bash_bloquea(p, "python3 nada.py", "f3d")
+    r = audita(p, "f3d")
+    expect(r.returncode == 0 and not r.stderr and all(a.read_bytes() == antes[a]
+                                                      for a in artefactos),
+           "varias features y un comando que no toca nada: exit 0, sin aviso, sin escrituras",
+           f"{r.returncode} {r.stderr!r}")
+
+    p = base / "f003-r002-sin-specs"
+    p.mkdir()
+    (p / "a.txt").write_text("x\n")
+    bash_bloquea(p, "python3 nada.py", "f3e")
+    r = audita(p, "f3e")
+    expect(r.returncode == 0 and not r.stderr and sorted(x.name for x in p.iterdir()) == ["a.txt"],
+           "sin specs/: la auditoria no hace nada", f"{r.returncode} {r.stderr!r}")
+
+    p = repo_dos_features(base, "f003-r002-ilegible")
+    roto = p / "specs" / "002-b" / "plan.md"
+    roto.write_bytes(b"\xff\xfe| Estado | Draft |\n\x80\x81")
+    sin_permiso = p / "specs" / "002-b" / "tasks.md"
+    sin_permiso.chmod(0)
+    spec = p / "specs" / "001-a" / "spec.md"
+    # Un comando sin destinos visibles y otro con uno: la compuerta evalua el
+    # destino antes de guardar la instantanea.
+    comandos = [("python3 opaco.py", "f3f"), ("echo x > src/a.py; python3 opaco.py", "f3g")]
+    try:
+        for cmd, tid in comandos:
+            r_guard = run("guard", stdin=bash_payload(cmd, p, tid), cwd=p)
+            aprueba_a_mano(spec)
+            r = audita(p, tid)
+            # main() convierte cualquier excepcion en "sdd.py: <error>" por stderr.
+            expect(r_guard.returncode == 0 and not r_guard.stderr and "sdd.py:" not in r.stderr,
+                   f"artefactos ilegibles (no UTF-8, sin permiso): {cmd!r} no hace fallar "
+                   "ni la compuerta ni la auditoria", f"{r_guard.stderr!r} {r.stderr!r}")
+            expect(r.returncode == 2 and estado_de(spec) == "Draft",
+                   f"y los demas artefactos siguen protegidos: {cmd!r}",
+                   f"{r.returncode} {estado_de(spec)!r}")
+    finally:
+        sin_permiso.chmod(0o644)
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -957,6 +1062,8 @@ def main():
         test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base)
         test_F003_R004_obsoleto_no_da_error_en_tarea_cerrada(base)
         test_F003_R003_siguiente_id_ignora_menciones(base)
+        test_F003_R001_auditoria_revierte_otra_feature(base)
+        test_F003_R002_auditoria_silenciosa_sin_cambios(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
