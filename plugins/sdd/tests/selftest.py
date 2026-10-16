@@ -1661,6 +1661,180 @@ def test_F005_R006_seccion_que_no_se_puede_leer(base):
            r.stdout + r.stderr)
 
 
+# ------------------------------------------- feature 007: integracion con architecture
+# Una arquitectura en el formato del plugin architecture (copia de los fixtures
+# de su selftest), sobre el producto de prueba de la feature 005. sdd lee esos
+# archivos; solo la prueba de contrato ejecuta architecture.py.
+
+ARCHITECTURE = PLUGIN.parent / "architecture" / "scripts" / "architecture.py"
+
+
+def cabecera_arq(titulo, estado="Draft"):
+    return f"# {titulo}\n\n| Campo  | Valor |\n| ------ | ----- |\n| Estado | {estado} |\n\n"
+
+
+ARQ_QUALITY = cabecera_arq("Atributos de calidad") + """## Atributos
+
+### Q1 — Resumen al cerrar
+
+- **Escenario:** al cerrar la caja, el total del día aparece en menos de 2 segundos con 5000 ventas
+- **Motivo:** G1
+
+### Q2 — Exportación completa
+
+- **Escenario:** exportar 12 meses de movimientos termina en menos de 30 segundos
+- **Motivo:** G2
+"""
+
+ARQ_COMPONENTS = cabecera_arq("Componentes") + """## Componentes
+
+### C1 — Ventas
+
+- **Responsabilidad:** registra ventas y calcula los totales del día
+- **Candidatas:** B01
+
+### C2 — Exportación
+
+- **Responsabilidad:** genera archivos de movimientos a partir de las ventas
+- **Candidatas:** B02
+"""
+
+ARQ_STANDARDS = cabecera_arq("Estándares") + """## Estándares
+
+### S1 — Exportación depende de Ventas, nunca al revés
+
+- **Tipo:** dependencia
+- **Detalle:** C2 → C1
+- **Decisión:** ADR-0001
+"""
+
+ARQ_QUESTIONS = cabecera_arq("Preguntas de arquitectura") + "## Preguntas\n\nNinguna por ahora.\n"
+
+
+def adr_arq(numero, titulo, estado="Draft", motivo="Q1", sustituye="—"):
+    return (f"# ADR-{numero} — {titulo}\n\n| Campo     | Valor |\n| --------- | ----- |\n"
+            f"| Estado    | {estado} |\n| Fecha     | 2026-10-16 |\n| Motivo    | {motivo} |\n"
+            f"| Sustituye | {sustituye} |\n\n"
+            "## Contexto\n\nLas ventas del día se consultan al cerrar.\n\n"
+            "## Decisión\n\nUna sola base de datos relacional.\n\n"
+            "## Alternativas descartadas\n\n- Una base por componente: sin necesidad hoy.\n\n"
+            "## Consecuencias\n\n- Los dos componentes comparten esquema.\n")
+
+
+ADRS_BASE = {
+    "0001-base-de-datos-unica.md": ("0001", "Base de datos única", "Draft"),
+    "0002-despliegue.md": ("0002", "Despliegue en un servidor", "Draft"),
+    "0003-cola.md": ("0003", "Cola de trabajos", "Rejected"),
+    "0004-cache.md": ("0004", "Caché de totales", "Proposed"),
+}
+
+
+def sella_arq(p):
+    """Aprueba el conjunto como /architecture:approve: los cuatro artefactos y
+    los ADR en Draft, con la huella de su contenido."""
+    arq = p / "architecture"
+    archivos = [arq / n for n in ("quality.md", "components.md", "standards.md",
+                                  "questions.md")]
+    archivos += [x for x in sorted((arq / "adr").iterdir())
+                 if architecture_lee().adr_state(x.read_text(encoding="utf-8")) == "draft"]
+    for x in archivos:
+        sella(x)
+
+
+def con_arquitectura(p, aprobada=True, components=ARQ_COMPONENTS, adrs=ADRS_BASE):
+    """Producto aprobado y una arquitectura coherente en p, aprobada si se pide."""
+    con_producto(p)
+    arq = p / "architecture"
+    (arq / "adr").mkdir(parents=True, exist_ok=True)
+    for nombre, texto in (("quality.md", ARQ_QUALITY), ("components.md", components),
+                          ("standards.md", ARQ_STANDARDS), ("questions.md", ARQ_QUESTIONS)):
+        (arq / nombre).write_text(texto, encoding="utf-8")
+    for archivo, (numero, titulo, estado) in adrs.items():
+        motivo = "Q2" if numero == "0004" else "Q1"
+        (arq / "adr" / archivo).write_text(adr_arq(numero, titulo, estado, motivo),
+                                           encoding="utf-8")
+    if aprobada:
+        sella_arq(p)
+    return p
+
+
+def architecture_lee():
+    if str(PLUGIN / "scripts") not in sys.path:
+        sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_architecture
+    return sdd_architecture
+
+
+def test_F007_R002_lee_la_arquitectura(base):
+    print("\nF007 · R002: sdd_architecture lee componentes, decisiones y estandares")
+    sa = architecture_lee()
+    p = con_arquitectura(base / "f007-lectura")
+    comps = {c["id"]: c["candidates"] for c in sa.components(p)}
+    expect(comps == {"C1": ["B01"], "C2": ["B02"]}, "componentes con sus candidatas", f"{comps}")
+    estados = {a["id"]: a["state"] for a in sa.adrs(p)}
+    expect(estados == {"ADR-0001": "approved", "ADR-0002": "approved",
+                       "ADR-0003": "rejected", "ADR-0004": "proposed"},
+           "cada ADR con su estado", f"{estados}")
+    s = sa.standards(p)
+    expect(len(s) == 1 and s[0]["id"] == "S1" and s[0]["adr"] == "ADR-0001",
+           "estandares con su decision", f"{s}")
+    expect(sa.next_adr(p) == "ADR-0005", "el siguiente ADR libre es ADR-0005")
+    expect(sa.approval_problems(p) == [], "la arquitectura sellada esta aprobada",
+           f"{sa.approval_problems(p)}")
+
+    p = con_arquitectura(base / "f007-sin-aprobar", aprobada=False)
+    expect(any("components.md no está aprobado" in x for x in sa.approval_problems(p)),
+           "sin sellar: no aprobada, y dice que la aprueba /architecture:approve",
+           f"{sa.approval_problems(p)}")
+    expect(not sa.exists(base / "f005-r001-0"), "un proyecto sin architecture/ no la tiene")
+
+    p = con_arquitectura(base / "f007-sustituida")
+    d = p / "architecture" / "adr" / "0002-despliegue.md"
+    d.write_text(d.read_text(encoding="utf-8").replace(
+        sa.product.doc_status(d.read_text(encoding="utf-8")), "Superseded by ADR-0004"),
+        encoding="utf-8")
+    (p / "architecture" / "adr" / "0005.md").mkdir()  # ilegible como archivo
+    adrs = {a["id"]: a for a in sa.adrs(p)}
+    expect(adrs["ADR-0002"]["state"] == "superseded"
+           and adrs["ADR-0002"]["superseded_by"] == "ADR-0004",
+           "un ADR sustituido trae el que lo sustituye", f"{adrs['ADR-0002']}")
+    expect(adrs["ADR-0005"]["state"] == "draft" and sa.next_adr(p) == "ADR-0006",
+           "un ADR que no se puede leer cuenta como borrador y ocupa su numero",
+           f"{adrs.get('ADR-0005')}")
+
+
+def test_F007_R009_contrato_con_architecture(base):
+    print("\nF007 · R009: la lectura de sdd coincide con el architecture real")
+    if not ARCHITECTURE.is_file():
+        print("  (sin plugins/architecture en el repositorio: prueba de contrato omitida)")
+        return
+    sa = architecture_lee()
+    p = con_arquitectura(base / "f007-contrato", aprobada=False)
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(p),
+               CLAUDE_PLUGIN_ROOT=str(ARCHITECTURE.parent.parent))
+    r = subprocess.run([sys.executable, str(ARCHITECTURE), "approve"], capture_output=True,
+                       text=True, cwd=str(p), env=env, timeout=60)
+    expect(r.returncode == 0, "architecture aprueba la arquitectura de prueba",
+           r.stdout + r.stderr)
+    estados = {a["id"]: a["state"] for a in sa.adrs(p)}
+    expect(sa.approval_problems(p) == []
+           and estados == {"ADR-0001": "approved", "ADR-0002": "approved",
+                           "ADR-0003": "rejected", "ADR-0004": "proposed"},
+           "lo que architecture aprueba, sdd lo da por aprobado; cada ADR con su estado",
+           f"{sa.approval_problems(p)} {estados}")
+    comps = {c["id"]: c["candidates"] for c in sa.components(p)}
+    expect(comps == {"C1": ["B01"], "C2": ["B02"]},
+           "tras el sellado real (con la fila Producto) los componentes se leen igual",
+           f"{comps}")
+    comp = p / "architecture" / "components.md"
+    comp.write_text(comp.read_text(encoding="utf-8").replace("registra ventas",
+                                                             "registra ventas y cobros"),
+                    encoding="utf-8")
+    expect(any("components.md cambió" in x for x in sa.approval_problems(p)),
+           "un componente editado tras aprobar: cambiada para los dos plugins",
+           f"{sa.approval_problems(p)}")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -1704,6 +1878,8 @@ def main():
         test_F005_R006_contexto_en_el_json(base)
         test_F005_R009_dependencia_sin_feature(base)
         test_F005_R006_seccion_que_no_se_puede_leer(base)
+        test_F007_R002_lee_la_arquitectura(base)
+        test_F007_R009_contrato_con_architecture(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

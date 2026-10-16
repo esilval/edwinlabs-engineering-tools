@@ -30,7 +30,7 @@ contrato ejecuta `architecture.py`.
 
 ### T001 — Lectura de la arquitectura en `sdd_architecture.py`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R009, R002
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd_architecture.py`, `plugins/sdd/tests/selftest.py`
