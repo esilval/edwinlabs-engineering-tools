@@ -42,6 +42,10 @@ FINDINGS = {
     "W-SPEC-OPEN-QUESTIONS": "La spec tiene preguntas abiertas sin resolver",
     "W-SPEC-NO-UNWANTED":  "La spec no tiene requisitos de comportamiento no deseado",
     "W-PLAN-NO-CONSTITUTION-CHECK": "plan.md no contrasta sus decisiones con la constitucion",
+    "E-PLAN-ADR-UNKNOWN":  "plan.md cita una decision de arquitectura que no existe",
+    "E-PLAN-ADR-NOT-APPROVED": "plan.md cita una decision de arquitectura no aprobada",
+    "W-PLAN-NO-ARCHITECTURE-CHECK": "plan.md no contrasta sus decisiones con la arquitectura",
+    "W-PLAN-ADR-SUPERSEDED": "plan.md aprobado cita una decision sustituida despues",
     "W-TASK-NO-DONE-WHEN": "Tarea sin condicion de terminado",
     "W-TEST-EMPTY":        "Prueba vacia que cita el requisito: no cuenta como evidencia",
     "W-TEST-NO-ASSERT":    "Prueba que cita el requisito sin ninguna asercion reconocible",
@@ -382,7 +386,8 @@ def parse_tasks(path):
 def parse_plan(path):
     if not path.is_file():
         return {"path": path.name, "exists": False, "status": None,
-                "placeholders": [], "cited": [], "constitution_check": False}
+                "placeholders": [], "cited": [], "constitution_check": False,
+                "adrs": [], "architecture_check": False, "approved": False}
     text = path.read_text(encoding="utf-8", errors="replace")
     return {
         "path": path.name,
@@ -391,7 +396,57 @@ def parse_plan(path):
         "placeholders": find_placeholders(text, "plan.md"),
         "cited": sorted({"R" + n for n in REQ_ID.findall(text)}),
         "constitution_check": bool(section(text, "constitucion", "constitution").strip()),
+        # Decisiones de arquitectura que cita el plan y su seccion de contraste
+        # (feature 007); solo se comprueban si el proyecto tiene architecture/.
+        "adrs": sorted({"ADR-" + n for n in ADR_REF.findall(text)}),
+        "architecture_check": bool(section(text, "comprobacion de arquitectura",
+                                           "architecture check").strip()),
+        "approved": is_approved(text),
     }
+
+
+ADR_REF = re.compile(r"(?<![A-Za-z0-9])ADR-(\d{4})(?![0-9])")
+
+
+def check_plan_architecture(root, plan, add):
+    """
+    Con architecture/ en el proyecto: el plan se contrasta con la arquitectura
+    y solo cita decisiones aprobadas (R003, R004). Un plan aprobado que cita
+    una decision sustituida despues recibe un aviso y no un error (R005).
+    """
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import sdd_architecture
+    if not sdd_architecture.exists(root):
+        return
+    if not plan["architecture_check"]:
+        add("W-PLAN-NO-ARCHITECTURE-CHECK",
+            "El proyecto tiene architecture/ y plan.md no tiene la seccion "
+            "'Comprobacion de arquitectura': contrasta el plan con los componentes, "
+            "las decisiones y los estandares (sdd.py arch-context).")
+    by_id = {a["id"]: a for a in sdd_architecture.adrs(root)}
+    for ref in plan["adrs"]:
+        adr = by_id.get(ref)
+        if adr is None:
+            add("E-PLAN-ADR-UNKNOWN",
+                f"plan.md cita {ref}, que no existe en architecture/adr/.")
+        elif adr["state"] == "approved":
+            continue
+        elif adr["state"] == "superseded" and plan["approved"]:
+            add("W-PLAN-ADR-SUPERSEDED",
+                f"plan.md (aprobado) cita {ref}, sustituida despues por "
+                f"{adr['superseded_by'] or 'otra decision'}: revisa si el plan sigue valiendo.")
+        elif adr["state"] == "proposed":
+            add("E-PLAN-ADR-NOT-APPROVED",
+                f"plan.md cita {ref}, que esta propuesta y sin decidir: el usuario la "
+                "acepta o la rechaza con /architecture:review antes de aprobar el plan.")
+        else:
+            estado = {"draft": "en borrador", "stale": "cambiada despues de aprobarse",
+                      "rejected": "rechazada", "superseded": "sustituida"}[adr["state"]]
+            add("E-PLAN-ADR-NOT-APPROVED",
+                f"plan.md cita {ref}, que esta {estado}: un plan solo se apoya en "
+                "decisiones aprobadas.")
 
 
 # --------------------------------------------------------------------------
@@ -693,6 +748,7 @@ def analyze(root, feature, config):
             add("W-PLAN-NO-CONSTITUTION-CHECK",
                 "Existe specs/constitution.md y plan.md no tiene la seccion "
                 "'Comprobacion de constitucion'.")
+        check_plan_architecture(root, plan, add)
 
     for t in tasks:
         if not t["done_when"].strip():
