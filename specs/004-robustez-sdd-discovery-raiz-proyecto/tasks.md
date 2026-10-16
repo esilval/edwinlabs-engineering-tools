@@ -71,7 +71,7 @@ registradas en su ejecución. Las pruebas de la raíz quitan
 
 ### T004 — El selftest de `discovery` deja de citar un requisito sin prefijo · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008
 - **Depende de:** —
 - **Archivos:** `plugins/discovery/tests/selftest.py`

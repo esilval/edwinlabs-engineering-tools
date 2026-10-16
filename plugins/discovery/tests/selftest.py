@@ -131,7 +131,8 @@ def test_F001_R016_huella_detecta_cambio():
 
 
 def test_huella_de_texto():
-    # Base de la deteccion de duplicados; el criterio de R002 lo prueba T003.
+    # Base de la deteccion de duplicados. El rechazo de un documento repetido
+    # tiene su propia prueba, la del duplicado rechazado.
     a, b = "# Vision\n\nTexto.\n", "# Vision\nTexto.\n"
     expect(discovery.text_digest(a) == discovery.text_digest(b),
            "el mismo contenido con otro formato tiene la misma huella")
@@ -1211,6 +1212,21 @@ def test_F004_R007_auditoria_revierte():
     expect(r.returncode == 2 and estado(root, "backlog.md") == "Draft"
            and "backlog.md" in r.stderr,
            "y la auditoria devuelve el backlog a Draft y avisa", r.stderr)
+
+
+# ------------------------------------------------- feature 004 (sdd) · T004
+
+def test_F004_R008_sin_citas_sin_prefijo():
+    # La trazabilidad de sdd cuenta como cita ambigua un ID de requisito sin el
+    # prefijo de feature en un archivo de pruebas, y avisa en cada feature.
+    import re
+    con_prefijo = re.compile(r"(?<![A-Za-z0-9])F\d{3,}[_-]R\d{2,}(?![0-9])")
+    sin_prefijo = re.compile(r"(?<![A-Za-z0-9])R\d{2,}(?![0-9])")
+    texto = Path(__file__).read_text(encoding="utf-8")
+    sueltas = [n for n, linea in enumerate(texto.splitlines(), 1)
+               if sin_prefijo.search(con_prefijo.sub(" ", linea))]
+    expect(not sueltas, "el selftest no cita ningun requisito sin prefijo de feature",
+           f"lineas {sueltas}")
 
 
 def main():
