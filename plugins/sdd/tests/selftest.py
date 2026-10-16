@@ -871,6 +871,45 @@ def test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base):
            "y la auditoria devuelve el Estado a Draft", r.stderr)
 
 
+# ------------------------------------------- feature 003: robustez de sdd
+
+SPEC_CON_OBSOLETO = ("| ID | Prioridad | Requisito |\n| - | - | - |\n"
+                     "| R001 | OBSOLETO | CUANDO X, el sistema DEBERA Y. "
+                     "(reemplazado por R002) |\n"
+                     "| R002 | MUST | CUANDO X, el sistema DEBERA Z. |\n"
+                     "| R003 | MUST | CUANDO V, el sistema DEBERA W. |\n"
+                     "\n## Criterios de aceptacion\n"
+                     "### R002\n- **Dado** a **cuando** b **entonces** c\n"
+                     "### R003\n- **Dado** a **cuando** b **entonces** c\n")
+
+
+def tarea_cerrada(*rids):
+    return ("### T001 — a\n- **Estado:** `[x]`\n"
+            f"- **Requisitos:** {', '.join(rids)}\n- **Depende de:** —\n")
+
+
+def test_F003_R004_obsoleto_no_da_error_en_tarea_cerrada(base):
+    print("\nF003 · R004: una tarea cerrada no da error por un requisito obsoleto")
+    prueba = {"tests/test_z.py": "def test_F001_R002_z():\n    assert z()\n"}
+    p = repo_con_feature(base, "f003-r004-obsoleto", spec=SPEC_CON_OBSOLETO,
+                         archivos=prueba)
+    (p / "specs" / "001-x" / "tasks.md").write_text(tarea_cerrada("R001", "R002"),
+                                                     encoding="utf-8")
+    hallazgos = [f for f in traza(p)["findings"] if f["code"] == "E-DONE-NO-TEST"]
+    expect(not hallazgos,
+           "obsoleto sin prueba + vigente con prueba: sin E-DONE-NO-TEST",
+           f"{hallazgos}")
+
+    p = repo_con_feature(base, "f003-r004-vigente", spec=SPEC_CON_OBSOLETO,
+                         archivos=prueba)
+    (p / "specs" / "001-x" / "tasks.md").write_text(tarea_cerrada("R001", "R003"),
+                                                     encoding="utf-8")
+    hallazgos = [f["message"] for f in traza(p)["findings"] if f["code"] == "E-DONE-NO-TEST"]
+    expect(len(hallazgos) == 1 and "R003" in hallazgos[0] and "R001" not in hallazgos[0],
+           "un vigente sin prueba sigue dando E-DONE-NO-TEST, sin nombrar el obsoleto",
+           f"{hallazgos}")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -890,6 +929,7 @@ def main():
         test_F002_R004_mencion_no_bloquea(base)
         test_F002_R005_ejecucion_bloquea(base)
         test_F002_R006_auditoria_revierte_lo_que_la_compuerta_deja_pasar(base)
+        test_F003_R004_obsoleto_no_da_error_en_tarea_cerrada(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

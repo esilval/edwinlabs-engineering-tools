@@ -28,7 +28,7 @@ dependen entre sí, pero comparten el selftest: se ejecutan una detrás de otra.
 
 ### T001 — `E-DONE-NO-TEST` ignora los requisitos obsoletos · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R004
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd_trace.py`, `plugins/sdd/tests/selftest.py`

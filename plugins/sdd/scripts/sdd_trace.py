@@ -758,7 +758,10 @@ def analyze(root, feature, config):
     for t in tasks:
         if t["state"] != "done":
             continue
-        sin_test = [rid for rid in t["requirements"] if not tests_by_req.get(rid)]
+        # Un requisito obsoleto ya no se puede probar: citarlo en una tarea
+        # cerrada es historia, no una tarea sin prueba.
+        sin_test = [rid for rid in t["requirements"]
+                    if rid not in obsolete and not tests_by_req.get(rid)]
         if sin_test:
             add("E-DONE-NO-TEST",
                 f"La tarea {t['id']} esta cerrada pero "
