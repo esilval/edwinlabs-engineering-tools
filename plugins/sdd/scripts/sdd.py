@@ -17,6 +17,10 @@ Subcomandos:
   next-req            Imprime el siguiente ID de requisito libre (R00N).
   trace [--json] [--check]   Matriz requisito -> tarea -> prueba.
   quality             Hook PostToolUse: formateador y linter del archivo.
+  arch-context [--json]
+                      Con architecture/: componentes de la candidata de la
+                      feature activa, decisiones vigentes y propuestas, y
+                      estandares, para planificar.
 """
 
 import datetime
@@ -1148,8 +1152,95 @@ def cmd_quality(_args):
     return sdd_quality.run(payload, root, cfg, lambda rel: is_exempt(rel, exempt))
 
 
+# --------------------------------------------------------------------------
+# Arquitectura (feature 007): contexto para el plan y propuestas de decision
+# --------------------------------------------------------------------------
+
+def _architecture():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import sdd_architecture
+    return sdd_architecture
+
+
+def spec_candidate(feature):
+    """La candidata de la fila Origen de la spec de feature, o None."""
+    if feature is None:
+        return None
+    try:
+        text = (feature / "spec.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = ORIGIN_ROW.search(text, 0, _trace()._header_end(text))
+    first = m.group(1).split("·")[0].strip().upper() if m else ""
+    return first if re.fullmatch(r"B\d+", first) else None
+
+
+def arch_context(root):
+    """
+    Contexto de arquitectura para planificar la feature activa (D3): los
+    componentes de su candidata (o todos, si no tiene), las decisiones vigentes,
+    las propuestas y los estandares. {"architecture": False} sin architecture/.
+    """
+    sa = _architecture()
+    if not sa.exists(root):
+        return {"architecture": False}
+    feature = resolve_feature(root)
+    candidate = spec_candidate(feature)
+    comps = sa.components(root)
+    mine = [c for c in comps if candidate and candidate in c["candidates"]]
+    all_adrs = sa.adrs(root)
+    problems = sa.approval_problems(root)
+    if candidate and not mine:
+        problems = problems + [f"{candidate} no vive en ningún componente de "
+                               "architecture/components.md (/architecture:init)"]
+
+    def adr_view(a):
+        return {"id": a["id"], "title": a["title"], "motive": a["motive"], "file": a["file"]}
+
+    return {
+        "architecture": True,
+        "approved": not problems,
+        "problems": problems,
+        "feature": feature.name if feature else None,
+        "candidate": candidate,
+        "components_scope": "candidate" if candidate else "all",
+        "components": mine if candidate else comps,
+        "adrs": [adr_view(a) for a in all_adrs if a["state"] == "approved"],
+        "proposed": [adr_view(a) for a in all_adrs if a["state"] == "proposed"],
+        "standards": sa.standards(root),
+    }
+
+
+def cmd_arch_context(args):
+    data = arch_context(project_root())
+    if "--json" in args:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        return 0
+    if not data["architecture"]:
+        print("Sin architecture/: el plan sigue el camino de siempre.")
+        return 0
+    out = [f"Arquitectura {'aprobada' if data['approved'] else 'SIN APROBAR'}"
+           + (f" · feature {data['feature']}" if data["feature"] else "")]
+    out += [f"  - {p}" for p in data["problems"]]
+    scope = (f"que alojan {data['candidate']}" if data["components_scope"] == "candidate"
+             else "todos (la feature no viene de una candidata)")
+    out.append(f"\nComponentes {scope}:")
+    out += [f"  {c['id']} — {c['title']}: {c['responsibility']}" for c in data["components"]]
+    out.append("\nDecisiones vigentes:")
+    out += [f"  {a['id']} — {a['title']} (motivo: {a['motive']})" for a in data["adrs"]]
+    if data["proposed"]:
+        out.append("\nPropuestas pendientes de /architecture:review (no se citan como vigentes):")
+        out += [f"  {a['id']} — {a['title']}" for a in data["proposed"]]
+    out.append("\nEstándares:")
+    out += [f"  {s['id']} — {s['title']} ({s['kind']}; {s['detail']}; {s['adr']})"
+            for s in data["standards"]]
+    print("\n".join(out))
+    return 0
+
+
 COMMANDS = {
     "new": cmd_new,
+    "arch-context": cmd_arch_context,
     "current": cmd_current,
     "status": cmd_status,
     "context": cmd_context,

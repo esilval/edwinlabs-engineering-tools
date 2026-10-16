@@ -1950,6 +1950,53 @@ def test_F007_R001_trace_sin_arquitectura_igual(base):
            f"{a['findings']} vs {b['findings']}")
 
 
+def test_F007_R002_contexto_de_planificacion(base):
+    print("\nF007 · R002: arch-context da al plan la arquitectura de su feature")
+    p = base / "f007-contexto"
+    p.mkdir()
+    con_arquitectura(p)
+    r = run("new", ["B02"], cwd=p)
+    expect(r.returncode == 0, "se crea la feature de B02", r.stdout + r.stderr)
+    data = json.loads(run("arch-context", ["--json"], cwd=p).stdout)
+    expect(data["architecture"] and data["approved"] and data["candidate"] == "B02"
+           and data["components_scope"] == "candidate"
+           and [c["id"] for c in data["components"]] == ["C2"],
+           "los componentes de la candidata: C2", f"{data.get('components')}")
+    ids = [a["id"] for a in data["adrs"]]
+    expect(ids == ["ADR-0001", "ADR-0002"] and "ADR-0003" not in ids,
+           "las decisiones vigentes, sin la rechazada", f"{ids}")
+    expect([a["id"] for a in data["proposed"]] == ["ADR-0004"],
+           "la propuesta va aparte", f"{data['proposed']}")
+    expect([s["id"] for s in data["standards"]] == ["S1"], "y los estandares")
+    r = run("arch-context", cwd=p)
+    expect(r.returncode == 0 and "C2 — Exportación" in r.stdout and "ADR-0004" in r.stdout,
+           "la salida legible lista lo mismo", r.stdout)
+
+    q = repo_con_feature(base, "f007-contexto-sin-candidata", spec=SPEC_LISTA)
+    con_arquitectura(q)
+    data = json.loads(run("arch-context", ["--json"], cwd=q).stdout)
+    expect(data["components_scope"] == "all" and len(data["components"]) == 2,
+           "una feature sin candidata recibe todos los componentes, marcados como tales")
+
+    comp = p / "architecture" / "components.md"
+    comp.write_text(comp.read_text(encoding="utf-8").replace("- **Candidatas:** B02",
+                                                             "- **Candidatas:** —"),
+                    encoding="utf-8")
+    data = json.loads(run("arch-context", ["--json"], cwd=p).stdout)
+    expect(not data["approved"] and any("components.md cambió" in x for x in data["problems"])
+           and any("B02 no vive en ningún componente" in x for x in data["problems"]),
+           "arquitectura cambiada y candidata sin componente: approved false y el motivo",
+           f"{data['problems']}")
+
+
+def test_F007_R001_contexto_sin_arquitectura(base):
+    print("\nF007 · R001: arch-context sin architecture/")
+    p = repo_con_feature(base, "f007-contexto-vacio", spec=SPEC_LISTA)
+    r = run("arch-context", ["--json"], cwd=p)
+    expect(r.returncode == 0 and json.loads(r.stdout) == {"architecture": False},
+           "{'architecture': false} con salida 0", r.stdout + r.stderr)
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -1999,6 +2046,8 @@ def main():
         test_F007_R004_plan_sin_comprobacion_de_arquitectura(base)
         test_F007_R005_adr_sustituido_tras_aprobar(base)
         test_F007_R001_trace_sin_arquitectura_igual(base)
+        test_F007_R002_contexto_de_planificacion(base)
+        test_F007_R001_contexto_sin_arquitectura(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

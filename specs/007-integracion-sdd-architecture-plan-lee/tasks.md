@@ -59,7 +59,7 @@ contrato ejecuta `architecture.py`.
 
 ### T003 — `sdd.py arch-context` · P
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R002, R001
 - **Depende de:** T001
 - **Archivos:** `plugins/sdd/scripts/sdd.py`, `plugins/sdd/tests/selftest.py`
