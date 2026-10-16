@@ -44,7 +44,7 @@ de contrato es la única que ejecuta `discovery.py`.
 
 ### T002 — Lectura del producto e `init`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R015
 - **Depende de:** T001
 - **Archivos:** `plugins/architecture/scripts/architecture.py`, `plugins/architecture/templates/{quality,components,standards,questions,adr}.md`, `plugins/architecture/tests/selftest.py`, `plugins/discovery/scripts/discovery.py` (solo comentario)

@@ -186,9 +186,10 @@ def content_digest(text):
     """Huella del contenido revisable: todo menos la fila Estado de la
     cabecera, que es donde se guarda la propia huella.
 
-    plugins/sdd/scripts/sdd_product.py tiene una copia de esta huella para
-    saber si el producto esta aprobado: un cambio aqui se replica alli, y la
-    prueba de contrato del selftest de sdd lo comprueba."""
+    plugins/sdd/scripts/sdd_product.py y plugins/architecture/scripts/
+    architecture.py tienen una copia de esta huella para saber si el producto
+    esta aprobado: un cambio aqui se replica alli, y las pruebas de contrato de
+    sus selftests lo comprueban."""
     end = _header_end(text)
     return text_digest(STATUS_ROW.sub("", text[:end], count=1) + text[end:])
 
