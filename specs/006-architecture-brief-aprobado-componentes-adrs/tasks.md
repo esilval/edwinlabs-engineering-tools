@@ -152,7 +152,7 @@ de contrato es la única que ejecuta `discovery.py`.
 
 ### T010 — Skills
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R009, R010, R013
 - **Depende de:** T007, T008, T009
 - **Archivos:** `plugins/architecture/skills/{init,decide,check,approve,review}/SKILL.md`
