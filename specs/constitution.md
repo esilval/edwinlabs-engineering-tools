@@ -2,7 +2,7 @@
 
 | Campo | Valor      |
 | ----- | ---------- |
-| Fecha | 2026-10-15 |
+| Fecha | 2026-10-16 |
 
 > Reglas que ninguna spec, plan o tarea puede violar. Si una regla aquí impide
 > algo que hace falta, se cambia la regla explícitamente, no se ignora.
@@ -68,6 +68,11 @@
   usarlos (hoy, `docs/standards-roadmap.md` de `sdd`, sección 7).
 - Cambiar el formato de un artefacto que lee otro plugin es un cambio de
   contrato entre plugins y requiere aprobación explícita del usuario.
+- Código copiado entre plugins: como los plugins no comparten código, una copia
+  de lógica de otro plugin lleva un comentario que nombra el original y las
+  demás copias. Si lee el formato de un artefacto de otro plugin, una prueba de
+  contrato de su selftest la contrasta con el plugin real cuando está en el
+  repositorio.
 
 ## Comprobación
 
@@ -79,16 +84,17 @@ que alguien se acuerde, y eso hay que saberlo.
 | Sintaxis compatible con Python 3.8 | mecánica | `scripts/validate.py --strict` compila todo `.py` en CI con 3.8 | cumple |
 | Estructura de marketplace, plugins, skills, agentes y hooks | mecánica | `scripts/validate.py --strict` en CI | cumple |
 | Hooks con `timeout` | mecánica | `validate.py --strict` (el aviso falla en modo estricto) | cumple |
-| Selftest de cada plugin en CI | mecánica | `.github/workflows/validate.yml` recorre `plugins/*/tests/selftest.py`. Pendiente de automatizar: que `validate.py` exija `tests/selftest.py` en cada plugin | 2 de 2 plugins |
-| Todo código de hallazgo alcanzable | mecánica | el selftest compara los declarados con los probados | cumple en `sdd` |
+| Selftest de cada plugin en CI | mecánica | `.github/workflows/validate.yml` recorre `plugins/*/tests/selftest.py`. Pendiente de automatizar: que `validate.py` exija `tests/selftest.py` en cada plugin | 3 de 3 plugins |
+| Todo código de hallazgo alcanzable | mecánica | el selftest compara los declarados con los probados | cumple en los 3 plugins |
 | Solo biblioteca estándar | mecánica | pendiente de automatizar: comprobar los `import` en `validate.py` | cumple |
 | Hooks en forma exec | mecánica | pendiente de automatizar en `validate.py` | cumple |
-| Ningún hook devuelve `allow` | mecánica (parcial) | el selftest de `sdd` lo comprueba para su compuerta; el resto, revisión del diff | cumple |
+| Ningún hook devuelve `allow` | mecánica (parcial) | el selftest de cada plugin lo comprueba para su compuerta; el resto, revisión del diff | cumple |
 | Lo determinista en scripts | revisable | revisión del diff | — |
 | Guardrail con escape documentado | revisable | revisión del diff y README | — |
 | Aprobaciones solo por el usuario | revisable | revisión del diff; `disable-model-invocation` en las skills que aprueban | — |
 | Códigos y schemas como contrato | revisable | revisión del diff | — |
 | Plugins unidos solo por archivos | revisable | revisión del diff | — |
+| Código copiado entre plugins, referenciado y contrastado | revisable (parcial) | revisión del diff; pruebas de contrato contra `discovery` en los selftests de `sdd` y `architecture` | cumple |
 | Idioma y formato de commits | juicio | criterio humano | — |
 | Estilo del código | juicio | criterio humano; sin herramienta | — |
 
