@@ -2153,6 +2153,131 @@ def test_F009_R001_seccion_de_diagramas(base):
            f"{hallazgos_de(p, 'E-PLAN-TEMPLATE')}")
 
 
+def feature_con_plan(base, nombre, plan, candidata="B01", arquitectura=True):
+    """Proyecto con producto (y arquitectura), la feature de la candidata (o una
+    descripcion libre si candidata es None) y su plan.md. Devuelve (p, plan)."""
+    p = base / nombre
+    p.mkdir()
+    if arquitectura:
+        con_arquitectura(p)
+    else:
+        con_producto(p)
+    r = run("new", [candidata or "informe libre de prueba"], cwd=p)
+    feature = p / json.loads(r.stdout)["dir"]
+    (feature / "plan.md").write_text(plan, encoding="utf-8")
+    return p, feature / "plan.md"
+
+
+def secuencia(texto):
+    """Cuerpo del apartado ### Secuencia del plan."""
+    m = re.search(r"^### Secuencia\n(.*?)(?=^#{2,3} |\Z)", texto, re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def test_F009_R002_esqueleto_con_componentes(base):
+    print("\nF009 · R002: el esqueleto de secuencia trae los componentes de la feature")
+    p, plan = feature_con_plan(base, "f009-r002", PLAN_LISTO + "\n" + seccion_diagramas())
+    r = run("diagram", cwd=p)
+    cuerpo = secuencia(plan.read_text(encoding="utf-8"))
+    expect(r.returncode == 0 and "```mermaid\nsequenceDiagram\n  participant C1 as Ventas\n"
+           in cuerpo and "C2" not in cuerpo.split("%%")[0],
+           "una feature de B01: participant C1 as Ventas, y solo C1", r.stdout + r.stderr + cuerpo)
+    huecos = [h for h in hallazgos_de(p, "E-PLAN-TEMPLATE")]
+    adr = hallazgos_de(p, "E-PLAN-ADR-UNKNOWN") + hallazgos_de(p, "E-PLAN-ADR-NOT-APPROVED")
+    expect(len(huecos) == 1 and "%% _Completa" in huecos[0]["message"] and not adr,
+           "sin completar: E-PLAN-TEMPLATE por el hueco, y ninguna cita de ADR falsa",
+           f"{huecos} {adr}")
+    texto = plan.read_text(encoding="utf-8")
+    texto = re.sub(r"^  %% _Completa.*$", "  actor U as Dueño\n  U->>C1: cierra la caja (D1)",
+                   texto, flags=re.M)
+    plan.write_text(no_aplica(texto), encoding="utf-8")
+    expect(not hallazgos_de(p, "E-PLAN-TEMPLATE"), "completado: ningun hueco",
+           f"{hallazgos_de(p, 'E-PLAN-TEMPLATE')}")
+
+    p, plan = feature_con_plan(base, "f009-r002-libre", PLAN_LISTO + "\n" + seccion_diagramas(),
+                               candidata=None)
+    r = run("diagram", cwd=p)
+    cuerpo = secuencia(plan.read_text(encoding="utf-8"))
+    expect(r.returncode == 0 and "  participant " not in cuerpo
+           and "C1 (Ventas), C2 (Exportación)" in cuerpo,
+           "sin candidata: ningun participante, y el hueco lista los componentes", cuerpo)
+
+    p, plan = feature_con_plan(base, "f009-r002-sin-seccion", PLAN_LISTO)
+    r = run("diagram", cwd=p)
+    texto = plan.read_text(encoding="utf-8")
+    expect(r.returncode == 0 and texto.startswith(PLAN_LISTO.rstrip("\n"))
+           and texto.rstrip().endswith("o «No aplica.»_")
+           and "participant C1 as Ventas" in secuencia(texto)
+           and "### Modelo de datos" in texto and "### Clases" in texto,
+           "un plan anterior sin la seccion la recibe al final, con el esqueleto", texto)
+
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_trace
+    aprobado = sdd_trace.set_status(PLAN_LISTO, "Approved · "
+                                    + sdd_trace.content_digest(PLAN_LISTO, "plan.md"))[0]
+    p, plan = feature_con_plan(base, "f009-r002-aprobado", aprobado)
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 0 and "participant C1" in plan.read_text(encoding="utf-8")
+           and "estaba aprobado" in r.stdout and "/sdd:approve" in r.stdout
+           and "tasks.md" in r.stdout,
+           "un plan aprobado se escribe, y se avisa de volver a aprobarlo", r.stdout)
+
+    # El traspaso exige la arquitectura aprobada: se cambia despues de crear la feature.
+    p, plan = feature_con_plan(base, "f009-r002-sin-aprobar", PLAN_LISTO)
+    comp = p / "architecture" / "components.md"
+    comp.write_text(comp.read_text(encoding="utf-8").replace("registra ventas",
+                                                             "registra ventas y cobros"),
+                    encoding="utf-8")
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 1 and "no está aprobada" in r.stderr
+           and "components.md cambió" in r.stderr
+           and plan.read_text(encoding="utf-8") == PLAN_LISTO,
+           "arquitectura sin aprobar: sale con 1, dice por que y no escribe", r.stderr)
+    plan.unlink()
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 1 and "/sdd:plan" in r.stderr,
+           "sin plan.md: sale con 1 y remite a /sdd:plan", r.stderr)
+
+    import sdd
+    bloque = sdd.sequence_skeleton({"components_scope": "candidate", "components": [
+        {"id": "C3", "title": "Cobros; pagos"}]})
+    expect("  participant C3 as Cobros#59; pagos\n" in bloque,
+           "un ; en el nombre se escribe #59;, que Mermaid no toma por separador", bloque)
+
+
+def test_F009_R003_no_sobrescribe(base):
+    print("\nF009 · R003: un plan con diagramas no se sobrescribe")
+    p, plan = feature_con_plan(base, "f009-r003", PLAN_LISTO + "\n" + seccion_diagramas())
+    run("diagram", cwd=p)
+    antes = plan.read_bytes()
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 0 and plan.read_bytes() == antes and "ya tenía" in r.stdout,
+           "un segundo diagram deja el plan igual byte a byte y lo dice", r.stdout + r.stderr)
+    sin_secuencia = re.sub(r"### Secuencia\n\n[^\n]*\n\n", "", seccion_diagramas())
+    p, plan = feature_con_plan(base, "f009-r003-sin-apartado", PLAN_LISTO + "\n" + sin_secuencia)
+    antes = plan.read_bytes()
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 0 and plan.read_bytes() == antes and "### Secuencia" in r.stdout,
+           "una seccion sin el apartado de secuencia no se toca, y se dice", r.stdout)
+    p, plan = feature_con_plan(base, "f009-r003-no-aplica",
+                               PLAN_LISTO + "\n" + no_aplica(seccion_diagramas()))
+    antes = plan.read_bytes()
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 0 and plan.read_bytes() == antes and "ya tenía" in r.stdout,
+           "un apartado con «No aplica.» tampoco se toca", r.stdout + r.stderr)
+
+
+def test_F009_R007_sin_arquitectura(base):
+    print("\nF009 · R007: sin architecture/ no hay esqueleto")
+    p, plan = feature_con_plan(base, "f009-r007", PLAN_LISTO + "\n" + seccion_diagramas(),
+                               arquitectura=False)
+    antes = plan.read_bytes()
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 0 and plan.read_bytes() == antes and "architecture/" in r.stdout,
+           "diagram sale con 0, no escribe y dice que hace falta arquitectura",
+           r.stdout + r.stderr)
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -2209,6 +2334,9 @@ def main():
         test_F007_R008_traspaso_sin_arquitectura_lista(base)
         test_F007_R001_traspaso_sin_arquitectura_igual(base)
         test_F009_R001_seccion_de_diagramas(base)
+        test_F009_R002_esqueleto_con_componentes(base)
+        test_F009_R003_no_sobrescribe(base)
+        test_F009_R007_sin_arquitectura(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

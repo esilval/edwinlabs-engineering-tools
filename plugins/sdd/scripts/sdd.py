@@ -25,6 +25,9 @@ Subcomandos:
                       Escribe la siguiente decision en architecture/adr/ como
                       propuesta, desde el plan de la feature activa. La decide
                       el usuario con /architecture:review.
+  diagram             Con architecture/: escribe en plan.md el esqueleto del
+                      diagrama de secuencia con los componentes de la
+                      candidata, si el plan aun no tiene diagramas.
 """
 
 import datetime
@@ -1312,10 +1315,126 @@ def cmd_propose_adr(args):
     return 0
 
 
+# --------------------------------------------------------------------------
+# Diagramas del plan (feature 009)
+# --------------------------------------------------------------------------
+
+DIAGRAMS_TITLE = "Diagramas"
+SEQUENCE_TITLE = "Secuencia"
+
+
+def _plan_template_section(plugin_root):
+    """La seccion ## Diagramas de templates/plan.md, sin el salto final."""
+    text = (Path(plugin_root) / "templates" / "plan.md").read_text(encoding="utf-8")
+    m = re.search(rf"^## {DIAGRAMS_TITLE}\n.*?(?=^## |\Z)", text, re.M | re.S)
+    return m.group(0).rstrip() + "\n" if m else ""
+
+
+def _mermaid_text(text):
+    """Texto de un participante: ';' separa sentencias en Mermaid."""
+    return " ".join(str(text).split()).replace(";", "#59;")
+
+
+def sequence_skeleton(data):
+    """Bloque mermaid con un participante por componente de la candidata (D3).
+    Sin candidata no hay participantes: el hueco lista entre cuales elegir.
+    El hueco lleva '...' para que trace y la compuerta lo traten como tal, y
+    no cita un ADR ni un requisito literal, que trace tomaria por citas."""
+    mine = data["components"] if data["components_scope"] == "candidate" else []
+    lines = ["```mermaid", "sequenceDiagram"]
+    lines += [f"  participant {c['id']} as {_mermaid_text(c['title'])}" for c in mine]
+    if mine:
+        ask = "añade el usuario y los demás participantes"
+    else:
+        choices = ", ".join(f"{c['id']} ({c['title']})" for c in data["components"])
+        ask = (f"elige los participantes entre los componentes {choices}, "
+               "y añade el usuario").replace("_", " ")
+    lines.append(f"  %% _Completa el flujo principal...: {ask}; cita en cada llamada "
+                 "entre componentes la decisión del plan (Dn) o el ADR en que se apoya_")
+    lines.append("```")
+    return "\n".join(lines) + "\n"
+
+
+def _subsection(text, title):
+    """(inicio, fin) del cuerpo de '### title' dentro de text, o None."""
+    m = re.search(rf"^### {re.escape(title)}[^\n]*\n", text, re.M)
+    if not m:
+        return None
+    end = re.search(r"^#{2,3} ", text[m.end():], re.M)
+    return m.end(), (m.end() + end.start() if end else len(text))
+
+
+def plan_diagram(root, plugin_root):
+    """
+    Escribe el esqueleto de secuencia en el plan de la feature activa (D3).
+    Devuelve (codigo_de_salida, lineas_de_mensaje).
+    """
+    sa = _architecture()
+    if not sa.exists(root):
+        return 0, ["Sin architecture/: el esqueleto solo se genera con arquitectura. "
+                   "Dibuja los diagramas del plan desde cero en ## Diagramas."]
+    feature = resolve_feature(root)
+    plan = feature / "plan.md" if feature else None
+    if plan is None or not plan.is_file():
+        return 1, ["No hay plan.md en la feature activa: créalo con /sdd:plan."]
+    data = arch_context(root)
+    if not data["approved"]:
+        return 1, (["La arquitectura no está aprobada, o la candidata no tiene "
+                    "componente:"] + [f"  - {x}" for x in data["problems"]])
+    text = plan.read_text(encoding="utf-8")
+    t = _trace()
+    hole = {t._squash(x) for x in t.template_lines("plan.md")}
+    skeleton = sequence_skeleton(data)
+    section = re.search(rf"^## {DIAGRAMS_TITLE}[^\n]*\n.*?(?=^## |\Z)", text, re.M | re.S)
+    if section:
+        span = _subsection(section.group(0), SEQUENCE_TITLE)
+        if span is None:
+            return 0, [f"plan.md tiene ## {DIAGRAMS_TITLE} sin ### {SEQUENCE_TITLE}: "
+                       "no se toca. Añade el apartado desde la plantilla."]
+        body = section.group(0)[span[0]:span[1]]
+        content = [x for x in body.splitlines() if x.strip()]
+        if any(t._squash(x) not in hole for x in content):
+            return 0, ["plan.md ya tenía diagramas de secuencia (o «No aplica.»): "
+                       "no se toca."]
+        start = section.start() + span[0]
+        new = (text[:start] + "\n" + skeleton + "\n"
+               + text[section.start() + span[1]:].lstrip("\n"))
+    else:
+        block = _plan_template_section(plugin_root)
+        span = _subsection(block, SEQUENCE_TITLE)
+        if span is None:
+            return 1, [f"La plantilla templates/plan.md no tiene ## {DIAGRAMS_TITLE} con "
+                       f"### {SEQUENCE_TITLE}: reinstala el plugin sdd."]
+        block = block[:span[0]] + "\n" + skeleton + "\n" + block[span[1]:].lstrip("\n")
+        new = text.rstrip("\n") + "\n\n" + block
+    was_approved = t.is_approved(text)
+    plan.write_text(new, encoding="utf-8")
+    rel = plan.relative_to(root)
+    out = [f"{rel}: esqueleto de secuencia en ## {DIAGRAMS_TITLE} > ### {SEQUENCE_TITLE}"
+           + (f" con {', '.join(c['id'] for c in data['components'])}."
+              if data["components_scope"] == "candidate" else
+              ", sin participantes: la feature no viene de una candidata."),
+           "Complétalo, y también el modelo de datos y las clases (o «No aplica.»)."]
+    if was_approved:
+        out.append("plan.md estaba aprobado y ha cambiado: el usuario lo revisa y lo "
+                   "vuelve a aprobar con /sdd:approve. Si tasks.md estaba aprobado, al "
+                   "aprobar el plan de nuevo vuelve a Draft y también hay que aprobarlo.")
+    return 0, out
+
+
+def cmd_diagram(_args):
+    plugin_root = os.environ.get(
+        "CLAUDE_PLUGIN_ROOT", str(Path(__file__).resolve().parent.parent))
+    code, lines = plan_diagram(project_root(), plugin_root)
+    print("\n".join(lines), file=sys.stderr if code else sys.stdout)
+    return code
+
+
 COMMANDS = {
     "new": cmd_new,
     "arch-context": cmd_arch_context,
     "propose-adr": cmd_propose_adr,
+    "diagram": cmd_diagram,
     "current": cmd_current,
     "status": cmd_status,
     "context": cmd_context,

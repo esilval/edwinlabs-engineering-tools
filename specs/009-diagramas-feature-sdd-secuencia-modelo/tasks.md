@@ -39,7 +39,7 @@ Las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T002 — `sdd.py diagram`: el esqueleto de secuencia
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R002, R003, R007
 - **Depende de:** T001
 - **Archivos:** `plugins/sdd/scripts/sdd.py`, `plugins/sdd/tests/selftest.py`
