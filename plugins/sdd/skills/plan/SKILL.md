@@ -68,11 +68,50 @@ Decide **cómo** se construye lo que la spec describe.
 
    Sin `architecture/`, sigue como hasta ahora.
 
-6. Para cada decisión relevante, documenta también **la alternativa que
+6. **Diagramas.** Rellena la sección `## Diagramas` del plan, en Mermaid, para
+   que quien revise vea cómo resuelve el plan lo que pide la spec:
+   - **Secuencia** (`sequenceDiagram`): el flujo principal. Con
+     `architecture/`, parte del esqueleto:
+
+     ```bash
+     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdd.py" diagram
+     ```
+
+     Escribe un `participant` por componente que aloja la feature y una línea
+     `%%` que pide completar el flujo. No sobrescribe un apartado que ya tiene
+     contenido. Si la feature no viene de una candidata, no pone participantes:
+     la línea `%%` lista los componentes entre los que elegir. Si sale con 1, la
+     arquitectura no está aprobada, la candidata no tiene componente o falta
+     `plan.md`: muestra el motivo. Sin `architecture/`, dibuja el diagrama desde
+     cero.
+   - **Modelo de datos** (`erDiagram`): las entidades que la feature crea o
+     cambia.
+   - **Clases** (`classDiagram`): las piezas nuevas y cómo se relacionan.
+   - Un apartado que no aplica a esta feature dice «No aplica.»; no lo dejes con
+     el hueco de la plantilla.
+
+   Convenciones del diagrama de secuencia, que `trace` comprueba con
+   arquitectura:
+   - Un componente se dibuja con su ID de `architecture/components.md`, sin
+     cambiarlo (`participant C1 as Ventas`), y no se usa un ID `C…` para nada
+     más. El usuario, los módulos internos y los sistemas externos llevan otro
+     ID (`actor U`, `participant Repo`, `participant XBanco`).
+   - Una **llamada** es una flecha continua (`->>`, `->`, `-x`, `-)`) y hace al
+     que llama depender del llamado: tiene que respetar los estándares
+     `dependencia` y `prohibida`. Una **respuesta** es discontinua (`-->>`,
+     `-->`, `--x`, `--)`) y no cuenta. `A<<->>B` cuenta como llamada en los dos
+     sentidos.
+   - Cada llamada entre componentes cita en su texto la decisión en que se
+     apoya, una Dn de este plan o un ADR vigente:
+     `C2->>C1: totales del día (ADR-0001)`.
+   - Borra la línea `%%` del esqueleto cuando el flujo esté completo; mientras
+     siga, el plan tiene un hueco y no se aprueba.
+
+7. Para cada decisión relevante, documenta también **la alternativa que
    descartaste y por qué**. Es la parte del plan que más valor tiene dentro de
    seis meses, y la que siempre se omite.
 
-7. Cierra con la tabla de trazabilidad: todo requisito MUST de la spec debe
+8. Cierra con la tabla de trazabilidad: todo requisito MUST de la spec debe
    aparecer en la tabla de componentes o en la de pruebas. Si alguno no aparece,
    o falta cobertura en el plan o sobra el requisito en la spec. Señálalo, no lo
    silencies. Cita solo IDs que existan en la spec: un `R0xx` que no esté ahí

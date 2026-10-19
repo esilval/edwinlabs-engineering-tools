@@ -304,7 +304,7 @@ los plugins del marketplace:
 | `*-TASK-*` | tareas de `tasks.md` | en uso |
 | `*-DONE-*` | coherencia de tareas cerradas | en uso |
 | `*-SPEC-*` | el documento de spec en conjunto | en uso |
-| `*-PLAN-*` | `plan.md` frente a la spec y la constitución | en uso |
+| `*-PLAN-*` | `plan.md` frente a la spec, la constitución y la arquitectura, incluidos sus diagramas | en uso |
 | `*-TEST-*` | evidencia de prueba (forma de citar requisitos) | en uso |
 | `*-ARCH-*` | la arquitectura en conjunto: citas, preguntas, aprobación, capas y dirección de dependencias (plugin `architecture`; antes reservado para la fase 3) | en uso |
 | `*-CONTRACT-*` | contratos de API | fase 4 |

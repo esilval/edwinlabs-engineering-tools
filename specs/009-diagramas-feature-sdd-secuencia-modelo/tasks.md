@@ -89,7 +89,7 @@ Las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T005 — Skill del plan, README, registro y cierre
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R008
 - **Depende de:** T002, T004
 - **Archivos:** `plugins/sdd/skills/plan/SKILL.md`, `plugins/sdd/README.md`, `plugins/sdd/docs/standards-roadmap.md`
