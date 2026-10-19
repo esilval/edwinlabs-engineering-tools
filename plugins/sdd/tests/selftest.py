@@ -386,6 +386,11 @@ def test_trazabilidad(base):
     check(len(arquitectura) == 4, "los cuatro codigos de plan contra arquitectura se emiten",
           f"{sorted(arquitectura)}")
 
+    print("\nDiagramas del plan (feature 009)")
+    diagramas_plan = codigos_plan_diagramas(base)
+    check(len(diagramas_plan) == 3, "los tres codigos de diagramas del plan se emiten",
+          f"{sorted(diagramas_plan)}")
+
     sys.path.insert(0, str(PLUGIN / "scripts"))
     import sdd_trace
     declarados = set(sdd_trace.FINDINGS)
@@ -393,7 +398,7 @@ def test_trazabilidad(base):
                                 "E-REQ-NO-CRITERIA", "W-REQ-NO-TASK",
                                 "W-TEST-UNSCOPED", "W-TASK-NO-DONE-WHEN",
                                 "W-TEST-EMPTY", "W-TEST-NO-ASSERT"} | set(planes) \
-        | arquitectura
+        | arquitectura | diagramas_plan
     check(declarados == probados,
           f"los {len(declarados)} codigos declarados estan cubiertos",
           f"sin probar: {sorted(declarados - probados)}")
@@ -2216,8 +2221,9 @@ def test_F009_R002_esqueleto_con_componentes(base):
     texto = re.sub(r"^  %% _Completa.*$", "  actor U as Dueño\n  U->>C1: cierra la caja (D1)",
                    texto, flags=re.M)
     plan.write_text(no_aplica(texto), encoding="utf-8")
-    expect(not hallazgos_de(p, "E-PLAN-TEMPLATE"), "completado: ningun hueco",
-           f"{hallazgos_de(p, 'E-PLAN-TEMPLATE')}")
+    expect(not hallazgos_de(p, "E-PLAN-TEMPLATE")
+           and not [f for f in traza(p)["findings"] if "DIAGRAM" in f["code"]],
+           "completado: ningun hueco ni hallazgo de diagramas", f"{traza(p)['findings']}")
 
     p, plan = feature_con_plan(base, "f009-r002-libre", PLAN_LISTO + "\n" + seccion_diagramas(),
                                candidata=None)
@@ -2303,6 +2309,124 @@ def test_F009_R007_sin_arquitectura(base):
            r.stdout + r.stderr)
 
 
+def plan_con_secuencia(base, nombre, cuerpo, arquitectura=True, estandares=None):
+    """Feature 001-x con un plan cuyo diagrama de secuencia es cuerpo, sobre la
+    arquitectura de prueba (con otros estandares si se dan)."""
+    plan = (PLAN_LISTO + "\n## Comprobación de arquitectura\n\n| Decisión | Cómo |\n"
+            "| - | - |\n| ADR-0001 | se respeta |\n\n"
+            + no_aplica(seccion_diagramas()).replace(
+                "### Secuencia\n\nNo aplica.\n",
+                "### Secuencia\n\n```mermaid\nsequenceDiagram\n" + cuerpo + "```\n", 1))
+    p = repo_con_feature(base, nombre, spec=SPEC_LISTA,
+                         archivos={"specs/001-x/plan.md": plan})
+    if arquitectura:
+        con_arquitectura(p)
+        if estandares:
+            (p / "architecture" / "standards.md").write_text(estandares, encoding="utf-8")
+    return p
+
+
+SECUENCIA_COHERENTE = """  actor U as Dueño
+  participant C2 as Exportación
+  participant C1 as Ventas
+  U->>C2: exporta el mes (D1)
+  C2->>C1: movimientos del mes (ADR-0001)
+  C1-->>C2: movimientos
+  C2-->>U: archivo
+"""
+
+
+def codigos_plan_diagramas(base):
+    """Los tres codigos de la feature 009, emitidos de verdad (para la cobertura)."""
+    vistos = set()
+    p = plan_con_secuencia(base, "tr-diag-codigos",
+                           "  participant C7 as Otro\n  C1->>C2: al reves (D1)\n")
+    vistos |= {f["code"] for f in traza(p)["findings"]}
+    p = proyecto_plan(base, "tr-diag-sin", "ADR-0001")
+    vistos |= {f["code"] for f in traza(p)["findings"]}
+    return vistos & {"E-PLAN-DIAGRAM-UNKNOWN", "E-PLAN-DIAGRAM-VIOLATION", "W-PLAN-NO-DIAGRAMS"}
+
+
+def diagramas(p):
+    return [f for f in traza(p)["findings"] if "DIAGRAM" in f["code"]]
+
+
+def test_F009_R004_componente_inexistente(base):
+    print("\nF009 · R004: un componente inexistente en el diagrama se nombra")
+    p = plan_con_secuencia(base, "f009-coherente", SECUENCIA_COHERENTE)
+    errores = [f for f in traza(p)["findings"] if f["severity"] == "error"
+               and f["code"].startswith("E-PLAN")]
+    expect(not diagramas(p) and not errores,
+           "un diagrama que respeta la arquitectura no da hallazgos de plan", f"{errores}")
+    p = plan_con_secuencia(base, "f009-r004", "  participant C1 as Ventas\n"
+                           "  participant C7 as Facturación\n  C1->>C7: factura (D1)\n"
+                           "  C1->>C8: avisa (D1)\n")
+    h = hallazgos_de(p, "E-PLAN-DIAGRAM-UNKNOWN")
+    expect(len(h) == 2 and "C7" in h[0]["message"] and "C8" in h[1]["message"]
+           and h[0]["severity"] == "error",
+           "C7 declarado y C8 solo en un mensaje: un error que nombra cada uno", f"{h}")
+
+
+def test_F009_R005_llamada_contra_estandar(base):
+    print("\nF009 · R005: una llamada contra un estandar nombra el estandar")
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_trace
+    nombres, llamadas = sdd_trace.sequence_graph(
+        "participant A\nactor U as Usuario\ncreate participant N\n"
+        "A->>B: a\nB-->>A: b\nA->C: c\nC-->A: d\nA-xD: e\nA--xD: f\nA-)E: g\n"
+        "A--)E: h\nF<<->>G: i\nH<<-->>I: j\nA->>+J: k\nJ-->>-A: l\n"
+        "Note over A,B: nota\nloop cada dia\nend\n%% A->>Z: comentario\n")
+    expect(set(llamadas) == {("A", "B"), ("A", "C"), ("A", "D"), ("A", "E"), ("F", "G"),
+                             ("G", "F"), ("A", "J")}
+           and nombres >= {"A", "U", "N", "B", "J"} and "Z" not in nombres,
+           "solo las flechas continuas son llamadas; respuestas, notas y comentarios no",
+           f"{nombres} {llamadas}")
+    p = plan_con_secuencia(base, "f009-r005", "  participant C1 as Ventas\n"
+                           "  participant C2 as Exportación\n  C1->>C2: pide (D1)\n")
+    h = hallazgos_de(p, "E-PLAN-DIAGRAM-VIOLATION")
+    expect(len(h) == 1 and "S1" in h[0]["message"] and "C1 a C2" in h[0]["message"],
+           "C1->>C2 contra S1 (C2 -> C1): un error que nombra S1", f"{h}")
+    expect(sdd_trace.diagram_kind("---\ntitle: x\n---\n%%{init: {}}%%\nsequenceDiagram\n")
+           == "sequenceDiagram", "el frontmatter y las directivas no ocultan el tipo")
+    p = plan_con_secuencia(base, "f009-r005-respuesta", "  C1-->>C2: totales\n")
+    expect(not hallazgos_de(p, "E-PLAN-DIAGRAM-VIOLATION"),
+           "la respuesta C1-->>C2 no es una dependencia")
+    p = plan_con_secuencia(base, "f009-r005-prohibida",
+                           "  participant C1 as Ventas\n  C1-)C2: avisa (D1)\n",
+                           estandares=ARQ_STANDARDS.replace(
+                               "- **Detalle:** C2 → C1", "- **Detalle:** C3 → C2")
+                           + ESTANDAR_PROHIBIDO)
+    h = hallazgos_de(p, "E-PLAN-DIAGRAM-VIOLATION")
+    expect(len(h) == 1 and "S2" in h[0]["message"] and "prohibe" in h[0]["message"],
+           "una llamada prohibida por S2: un error que nombra S2", f"{h}")
+
+
+def test_F009_R006_sin_diagramas_avisa(base):
+    print("\nF009 · R006: un plan sin diagramas solo avisa")
+    p = proyecto_plan(base, "f009-r006", "ADR-0001")
+    h = hallazgos_de(p, "W-PLAN-NO-DIAGRAMS")
+    expect(len(h) == 1 and h[0]["severity"] == "warning"
+           and not [f for f in diagramas(p) if f["severity"] == "error"],
+           "sin la seccion: un aviso y ningun error de diagramas", f"{diagramas(p)}")
+    nota = "\n## Diagramas\n\n> Solo una nota.\n"
+    p = repo_con_feature(base, "f009-r006-nota", spec=SPEC_LISTA,
+                         archivos={"specs/001-x/plan.md": PLAN_LISTO + nota})
+    expect(len(hallazgos_de(p, "W-PLAN-NO-DIAGRAMS")) == 1,
+           "una seccion con solo notas tambien avisa")
+    p = repo_con_feature(base, "f009-r006-no-aplica", spec=SPEC_LISTA, archivos={
+        "specs/001-x/plan.md": PLAN_LISTO + "\n" + no_aplica(seccion_diagramas())})
+    expect(not hallazgos_de(p, "W-PLAN-NO-DIAGRAMS"),
+           "con «No aplica.» declarado, ningun aviso")
+
+
+def test_F009_R007_trace_sin_arquitectura(base):
+    print("\nF009 · R007: sin architecture/ los diagramas no se contrastan")
+    p = plan_con_secuencia(base, "f009-r007-trace", "  participant C7 as Otro\n"
+                           "  C1->>C2: al reves (D1)\n", arquitectura=False)
+    expect(not diagramas(p), "ningun hallazgo de diagramas sin arquitectura",
+           f"{diagramas(p)}")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -2362,6 +2486,10 @@ def main():
         test_F009_R002_esqueleto_con_componentes(base)
         test_F009_R003_no_sobrescribe(base)
         test_F009_R007_sin_arquitectura(base)
+        test_F009_R004_componente_inexistente(base)
+        test_F009_R005_llamada_contra_estandar(base)
+        test_F009_R006_sin_diagramas_avisa(base)
+        test_F009_R007_trace_sin_arquitectura(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

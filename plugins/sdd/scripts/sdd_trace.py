@@ -46,6 +46,10 @@ FINDINGS = {
     "E-PLAN-ADR-NOT-APPROVED": "plan.md cita una decision de arquitectura no aprobada",
     "W-PLAN-NO-ARCHITECTURE-CHECK": "plan.md no contrasta sus decisiones con la arquitectura",
     "W-PLAN-ADR-SUPERSEDED": "plan.md aprobado cita una decision sustituida despues",
+    "E-PLAN-DIAGRAM-UNKNOWN": "plan.md dibuja en un diagrama un componente que no existe",
+    "E-PLAN-DIAGRAM-VIOLATION": ("plan.md dibuja una llamada que un estandar prohibe o "
+                                 "declara en sentido contrario"),
+    "W-PLAN-NO-DIAGRAMS":  "plan.md no tiene diagramas ni declara que no aplican",
     "W-TASK-NO-DONE-WHEN": "Tarea sin condicion de terminado",
     "W-TEST-EMPTY":        "Prueba vacia que cita el requisito: no cuenta como evidencia",
     "W-TEST-NO-ASSERT":    "Prueba que cita el requisito sin ninguna asercion reconocible",
@@ -387,7 +391,8 @@ def parse_plan(path):
     if not path.is_file():
         return {"path": path.name, "exists": False, "status": None,
                 "placeholders": [], "cited": [], "constitution_check": False,
-                "adrs": [], "architecture_check": False, "approved": False}
+                "adrs": [], "architecture_check": False, "approved": False,
+                "diagrams": ""}
     text = path.read_text(encoding="utf-8", errors="replace")
     return {
         "path": path.name,
@@ -402,6 +407,9 @@ def parse_plan(path):
         "architecture_check": bool(section(text, "comprobacion de arquitectura",
                                            "architecture check").strip()),
         "approved": is_approved(text),
+        # Seccion ## Diagramas (feature 009), sin las notas en blockquote.
+        "diagrams": "\n".join(x for x in section(text, "diagramas", "diagrams").splitlines()
+                              if not x.lstrip().startswith(">")),
     }
 
 
@@ -447,6 +455,97 @@ def check_plan_architecture(root, plan, add):
             add("E-PLAN-ADR-NOT-APPROVED",
                 f"plan.md cita {ref}, que esta {estado}: un plan solo se apoya en "
                 "decisiones aprobadas.")
+
+
+# Diagramas del plan (feature 009, D5): solo los sequenceDiagram se contrastan
+# con la arquitectura; el modelo de datos y las clases no tienen con que.
+MERMAID_BLOCK = re.compile(r"^```mermaid[ \t]*\n(.*?)^```", re.M | re.S)
+SEQ_PARTICIPANT = re.compile(r"^\s*(?:create\s+)?(?:participant|actor)\s+([A-Za-z_]\w*)")
+# A->>B:, A-->>B:, A->B:, A-xB:, A-)B:, A<<->>B: ... El texto tras ':' no cuenta.
+SEQ_MESSAGE = re.compile(
+    r"^\s*([A-Za-z_]\w*)\s*(<<-{1,2}>>|-{1,2}(?:>>|>|x|\)))\s*[+-]?\s*([A-Za-z_]\w*)\s*:")
+COMPONENT_ID = re.compile(r"^C\d+$")
+
+
+def diagram_kind(block):
+    """Primera palabra del bloque mermaid, tras el frontmatter (---) y las
+    directivas o comentarios (%%) que pueden precederla."""
+    body = re.sub(r"\A\s*---\n.*?\n---[ \t]*\n", "", block, flags=re.S)
+    for line in body.splitlines():
+        line = line.strip()
+        if line and not line.startswith("%%"):
+            return line.split()[0]
+    return ""
+
+
+def sequence_graph(block):
+    """(participantes, llamadas) de un sequenceDiagram. Una llamada es una
+    flecha continua (->>, ->, -x, -)): el que llama depende del llamado. Las
+    discontinuas (-->>) son respuestas y no cuentan (D2)."""
+    names, calls = set(), []
+    for raw in block.splitlines():
+        line = raw.split("%%", 1)[0]
+        m = SEQ_PARTICIPANT.match(line)
+        if m:
+            names.add(m.group(1))
+            continue
+        m = SEQ_MESSAGE.match(line)
+        if not m:
+            continue
+        a, arrow, b = m.groups()
+        names.update((a, b))
+        if arrow.startswith("<<"):
+            if arrow == "<<->>":
+                calls += [(a, b), (b, a)]
+        elif not arrow.startswith("--"):
+            calls.append((a, b))
+    return names, calls
+
+
+def check_plan_diagrams(root, plan, add):
+    """W-PLAN-NO-DIAGRAMS siempre (R006); con architecture/, los componentes y
+    las llamadas de los diagramas de secuencia frente a la arquitectura (R004,
+    R005). Sin architecture/ no se contrasta nada (R007)."""
+    if not plan["diagrams"].strip():
+        add("W-PLAN-NO-DIAGRAMS",
+            "plan.md no tiene la seccion 'Diagramas' (secuencia, modelo de datos y "
+            "clases, o 'No aplica.' en cada uno): anadela desde la plantilla, o con "
+            "sdd.py diagram si hay architecture/.")
+        return
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import sdd_architecture
+    if not sdd_architecture.exists(root):
+        return
+    names, calls = set(), []
+    for block in MERMAID_BLOCK.findall(plan["diagrams"]):
+        if diagram_kind(block) == "sequenceDiagram":
+            n, c = sequence_graph(block)
+            names |= n
+            calls += c
+    known = {c["id"] for c in sdd_architecture.components(root)}
+    for name in sorted((n for n in names if COMPONENT_ID.match(n) and n not in known),
+                       key=lambda x: int(x[1:])):
+        add("E-PLAN-DIAGRAM-UNKNOWN",
+            f"Un diagrama de plan.md nombra {name}, que no es un componente de "
+            "architecture/components.md.")
+    deps = sdd_architecture.standard_pairs(root, "dependencia")
+    banned = sdd_architecture.standard_pairs(root, "prohibida")
+    seen = set()
+    for a, b in calls:
+        for x, y, sid in deps:
+            if (a, b) == (y, x) and (a, b, sid) not in seen:
+                seen.add((a, b, sid))
+                add("E-PLAN-DIAGRAM-VIOLATION",
+                    f"El diagrama de secuencia de plan.md dibuja una llamada de {a} a {b}, "
+                    f"pero {sid} declara {x} -> {y}.")
+        for x, y, sid in banned:
+            if (a, b) == (x, y) and (a, b, sid) not in seen:
+                seen.add((a, b, sid))
+                add("E-PLAN-DIAGRAM-VIOLATION",
+                    f"El diagrama de secuencia de plan.md dibuja una llamada de {a} a {b}, "
+                    f"una dependencia que {sid} prohibe.")
 
 
 # --------------------------------------------------------------------------
@@ -749,6 +848,7 @@ def analyze(root, feature, config):
                 "Existe specs/constitution.md y plan.md no tiene la seccion "
                 "'Comprobacion de constitucion'.")
         check_plan_architecture(root, plan, add)
+        check_plan_diagrams(root, plan, add)
 
     for t in tasks:
         if not t["done_when"].strip():

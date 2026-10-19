@@ -70,7 +70,7 @@ Las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T004 — Comprobación de los diagramas en `trace`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R004, R005, R006, R007
 - **Depende de:** T001, T003
 - **Archivos:** `plugins/sdd/scripts/sdd_trace.py`, `plugins/sdd/tests/selftest.py`
