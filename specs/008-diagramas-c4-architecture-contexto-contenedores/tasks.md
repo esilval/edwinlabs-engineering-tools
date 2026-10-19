@@ -45,7 +45,7 @@ sobre la arquitectura de prueba de la feature 006.
 
 ### T002 — Lectura de los diagramas y comprobaciones
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R005, R006, R007, R009
 - **Depende de:** T001
 - **Archivos:** `plugins/architecture/scripts/architecture.py`, `plugins/architecture/tests/selftest.py`

@@ -598,7 +598,8 @@ PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_*])_[^_\n]+_(?![A-Za-z0-9_*])")
 def check_templates(root):
     """Huecos de plantilla (texto en cursiva) que siguen sin rellenar."""
     out = []
-    files = [f"{ARCH_DIR}/{name}" for name in SET_FILES] + [a["file"] for a in adrs(root)]
+    files = ([f"{ARCH_DIR}/{name}" for name in SET_FILES + (DIAGRAMS,)]
+             + [a["file"] for a in adrs(root)])
     for rel in files:
         text = read_text(Path(root) / rel)
         if text is None:
@@ -669,7 +670,7 @@ def analyze(root):
     """
     findings = (check_templates(root) + check_quality(root) + check_components(root)
                 + check_adrs(root) + check_standards(root) + check_references(root)
-                + check_questions(root) + check_approval(root))
+                + check_questions(root) + check_diagrams(root) + check_approval(root))
     errors = sum(1 for f in findings if f["severity"] == "error")
     return {
         "schema": SCHEMA,
@@ -1248,16 +1249,19 @@ def product_users(root):
     return out
 
 
-def standard_dependencies(root):
-    """[(desde, hacia, estandar, decision)] de los estandares de tipo dependencia
-    con Detalle 'C2 → C1' (o 'C2 -> C1')."""
+PAIR = re.compile(r"\b(C\d+)\s*(?:→|->)\s*(C\d+)\b")
+
+
+def standard_pairs(root, kind):
+    """[(desde, hacia, estandar, decision)] de los estandares del tipo kind
+    ('dependencia' o 'prohibida') con Detalle 'C2 → C1' (o 'C2 -> C1')."""
     out = []
     for s in standards(root):
         f = s["fields"]
-        if norm(f.get("tipo", "")).strip(" _") != "dependencia":
+        if norm(f.get("tipo", "")).strip(" _") != kind:
             continue
         decision = ADR_REF.search(f.get("decision", ""))
-        for a, b in re.findall(r"\b(C\d+)\s*(?:→|->)\s*(C\d+)\b", f.get("detalle", "")):
+        for a, b in PAIR.findall(f.get("detalle", "")):
             out.append((a, b, s["id"], f"ADR-{decision.group(1)}" if decision else None))
     return out
 
@@ -1266,7 +1270,7 @@ def diagram_skeleton(root):
     """Texto de diagrams.md generado solo desde los archivos (D3)."""
     users = product_users(root)
     comps = components(root)
-    deps = standard_dependencies(root)
+    deps = standard_pairs(root, "dependencia")
     pending = ("  %% _Completa: nombre del sistema, sistemas externos (XNombre) y la "
                "tecnología de cada contenedor, citando su ADR_\n")
     system = mermaid_label("_nombre del sistema_", "[Sistema]")
@@ -1330,6 +1334,113 @@ def cmd_diagram(_args):
                      indent=2))
     return 0
 
+MERMAID_BLOCK = re.compile(r"^```mermaid[ \t]*\n(.*?)^```", re.M | re.S)
+# Lineas que no declaran nodos ni aristas.
+MERMAID_SKIP = re.compile(r"^(?:flowchart|graph|direction|classDef|class|style|linkStyle|"
+                          r"click|end)\b")
+MERMAID_ID = re.compile(r"^[A-Za-z_][\w]*$")
+# Flechas de flowchart: -->, ---, -.->, ==>, --o, --x, <-->...
+MERMAID_ARROW = re.compile(r"\s*(<?(?:-{2,}|-\.+-+|={2,})[>ox]?)\s*")
+
+
+def mermaid_graph(block):
+    """(nodos, aristas dirigidas) de un bloque flowchart. Solo lo que la
+    comprobacion necesita (D4): los IDs y quien apunta a quien."""
+    nodes, edges = set(), []
+    for raw in block.splitlines():
+        line = raw.split("%%", 1)[0].strip()
+        if not line or MERMAID_SKIP.match(line):
+            continue
+        m = re.match(r"^subgraph\s+([A-Za-z_]\w*)", line)
+        if m:
+            nodes.add(m.group(1))
+            continue
+        line = re.sub(r'"[^"]*"', "", line)              # etiquetas entre comillas
+        line = re.sub(r"\|[^|]*\|", "", line)            # -->|texto|
+        prev = None
+        while prev != line:                               # [..], (..), {..} anidados
+            prev = line
+            line = re.sub(r"\[[^\[\]]*\]|\([^()]*\)|\{[^{}]*\}", "", line)
+        line = re.sub(r":::[\w-]+", "", line)
+        line = re.sub(r"(--|==)\s+[^\s>=-][^>]*?\s+(--|==)>", r"\2>", line)  # A -- x --> B
+        line = re.sub(r"-\.\s+[^\s.>-][^>]*?\s+\.->", "-.->", line)  # A -. x .-> B
+        parts = MERMAID_ARROW.split(line)
+        groups = [[x.strip() for x in g.split("&") if x.strip()] for g in parts[0::2]]
+        for g in groups:
+            nodes.update(x for x in g if MERMAID_ID.match(x))
+        for i, arrow in enumerate(parts[1::2]):
+            left, right = groups[i], groups[i + 1]
+            pairs = [(a, b) for a in left for b in right]
+            if arrow.endswith(">"):
+                edges += pairs
+            if arrow.startswith("<"):
+                edges += [(b, a) for a, b in pairs]
+    return nodes, edges
+
+
+def diagram_views(text):
+    """{vista: (nodos, aristas)} de las secciones de diagrams.md con bloque mermaid."""
+    out = {}
+    for key, title in DIAGRAM_VIEWS:
+        blocks = MERMAID_BLOCK.findall(section(text, title))
+        if blocks:
+            nodes, edges = set(), []
+            for b in blocks:
+                n, e = mermaid_graph(b)
+                nodes |= n
+                edges += e
+            out[key] = (nodes, edges)
+    return out
+
+
+def check_diagrams(root):
+    """R005, R006, R007 y R009 sobre architecture/diagrams.md (D4)."""
+    rel = f"{ARCH_DIR}/{DIAGRAMS}"
+    text = read_arch(root, DIAGRAMS)
+    if text is None:
+        return [_finding("W-ARCH-NO-DIAGRAMS",
+                         f"No hay {rel}: genera las vistas C4 con /architecture:diagram.", rel)]
+    out = []
+    known = [c["id"] for c in components(root)]
+    views = diagram_views(text)
+    titles = dict(DIAGRAM_VIEWS)
+    unknown = sorted({n for nodes, _e in views.values() for n in nodes
+                      if re.match(r"^C\d+$", n) and n not in known},
+                     key=lambda x: int(x[1:]))
+    for n in unknown:
+        out.append(_finding("E-ARCH-DIAGRAM-UNKNOWN",
+                            f"{rel} dibuja {n}, que no es un componente de components.md.", rel))
+    for key, title in DIAGRAM_VIEWS:
+        if key not in views:
+            out.append(_finding("E-ARCH-DIAGRAM-MISSING",
+                                f"{rel} no tiene la vista {title} (sección ## {title} con un "
+                                "bloque mermaid).", rel))
+        elif key != "contexto":
+            for c in known:
+                if c not in views[key][0]:
+                    out.append(_finding("E-ARCH-DIAGRAM-MISSING",
+                                        f"A la vista {title} de {rel} le falta {c}.", rel))
+    deps = standard_pairs(root, "dependencia")
+    banned = standard_pairs(root, "prohibida")
+    seen = set()
+    for key, title in DIAGRAM_VIEWS:
+        for a, b in (views.get(key) or (set(), []))[1]:
+            for x, y, sid, _adr in deps:
+                if (a, b) == (y, x) and (key, a, b, sid) not in seen:
+                    seen.add((key, a, b, sid))
+                    out.append(_finding(
+                        "E-ARCH-DIAGRAM-VIOLATION",
+                        f"{rel} dibuja {a} → {b} en la vista {title}, pero {sid} declara "
+                        f"{x} → {y}.", rel))
+            for x, y, sid, _adr in banned:
+                if (a, b) == (x, y) and (key, a, b, sid) not in seen:
+                    seen.add((key, a, b, sid))
+                    out.append(_finding(
+                        "E-ARCH-DIAGRAM-VIOLATION",
+                        f"{rel} dibuja {a} → {b} en la vista {title}, una dependencia que "
+                        f"{sid} prohíbe.", rel))
+    return out
+
 
 def cmd_init(_args):
     """Copia las plantillas a architecture/ si el producto esta aprobado (R001).
@@ -1386,6 +1497,11 @@ FINDINGS = {
                            "candidata inexistente"),
     "E-ARCH-OPEN-QUESTION": "Pregunta abierta sobre una decisión o un atributo",
     "E-ARCH-TEMPLATE": "Hueco de plantilla sin rellenar",
+    "E-ARCH-DIAGRAM-UNKNOWN": "Un diagrama dibuja un componente que no existe",
+    "E-ARCH-DIAGRAM-MISSING": "A una vista le falta un componente, o falta la vista",
+    "E-ARCH-DIAGRAM-VIOLATION": ("Un diagrama dibuja una dependencia que un estándar "
+                                 "prohíbe o declara en sentido contrario"),
+    "W-ARCH-NO-DIAGRAMS": "La arquitectura no tiene diagramas",
     "W-ARCH-NOT-APPROVED": "Artefacto sin aprobar o cambiado después de aprobarse",
     "W-ARCH-PRODUCT-CHANGED": "El producto cambió desde la aprobación de la arquitectura",
 }
