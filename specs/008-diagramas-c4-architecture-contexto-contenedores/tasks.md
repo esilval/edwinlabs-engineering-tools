@@ -73,7 +73,7 @@ sobre la arquitectura de prueba de la feature 006.
 
 ### T004 — Skills, README y cierre
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002, R008
 - **Depende de:** T002, T003
 - **Archivos:** `plugins/architecture/skills/diagram/SKILL.md`, `plugins/architecture/skills/check/SKILL.md`, `plugins/architecture/skills/init/SKILL.md`, `plugins/architecture/README.md`

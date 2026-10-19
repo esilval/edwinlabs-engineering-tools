@@ -16,5 +16,5 @@
 ### S1 — _regla en una línea_
 
 - **Tipo:** _capas, dependencia o prohibida_
-- **Detalle:** _C1 → C2, o la lista de capas o de dependencias prohibidas_
+- **Detalle:** _dependencia: C2 → C1 (C2 depende de C1); prohibida: C1 → C2 (C1 no puede depender de C2), un par por flecha; capas: la lista en orden_
 - **Decisión:** _ADR-0001_

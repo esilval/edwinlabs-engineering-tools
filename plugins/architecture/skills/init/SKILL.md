@@ -71,6 +71,8 @@ con `/architecture:decide`.
 ## Al terminar
 
 Muestra al usuario los atributos y los componentes, y las preguntas que dejaste
-abiertas. El siguiente paso es `/architecture:decide`.
+abiertas. El siguiente paso es `/architecture:decide`, y después
+`/architecture:diagram`, que dibuja las vistas C4 para revisar el conjunto
+antes de aprobarlo.
 
 No cambies el campo Estado: lo aprueba el usuario con `/architecture:approve`.
