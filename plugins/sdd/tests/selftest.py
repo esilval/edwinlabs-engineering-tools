@@ -11,6 +11,7 @@ alcanzables. Corre en CI y en local:
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -2104,6 +2105,54 @@ def test_F007_R001_traspaso_sin_arquitectura_igual(base):
            "Origen de tres grupos y sin componentes en el JSON", spec[:400])
 
 
+# ------------------------------------------- feature 009: diagramas en el plan
+
+PLANTILLA_PLAN = PLUGIN / "templates" / "plan.md"
+
+
+def seccion_diagramas():
+    """La seccion ## Diagramas de la plantilla del plan, tal cual."""
+    texto = PLANTILLA_PLAN.read_text(encoding="utf-8")
+    inicio = texto.index("## Diagramas")
+    fin = texto.index("\n## ", inicio + 1)
+    return texto[inicio:fin].rstrip() + "\n"
+
+
+def no_aplica(seccion):
+    """La seccion con los tres apartados cerrados con «No aplica.»."""
+    return "\n".join("No aplica." if l.startswith("_Bloque mermaid") else l
+                      for l in seccion.splitlines()) + "\n"
+
+
+def test_F009_R001_seccion_de_diagramas(base):
+    print("\nF009 · R001: el plan tiene un lugar para sus diagramas")
+    seccion = seccion_diagramas()
+    for apartado, tipo in (("### Secuencia", "sequenceDiagram"),
+                           ("### Modelo de datos", "erDiagram"),
+                           ("### Clases", "classDiagram")):
+        expect(apartado in seccion and tipo in seccion,
+               f"la plantilla tiene {apartado} con {tipo}", seccion)
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd
+    import sdd_trace
+    expect(not sdd_trace.ADR_REF.search(seccion) and not sdd_trace.REQ_ID.search(seccion),
+           "la seccion no cita un ADR ni un requisito literal")
+    p = repo_con_feature(base, "f009-r001-huecos", spec=SPEC_LISTA, archivos={
+        "specs/001-x/plan.md": PLAN_LISTO + "\n" + seccion})
+    huecos = hallazgos_de(p, "E-PLAN-TEMPLATE")
+    problemas = sdd.phase_problems(p / "specs" / "001-x", "plan")
+    expect(len(huecos) == 1 and re.search(r"\b3 hueco", huecos[0]["message"])
+           and any("hueco" in x for x in problemas),
+           "con los tres huecos sin tocar: E-PLAN-TEMPLATE y la compuerta no lo aprueba",
+           f"{huecos} {problemas}")
+    p = repo_con_feature(base, "f009-r001-no-aplica", spec=SPEC_LISTA, archivos={
+        "specs/001-x/plan.md": PLAN_LISTO + "\n" + no_aplica(seccion)})
+    expect(not hallazgos_de(p, "E-PLAN-TEMPLATE")
+           and sdd.phase_problems(p / "specs" / "001-x", "plan") == [],
+           "con «No aplica.» en los tres apartados: ningun hueco",
+           f"{hallazgos_de(p, 'E-PLAN-TEMPLATE')}")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -2159,6 +2208,7 @@ def main():
         test_F007_R007_origen_con_componentes(base)
         test_F007_R008_traspaso_sin_arquitectura_lista(base)
         test_F007_R001_traspaso_sin_arquitectura_igual(base)
+        test_F009_R001_seccion_de_diagramas(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

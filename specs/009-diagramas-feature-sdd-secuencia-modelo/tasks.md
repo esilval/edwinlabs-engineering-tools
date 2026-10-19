@@ -27,7 +27,7 @@ Las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T001 — Sección `## Diagramas` en la plantilla del plan `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/templates/plan.md`, `plugins/sdd/tests/selftest.py`

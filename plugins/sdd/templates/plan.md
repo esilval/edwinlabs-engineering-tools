@@ -51,6 +51,26 @@ _Entidades nuevas o modificadas, migraciones necesarias._
 _Endpoints, firmas de funciones públicas, eventos, formatos de mensaje.
 Solo los que cruzan una frontera de módulo._
 
+## Diagramas
+
+> Diagramas Mermaid de la feature: cómo resuelve el plan lo que pide la spec.
+> Un componente de la arquitectura se dibuja con su ID
+> (`participant C1 as Ventas`), y cada llamada entre componentes cita la
+> decisión en la que se apoya: la Dn de este plan o el ADR. Si un apartado no
+> aplica a esta feature, escribe «No aplica.».
+
+### Secuencia
+
+_Bloque mermaid sequenceDiagram con el flujo principal, o «No aplica.»_
+
+### Modelo de datos
+
+_Bloque mermaid erDiagram con las entidades que se crean o cambian, o «No aplica.»_
+
+### Clases
+
+_Bloque mermaid classDiagram con las piezas nuevas y sus relaciones, o «No aplica.»_
+
 ## Estrategia de pruebas
 
 | Requisito | Tipo de prueba | Dónde vive |
