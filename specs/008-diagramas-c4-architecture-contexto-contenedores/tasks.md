@@ -61,7 +61,7 @@ sobre la arquitectura de prueba de la feature 006.
 
 ### T003 — Aprobación y guardrails
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008, R010
 - **Depende de:** T001
 - **Archivos:** `plugins/architecture/scripts/architecture.py`, `plugins/architecture/tests/selftest.py`

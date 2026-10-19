@@ -46,6 +46,9 @@ ARCH_DIR = "architecture"
 ADR_DIR = "adr"
 # Artefactos del conjunto, en el orden en que se crean y se informan.
 SET_FILES = ("quality.md", "components.md", "standards.md", "questions.md")
+# Miembro opcional del conjunto (feature 008, D1): si existe, se aprueba y se
+# vigila con el resto; si falta, solo hay un aviso.
+DIAGRAMS = "diagrams.md"
 
 
 # --------------------------------------------------------------------------
@@ -635,6 +638,8 @@ def check_approval(root):
     W-ARCH-PRODUCT-CHANGED si el producto cambio desde la aprobacion (R014)."""
     out = []
     targets = [(f"{ARCH_DIR}/{n}", artifact_state(read_arch(root, n))) for n in SET_FILES]
+    if read_arch(root, DIAGRAMS) is not None:
+        targets.append((f"{ARCH_DIR}/{DIAGRAMS}", artifact_state(read_arch(root, DIAGRAMS))))
     targets += [(a["file"], a["state"]) for a in adrs(root) if a["state"] in ("draft", "stale")]
     for rel, state in targets:
         if state == "draft":
@@ -755,8 +760,9 @@ def approve(root):
     """
     Sella el conjunto con 'Approved · <huella>' si el producto esta aprobado y
     la comprobacion no da errores. Sella quality, components, standards,
-    questions y los ADR en Draft (o cambiados tras aprobarse); los Proposed,
-    Rejected y Superseded no se tocan: se deciden con review. Devuelve
+    questions, diagrams si existe, y los ADR en Draft (o cambiados tras
+    aprobarse); los Proposed, Rejected y Superseded no se tocan: se deciden
+    con review. Devuelve
     (ok, lineas_de_mensaje).
     """
     problems = product_problems(root)
@@ -774,6 +780,8 @@ def approve(root):
                        + [f"  [{f['code']}] {f['message']}" for f in errors])
 
     texts = {f"{ARCH_DIR}/{n}": read_arch(root, n) for n in SET_FILES}
+    if read_arch(root, DIAGRAMS) is not None:
+        texts[f"{ARCH_DIR}/{DIAGRAMS}"] = read_arch(root, DIAGRAMS)
     comp = f"{ARCH_DIR}/components.md"
     texts[comp] = with_product_row(texts[comp], product_digests(root))
     for a in adrs(root):
@@ -913,7 +921,7 @@ def claims_user_state(text):
 
 def guarded_files(root):
     """Rutas relativas de los artefactos de architecture/ que se protegen."""
-    rels = [f"{ARCH_DIR}/{n}" for n in SET_FILES]
+    rels = [f"{ARCH_DIR}/{n}" for n in SET_FILES + (DIAGRAMS,)]
     try:
         rels += sorted(f"{ARCH_DIR}/{ADR_DIR}/{p.name}"
                        for p in (Path(root) / ARCH_DIR / ADR_DIR).iterdir()
@@ -934,7 +942,7 @@ def _guarded_target(root, raw_path):
         return None
     parts = rel.parts
     # Sin distinguir mayusculas: en macOS y Windows QUALITY.md es quality.md.
-    if len(parts) == 1 and parts[0].casefold() in SET_FILES:
+    if len(parts) == 1 and parts[0].casefold() in SET_FILES + (DIAGRAMS,):
         return f"{ARCH_DIR}/{parts[0].casefold()}"
     if len(parts) == 2 and parts[0].casefold() == ADR_DIR and parts[1].lower().endswith(".md"):
         return f"{ARCH_DIR}/{ADR_DIR}/{parts[1]}"
@@ -1215,7 +1223,6 @@ def plugin_root():
 # Diagramas C4 (feature 008): architecture/diagrams.md, opcional
 # --------------------------------------------------------------------------
 
-DIAGRAMS = "diagrams.md"
 # Vistas C4 y el encabezado de seccion que las identifica (D2).
 DIAGRAM_VIEWS = (("contexto", "Contexto"), ("contenedores", "Contenedores"),
                  ("componentes", "Componentes"))

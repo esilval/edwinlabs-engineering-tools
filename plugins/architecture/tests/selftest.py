@@ -1252,6 +1252,62 @@ def test_F008_R009_sin_diagramas_avisa():
            "un esqueleto sin completar conserva huecos (E-ARCH-TEMPLATE)", f"{hall}")
 
 
+# ------------------------------------------------------------ F008 T003
+
+def test_F008_R008_diagramas_en_la_aprobacion():
+    p = con_diagramas("f008-r008")
+    rel = "architecture/diagrams.md"
+    r = run(p, "approve")
+    texto = (p / rel).read_text(encoding="utf-8")
+    expect(r.returncode == 0 and rel in r.stdout
+           and architecture.artifact_state(texto) == "approved"
+           and estado(p, "architecture/components.md").startswith("Approved"),
+           "los diagramas se sellan con el conjunto, con la huella de su contenido",
+           r.stdout + r.stderr)
+    expect("W-ARCH-NOT-APPROVED" not in codigos(p), "y quedan aprobados")
+    (p / rel).write_text(texto.replace("Caja", "Caja registradora"), encoding="utf-8")
+    h = con_codigo(p, "W-ARCH-NOT-APPROVED")
+    expect(len(h) == 1 and h[0]["artifact"] == rel and "cambió" in h[0]["message"],
+           "editarlos tras aprobar: aviso que nombra diagrams.md", f"{h}")
+    p = con_arquitectura(proyecto("f008-r008-esqueleto"))
+    diagrama(p)
+    antes = foto(p)
+    r = run(p, "approve")
+    expect(r.returncode == 1 and "E-ARCH-TEMPLATE" in r.stderr and foto(p) == antes,
+           "un esqueleto sin completar impide aprobar y no se sella nada", r.stdout + r.stderr)
+
+
+def test_F008_R010_guardrails_de_diagramas():
+    p = con_diagramas("f008-r010")
+    rel = "architecture/diagrams.md"
+    f = p / rel
+    texto = f.read_text(encoding="utf-8")
+    aprobado = texto.replace("| Estado | Draft |", "| Estado | Approved · 0123456789ab |")
+    r = hook(p, "guard", "Write", {"file_path": rel, "content": aprobado})
+    expect(deniega(r) is True and "allow" not in r.stdout,
+           "un Write que aprueba diagrams.md se deniega", r.stdout)
+    r = hook(p, "guard", "Edit", {"file_path": str(f), "old_string": "| Estado | Draft |",
+                                  "new_string": "| Estado | Approved |"})
+    expect(deniega(r) is True, "un Edit que aprueba diagrams.md se deniega", r.stdout)
+    r = hook(p, "guard", "Write", {"file_path": "architecture/Diagrams.md", "content": aprobado})
+    expect(deniega(r) is True, "Diagrams.md con otras mayusculas tambien se reconoce")
+    r = hook(p, "guard", "Edit", {"file_path": str(f), "old_string": "Caja",
+                                  "new_string": "Caja registradora"})
+    expect(deniega(r) is False, "completar los diagramas no se bloquea")
+
+    hook(p, "guard", "Bash", {"command": "python3 sella.py"}, tool_use_id="d1")
+    f.write_text(aprobado, encoding="utf-8")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="d1")
+    expect(r.returncode == 2 and estado(p, rel) == "Draft" and rel in r.stderr,
+           "un comando que aprueba diagrams.md: la auditoria lo devuelve a Draft", r.stderr)
+    f.unlink()
+    hook(p, "guard", "Bash", {"command": "python3 crea.py"}, tool_use_id="d2")
+    f.write_text(aprobado, encoding="utf-8")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="d2")
+    expect(r.returncode == 2 and estado(p, rel) == "Draft",
+           "y uno que los crea ya aprobados, tambien", r.stderr)
+
+
 def cobertura_de_codigos():
     # main() la ejecuta despues de todas las pruebas: compara los codigos
     # declarados con los que las pruebas vieron emitirse.
