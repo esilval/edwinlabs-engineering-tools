@@ -28,7 +28,7 @@ sobre la arquitectura de prueba de la feature 006.
 
 ### T001 — `architecture.py diagram`: el esqueleto
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002, R003, R004
 - **Depende de:** —
 - **Archivos:** `plugins/architecture/scripts/architecture.py`, `plugins/architecture/tests/selftest.py`

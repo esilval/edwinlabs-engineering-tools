@@ -1063,6 +1063,88 @@ def test_F006_R012_escape_y_nunca_allow():
 
 # --------------------------------------------------------------------------
 
+# ------------------------------------------------------------ F008 T001
+
+def diagrama(p):
+    """Genera el esqueleto en p y devuelve (resultado, texto de diagrams.md)."""
+    r = run(p, "diagram")
+    f = p / "architecture" / "diagrams.md"
+    return r, (f.read_text(encoding="utf-8") if f.exists() else "")
+
+
+def vista(texto, titulo):
+    """Bloque mermaid de la seccion ## titulo de diagrams.md."""
+    m = re.search(rf"^## {titulo}\n.*?```mermaid\n(.*?)```", texto, re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def test_F008_R001_tres_vistas():
+    r, texto = diagrama(con_arquitectura(proyecto("f008-r001")))
+    expect(r.returncode == 0 and architecture.doc_status(texto) == "Draft",
+           "diagram escribe diagrams.md en Draft", r.stdout + r.stderr)
+    for titulo in ("Contexto", "Contenedores", "Componentes"):
+        expect(vista(texto, titulo).startswith("flowchart LR\n"),
+               f"la vista {titulo} es un bloque mermaid flowchart", texto)
+    p = proyecto("f008-r001-sin-componentes")
+    con_arquitectura(p, components=ARQ_COMPONENTS.split("### C1")[0])
+    r, texto = diagrama(p)
+    expect(r.returncode == 1 and "/architecture:init" in r.stderr and not texto,
+           "sin componentes: sale con 1, no escribe nada y remite a /architecture:init",
+           r.stdout + r.stderr)
+
+
+def test_F008_R002_usuarios_y_componentes():
+    p = con_arquitectura(proyecto("f008-r002"))
+    (p / "product" / "brief.md").write_text(PRODUCTO_BRIEF.replace(
+        "- Dueños de comercios pequeños (D1§2)\n",
+        '- Dueños de comercios pequeños (D1§2)\n  - con un solo local\n'
+        '- Gestor "externo": lleva las cuentas (D1§4)\n'),
+        encoding="utf-8")
+    r, texto = diagrama(p)
+    contexto = vista(texto, "Contexto")
+    expect('U1["Dueños de comercios pequeños<br/>[Persona]"]:::persona' in contexto
+           and 'U2["Gestor #quot;externo#quot;<br/>[Persona]"]:::persona' in contexto
+           and "SYS[" in contexto and "U1 -->|usa| SYS" in contexto
+           and "U2 -->|usa| SYS" in contexto,
+           "el contexto: cada usuario del brief, sin su cita y con las comillas "
+           "escapadas, usa el sistema", contexto)
+    expect("U3" not in contexto and "lleva las cuentas" not in contexto,
+           "una subviñeta no es otro usuario, y el tipo es lo anterior a ': '", contexto)
+    for titulo in ("Contenedores", "Componentes"):
+        cuerpo = vista(texto, titulo)
+        expect('C1["Ventas<br/>' in cuerpo and 'C2["Exportación<br/>' in cuerpo
+               and 'subgraph SYS[' in cuerpo,
+               f"{titulo}: C1 y C2 con su nombre, dentro del sistema", cuerpo)
+    expect("U1 -->|usa| SYS" in vista(texto, "Contenedores")
+           and "U1" not in vista(texto, "Componentes"),
+           "los usuarios van en contenedores, no en componentes")
+    expect(texto.count("_nombre del sistema_") == 3 and texto.count("%% _Completa") == 3,
+           "deja los dos huecos para el modelo en cada vista", texto)
+
+
+def test_F008_R003_dependencia_con_su_decision():
+    r, texto = diagrama(con_arquitectura(proyecto("f008-r003")))
+    componentes = vista(texto, "Componentes")
+    expect("C2 -->|usa · ADR-0001| C1" in componentes,
+           "la dependencia S1 (C2 → C1) se dibuja citando ADR-0001", componentes)
+    expect("C1 -->" not in componentes and "-->" not in vista(texto, "Contenedores")
+           .replace("U1 -->|usa| SYS", ""),
+           "no se inventan otras dependencias")
+
+
+def test_F008_R004_no_sobrescribe():
+    p = con_arquitectura(proyecto("f008-r004"))
+    diagrama(p)
+    f = p / "architecture" / "diagrams.md"
+    completado = f.read_bytes().replace(
+        b"  SYS[", b'  XBanco["Banco<br/>[Sistema externo]"]:::externo\n  SYS[', 1)
+    f.write_bytes(completado)
+    r = run(p, "diagram")
+    expect(r.returncode == 0 and f.read_bytes() == completado and "ya existe" in r.stdout,
+           "un segundo diagram deja el archivo igual byte a byte y dice que ya existía",
+           r.stdout + r.stderr)
+
+
 def cobertura_de_codigos():
     # main() la ejecuta despues de todas las pruebas: compara los codigos
     # declarados con los que las pruebas vieron emitirse.

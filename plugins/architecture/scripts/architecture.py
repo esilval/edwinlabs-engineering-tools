@@ -19,6 +19,9 @@ Subcomandos:
                       Coherencia de la arquitectura. --json emite
                       architecture.check/v1; --check sale con 1 si hay
                       errores (para CI).
+  diagram             Crea architecture/diagrams.md con el esqueleto de las
+                      vistas C4 (contexto, contenedores, componentes) si no
+                      existe. Lo completa /architecture:diagram.
   approve [--skill]   Aprueba el conjunto si check no da errores. Solo lo
                       lanza el usuario, con /architecture:approve.
   review ADR-NNNN aceptar|rechazar [--skill]
@@ -1207,6 +1210,127 @@ def plugin_root():
                 or Path(__file__).resolve().parent.parent)
 
 
+# --------------------------------------------------------------------------
+# Diagramas C4 (feature 008): architecture/diagrams.md, opcional
+# --------------------------------------------------------------------------
+
+DIAGRAMS = "diagrams.md"
+# Vistas C4 y el encabezado de seccion que las identifica (D2).
+DIAGRAM_VIEWS = (("contexto", "Contexto"), ("contenedores", "Contenedores"),
+                 ("componentes", "Componentes"))
+MERMAID_STYLES = (
+    "  classDef persona fill:#08427b,stroke:#052e56,color:#fff\n"
+    "  classDef sistema fill:#1168bd,stroke:#0b4884,color:#fff\n"
+    "  classDef contenedor fill:#438dd5,stroke:#2e6295,color:#fff\n"
+    "  classDef externo fill:#999999,stroke:#6b6b6b,color:#fff\n"
+)
+
+
+def mermaid_label(*lines):
+    """Etiqueta de nodo ["…"]: lineas unidas con <br/> y las comillas escapadas,
+    que Mermaid no admite dentro de la etiqueta."""
+    return "<br/>".join(str(x).replace('"', "#quot;").strip() for x in lines if x)
+
+
+def product_users(root):
+    """Tipos de usuario del brief: las viñetas de primer nivel de ## Usuarios, sin
+    sus citas. En 'Gestor: lleva las cuentas' el tipo es lo anterior a ': '."""
+    body = section(read_product(root, BRIEF), "usuarios", "users")
+    out = []
+    for line in body.splitlines():
+        m = re.match(r"^[-*]\s+(.*)$", line)
+        if not m:
+            continue
+        name = re.sub(r"\s*\([^)]*D\d+§[^)]*\)\s*$", "", m.group(1))
+        name = name.split(": ")[0].strip(" *_:")
+        if name:
+            out.append(name)
+    return out
+
+
+def standard_dependencies(root):
+    """[(desde, hacia, estandar, decision)] de los estandares de tipo dependencia
+    con Detalle 'C2 → C1' (o 'C2 -> C1')."""
+    out = []
+    for s in standards(root):
+        f = s["fields"]
+        if norm(f.get("tipo", "")).strip(" _") != "dependencia":
+            continue
+        decision = ADR_REF.search(f.get("decision", ""))
+        for a, b in re.findall(r"\b(C\d+)\s*(?:→|->)\s*(C\d+)\b", f.get("detalle", "")):
+            out.append((a, b, s["id"], f"ADR-{decision.group(1)}" if decision else None))
+    return out
+
+
+def diagram_skeleton(root):
+    """Texto de diagrams.md generado solo desde los archivos (D3)."""
+    users = product_users(root)
+    comps = components(root)
+    deps = standard_dependencies(root)
+    pending = ("  %% _Completa: nombre del sistema, sistemas externos (XNombre) y la "
+               "tecnología de cada contenedor, citando su ADR_\n")
+    system = mermaid_label("_nombre del sistema_", "[Sistema]")
+
+    def users_block(target):
+        lines = [f'  U{i}["{mermaid_label(u, "[Persona]")}"]:::persona\n'
+                 for i, u in enumerate(users, 1)]
+        lines += [f"  U{i} -->|usa| {target}\n" for i in range(1, len(users) + 1)]
+        return "".join(lines)
+
+    def comp_nodes(kind, indent):
+        return "".join(
+            f'{indent}{c["id"]}["{mermaid_label(c["title"], f"[{kind}]", c["fields"].get("responsabilidad", ""))}"]:::contenedor\n'
+            for c in comps)
+
+    context = ("flowchart LR\n" + users_block("SYS")
+               + f'  SYS["{system}"]:::sistema\n' + pending + MERMAID_STYLES)
+    containers = ("flowchart LR\n" + users_block("SYS")
+                  + f'  subgraph SYS["{system}"]\n' + comp_nodes("Contenedor", "    ")
+                  + "  end\n" + pending + MERMAID_STYLES)
+    # Sin decision citada (ya es E-STANDARD-NO-ADR), un hueco que la pida.
+    edges = "".join(f"  {a} -->|usa · {adr or '_decisión_'}| {b}\n"
+                    for a, b, _s, adr in deps)
+    componentes = ("flowchart LR\n" + f'  subgraph SYS["{system}"]\n'
+                   + comp_nodes("Componente", "    ") + "  end\n" + edges + pending
+                   + MERMAID_STYLES)
+    blocks = {"contexto": context, "contenedores": containers, "componentes": componentes}
+    intro = {
+        "contexto": "Quién usa el sistema y con qué sistemas externos habla.",
+        "contenedores": "Las piezas desplegables o almacenes del sistema y quién las usa.",
+        "componentes": "Las partes del sistema y sus dependencias, cada una con la "
+                       "decisión (ADR) de la que sale.",
+    }
+    out = ("# Diagramas de arquitectura\n\n| Campo  | Valor |\n| ------ | ----- |\n"
+           "| Estado | Draft |\n\n"
+           "> Vistas C4 de contexto, contenedores y componentes, en Mermaid. Los nodos\n"
+           "> de componente se llaman por su ID (C1) y la comprobación los contrasta con\n"
+           "> components.md y standards.md. Solo el usuario cambia el Estado, con\n"
+           "> /architecture:approve.\n")
+    for key, title in DIAGRAM_VIEWS:
+        out += f"\n## {title}\n\n{intro[key]}\n\n```mermaid\n{blocks[key]}```\n"
+    return out
+
+
+def cmd_diagram(_args):
+    """Crea architecture/diagrams.md con el esqueleto si no existe (R004)."""
+    root = project_root()
+    target = root / ARCH_DIR / DIAGRAMS
+    if target.exists():
+        print(f"{ARCH_DIR}/{DIAGRAMS} ya existe: no se toca. Para rehacer el esqueleto, "
+              "bórralo y vuelve a ejecutar diagram (se pierde lo completado).")
+        return 0
+    if not components(root):
+        print("No hay componentes en architecture/components.md: los redacta "
+              "/architecture:init.", file=sys.stderr)
+        return 1
+    target.write_text(diagram_skeleton(root), encoding="utf-8")
+    print(json.dumps({"file": f"{ARCH_DIR}/{DIAGRAMS}",
+                      "views": [k for k, _t in DIAGRAM_VIEWS],
+                      "next": "/architecture:diagram completa sistemas externos y tecnologías"},
+                     indent=2))
+    return 0
+
+
 def cmd_init(_args):
     """Copia las plantillas a architecture/ si el producto esta aprobado (R001).
     No sobrescribe: un artefacto que ya existe se deja como esta."""
@@ -1235,6 +1359,7 @@ def cmd_init(_args):
 
 COMMANDS = {
     "init": cmd_init,
+    "diagram": cmd_diagram,
     "next-id": cmd_next_id,
     "check": cmd_check,
     "approve": cmd_approve,
