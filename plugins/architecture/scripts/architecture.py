@@ -1261,7 +1261,11 @@ PAIR = re.compile(r"\b(C\d+)\s*(?:→|->)\s*(C\d+)\b")
 
 def standard_pairs(root, kind):
     """[(desde, hacia, estandar, decision)] de los estandares del tipo kind
-    ('dependencia' o 'prohibida') con Detalle 'C2 → C1' (o 'C2 -> C1')."""
+    ('dependencia' o 'prohibida') con Detalle 'C2 → C1' (o 'C2 -> C1').
+
+    plugins/sdd/scripts/sdd_architecture.py lleva una copia (con PAIR) para
+    contrastar los diagramas de los planes; un cambio aqui se replica alli, y
+    la prueba de contrato del selftest de sdd compara las dos."""
     out = []
     for s in standards(root):
         f = s["fields"]

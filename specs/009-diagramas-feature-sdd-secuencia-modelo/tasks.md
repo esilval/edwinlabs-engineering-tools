@@ -59,7 +59,7 @@ Las pruebas viven en `plugins/sdd/tests/selftest.py`, como funciones
 
 ### T003 — `standard_pairs` en `sdd_architecture.py` y contrato `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R005
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/sdd_architecture.py`, `plugins/architecture/scripts/architecture.py`, `plugins/sdd/tests/selftest.py`

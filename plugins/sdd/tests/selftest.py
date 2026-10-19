@@ -1715,6 +1715,15 @@ ARQ_STANDARDS = cabecera_arq("Estándares") + """## Estándares
 - **Decisión:** ADR-0001
 """
 
+# Un estandar prohibida con dos pares (feature 009).
+ESTANDAR_PROHIBIDO = """
+### S2 — Ventas no depende de Exportación ni de Cobros
+
+- **Tipo:** prohibida
+- **Detalle:** C1 → C2, C1 -> C3
+- **Decisión:** ADR-0001
+"""
+
 ARQ_QUESTIONS = cabecera_arq("Preguntas de arquitectura") + "## Preguntas\n\nNinguna por ahora.\n"
 
 
@@ -1840,6 +1849,22 @@ def test_F007_R009_contrato_con_architecture(base):
     expect(any("components.md cambió" in x for x in sa.approval_problems(p)),
            "un componente editado tras aprobar: cambiada para los dos plugins",
            f"{sa.approval_problems(p)}")
+
+    # F009-R005: los pares de los estandares (D4), copia de standard_pairs.
+    (p / "architecture" / "standards.md").write_text(ARQ_STANDARDS + ESTANDAR_PROHIBIDO,
+                                                     encoding="utf-8")
+    codigo = ("import json, sys; sys.path.insert(0, sys.argv[1]); import architecture; "
+              "print(json.dumps({k: [list(x[:3]) for x in "
+              "architecture.standard_pairs(sys.argv[2], k)] "
+              "for k in ('dependencia', 'prohibida')}))")
+    r = subprocess.run([sys.executable, "-c", codigo, str(ARCHITECTURE.parent), str(p)],
+                       capture_output=True, text=True, timeout=60)
+    reales = json.loads(r.stdout) if r.returncode == 0 else r.stderr
+    copia = {k: [list(x) for x in sa.standard_pairs(p, k)] for k in ("dependencia", "prohibida")}
+    expect(copia == reales and copia == {"dependencia": [["C2", "C1", "S1"]],
+                                         "prohibida": [["C1", "C2", "S2"], ["C1", "C3", "S2"]]},
+           "los pares dependencia y prohibida coinciden con los de architecture",
+           f"{copia} vs {reales}")
 
 
 def plan_con_adrs(*citas, seccion=True):
