@@ -19,6 +19,9 @@ Subcomandos:
                       Coherencia de la arquitectura. --json emite
                       architecture.check/v1; --check sale con 1 si hay
                       errores (para CI).
+  diagram             Crea architecture/diagrams.md con el esqueleto de las
+                      vistas C4 (contexto, contenedores, componentes) si no
+                      existe. Lo completa /architecture:diagram.
   approve [--skill]   Aprueba el conjunto si check no da errores. Solo lo
                       lanza el usuario, con /architecture:approve.
   review ADR-NNNN aceptar|rechazar [--skill]
@@ -43,6 +46,9 @@ ARCH_DIR = "architecture"
 ADR_DIR = "adr"
 # Artefactos del conjunto, en el orden en que se crean y se informan.
 SET_FILES = ("quality.md", "components.md", "standards.md", "questions.md")
+# Miembro opcional del conjunto (feature 008, D1): si existe, se aprueba y se
+# vigila con el resto; si falta, solo hay un aviso.
+DIAGRAMS = "diagrams.md"
 
 
 # --------------------------------------------------------------------------
@@ -595,7 +601,8 @@ PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_*])_[^_\n]+_(?![A-Za-z0-9_*])")
 def check_templates(root):
     """Huecos de plantilla (texto en cursiva) que siguen sin rellenar."""
     out = []
-    files = [f"{ARCH_DIR}/{name}" for name in SET_FILES] + [a["file"] for a in adrs(root)]
+    files = ([f"{ARCH_DIR}/{name}" for name in SET_FILES + (DIAGRAMS,)]
+             + [a["file"] for a in adrs(root)])
     for rel in files:
         text = read_text(Path(root) / rel)
         if text is None:
@@ -631,6 +638,8 @@ def check_approval(root):
     W-ARCH-PRODUCT-CHANGED si el producto cambio desde la aprobacion (R014)."""
     out = []
     targets = [(f"{ARCH_DIR}/{n}", artifact_state(read_arch(root, n))) for n in SET_FILES]
+    if read_arch(root, DIAGRAMS) is not None:
+        targets.append((f"{ARCH_DIR}/{DIAGRAMS}", artifact_state(read_arch(root, DIAGRAMS))))
     targets += [(a["file"], a["state"]) for a in adrs(root) if a["state"] in ("draft", "stale")]
     for rel, state in targets:
         if state == "draft":
@@ -666,7 +675,7 @@ def analyze(root):
     """
     findings = (check_templates(root) + check_quality(root) + check_components(root)
                 + check_adrs(root) + check_standards(root) + check_references(root)
-                + check_questions(root) + check_approval(root))
+                + check_questions(root) + check_diagrams(root) + check_approval(root))
     errors = sum(1 for f in findings if f["severity"] == "error")
     return {
         "schema": SCHEMA,
@@ -751,8 +760,9 @@ def approve(root):
     """
     Sella el conjunto con 'Approved · <huella>' si el producto esta aprobado y
     la comprobacion no da errores. Sella quality, components, standards,
-    questions y los ADR en Draft (o cambiados tras aprobarse); los Proposed,
-    Rejected y Superseded no se tocan: se deciden con review. Devuelve
+    questions, diagrams si existe, y los ADR en Draft (o cambiados tras
+    aprobarse); los Proposed, Rejected y Superseded no se tocan: se deciden
+    con review. Devuelve
     (ok, lineas_de_mensaje).
     """
     problems = product_problems(root)
@@ -770,6 +780,8 @@ def approve(root):
                        + [f"  [{f['code']}] {f['message']}" for f in errors])
 
     texts = {f"{ARCH_DIR}/{n}": read_arch(root, n) for n in SET_FILES}
+    if read_arch(root, DIAGRAMS) is not None:
+        texts[f"{ARCH_DIR}/{DIAGRAMS}"] = read_arch(root, DIAGRAMS)
     comp = f"{ARCH_DIR}/components.md"
     texts[comp] = with_product_row(texts[comp], product_digests(root))
     for a in adrs(root):
@@ -909,7 +921,7 @@ def claims_user_state(text):
 
 def guarded_files(root):
     """Rutas relativas de los artefactos de architecture/ que se protegen."""
-    rels = [f"{ARCH_DIR}/{n}" for n in SET_FILES]
+    rels = [f"{ARCH_DIR}/{n}" for n in SET_FILES + (DIAGRAMS,)]
     try:
         rels += sorted(f"{ARCH_DIR}/{ADR_DIR}/{p.name}"
                        for p in (Path(root) / ARCH_DIR / ADR_DIR).iterdir()
@@ -930,7 +942,7 @@ def _guarded_target(root, raw_path):
         return None
     parts = rel.parts
     # Sin distinguir mayusculas: en macOS y Windows QUALITY.md es quality.md.
-    if len(parts) == 1 and parts[0].casefold() in SET_FILES:
+    if len(parts) == 1 and parts[0].casefold() in SET_FILES + (DIAGRAMS,):
         return f"{ARCH_DIR}/{parts[0].casefold()}"
     if len(parts) == 2 and parts[0].casefold() == ADR_DIR and parts[1].lower().endswith(".md"):
         return f"{ARCH_DIR}/{ADR_DIR}/{parts[1]}"
@@ -1207,6 +1219,236 @@ def plugin_root():
                 or Path(__file__).resolve().parent.parent)
 
 
+# --------------------------------------------------------------------------
+# Diagramas C4 (feature 008): architecture/diagrams.md, opcional
+# --------------------------------------------------------------------------
+
+# Vistas C4 y el encabezado de seccion que las identifica (D2).
+DIAGRAM_VIEWS = (("contexto", "Contexto"), ("contenedores", "Contenedores"),
+                 ("componentes", "Componentes"))
+MERMAID_STYLES = (
+    "  classDef persona fill:#08427b,stroke:#052e56,color:#fff\n"
+    "  classDef sistema fill:#1168bd,stroke:#0b4884,color:#fff\n"
+    "  classDef contenedor fill:#438dd5,stroke:#2e6295,color:#fff\n"
+    "  classDef externo fill:#999999,stroke:#6b6b6b,color:#fff\n"
+)
+
+
+def mermaid_label(*lines):
+    """Etiqueta de nodo ["…"]: lineas unidas con <br/> y las comillas escapadas,
+    que Mermaid no admite dentro de la etiqueta."""
+    return "<br/>".join(str(x).replace('"', "#quot;").strip() for x in lines if x)
+
+
+def product_users(root):
+    """Tipos de usuario del brief: las viñetas de primer nivel de ## Usuarios, sin
+    sus citas. En 'Gestor: lleva las cuentas' el tipo es lo anterior a ': '."""
+    body = section(read_product(root, BRIEF), "usuarios", "users")
+    out = []
+    for line in body.splitlines():
+        m = re.match(r"^[-*]\s+(.*)$", line)
+        if not m:
+            continue
+        name = re.sub(r"\s*\([^)]*D\d+§[^)]*\)\s*$", "", m.group(1))
+        name = name.split(": ")[0].strip(" *_:")
+        if name:
+            out.append(name)
+    return out
+
+
+PAIR = re.compile(r"\b(C\d+)\s*(?:→|->)\s*(C\d+)\b")
+
+
+def standard_pairs(root, kind):
+    """[(desde, hacia, estandar, decision)] de los estandares del tipo kind
+    ('dependencia' o 'prohibida') con Detalle 'C2 → C1' (o 'C2 -> C1')."""
+    out = []
+    for s in standards(root):
+        f = s["fields"]
+        if norm(f.get("tipo", "")).strip(" _") != kind:
+            continue
+        decision = ADR_REF.search(f.get("decision", ""))
+        for a, b in PAIR.findall(f.get("detalle", "")):
+            out.append((a, b, s["id"], f"ADR-{decision.group(1)}" if decision else None))
+    return out
+
+
+def diagram_skeleton(root):
+    """Texto de diagrams.md generado solo desde los archivos (D3)."""
+    users = product_users(root)
+    comps = components(root)
+    deps = standard_pairs(root, "dependencia")
+    pending = ("  %% _Completa: nombre del sistema, sistemas externos (XNombre) y la "
+               "tecnología de cada contenedor, citando su ADR_\n")
+    system = mermaid_label("_nombre del sistema_", "[Sistema]")
+
+    def users_block(target):
+        lines = [f'  U{i}["{mermaid_label(u, "[Persona]")}"]:::persona\n'
+                 for i, u in enumerate(users, 1)]
+        lines += [f"  U{i} -->|usa| {target}\n" for i in range(1, len(users) + 1)]
+        return "".join(lines)
+
+    def comp_nodes(kind, indent):
+        return "".join(
+            f'{indent}{c["id"]}["{mermaid_label(c["title"], f"[{kind}]", c["fields"].get("responsabilidad", ""))}"]:::contenedor\n'
+            for c in comps)
+
+    context = ("flowchart LR\n" + users_block("SYS")
+               + f'  SYS["{system}"]:::sistema\n' + pending + MERMAID_STYLES)
+    containers = ("flowchart LR\n" + users_block("SYS")
+                  + f'  subgraph SYS["{system}"]\n' + comp_nodes("Contenedor", "    ")
+                  + "  end\n" + pending + MERMAID_STYLES)
+    # Sin decision citada (ya es E-STANDARD-NO-ADR), un hueco que la pida.
+    edges = "".join(f"  {a} -->|usa · {adr or '_decisión_'}| {b}\n"
+                    for a, b, _s, adr in deps)
+    componentes = ("flowchart LR\n" + f'  subgraph SYS["{system}"]\n'
+                   + comp_nodes("Componente", "    ") + "  end\n" + edges + pending
+                   + MERMAID_STYLES)
+    blocks = {"contexto": context, "contenedores": containers, "componentes": componentes}
+    intro = {
+        "contexto": "Quién usa el sistema y con qué sistemas externos habla.",
+        "contenedores": "Las piezas desplegables o almacenes del sistema y quién las usa.",
+        "componentes": "Las partes del sistema y sus dependencias, cada una con la "
+                       "decisión (ADR) de la que sale.",
+    }
+    out = ("# Diagramas de arquitectura\n\n| Campo  | Valor |\n| ------ | ----- |\n"
+           "| Estado | Draft |\n\n"
+           "> Vistas C4 de contexto, contenedores y componentes, en Mermaid. Los nodos\n"
+           "> de componente se llaman por su ID (C1) y la comprobación los contrasta con\n"
+           "> components.md y standards.md. Solo el usuario cambia el Estado, con\n"
+           "> /architecture:approve.\n")
+    for key, title in DIAGRAM_VIEWS:
+        out += f"\n## {title}\n\n{intro[key]}\n\n```mermaid\n{blocks[key]}```\n"
+    return out
+
+
+def cmd_diagram(_args):
+    """Crea architecture/diagrams.md con el esqueleto si no existe (R004)."""
+    root = project_root()
+    target = root / ARCH_DIR / DIAGRAMS
+    if target.exists():
+        print(f"{ARCH_DIR}/{DIAGRAMS} ya existe: no se toca. Para rehacer el esqueleto, "
+              "bórralo y vuelve a ejecutar diagram (se pierde lo completado).")
+        return 0
+    if not components(root):
+        print("No hay componentes en architecture/components.md: los redacta "
+              "/architecture:init.", file=sys.stderr)
+        return 1
+    target.write_text(diagram_skeleton(root), encoding="utf-8")
+    print(json.dumps({"file": f"{ARCH_DIR}/{DIAGRAMS}",
+                      "views": [k for k, _t in DIAGRAM_VIEWS],
+                      "next": "/architecture:diagram completa sistemas externos y tecnologías"},
+                     indent=2))
+    return 0
+
+MERMAID_BLOCK = re.compile(r"^```mermaid[ \t]*\n(.*?)^```", re.M | re.S)
+# Lineas que no declaran nodos ni aristas.
+MERMAID_SKIP = re.compile(r"^(?:flowchart|graph|direction|classDef|class|style|linkStyle|"
+                          r"click|end)\b")
+MERMAID_ID = re.compile(r"^[A-Za-z_][\w]*$")
+# Flechas de flowchart: -->, ---, -.->, ==>, --o, --x, <-->...
+MERMAID_ARROW = re.compile(r"\s*(<?(?:-{2,}|-\.+-+|={2,})[>ox]?)\s*")
+
+
+def mermaid_graph(block):
+    """(nodos, aristas dirigidas) de un bloque flowchart. Solo lo que la
+    comprobacion necesita (D4): los IDs y quien apunta a quien."""
+    nodes, edges = set(), []
+    for raw in block.splitlines():
+        line = raw.split("%%", 1)[0].strip()
+        if not line or MERMAID_SKIP.match(line):
+            continue
+        m = re.match(r"^subgraph\s+([A-Za-z_]\w*)", line)
+        if m:
+            nodes.add(m.group(1))
+            continue
+        line = re.sub(r'"[^"]*"', "", line)              # etiquetas entre comillas
+        line = re.sub(r"\|[^|]*\|", "", line)            # -->|texto|
+        prev = None
+        while prev != line:                               # [..], (..), {..} anidados
+            prev = line
+            line = re.sub(r"\[[^\[\]]*\]|\([^()]*\)|\{[^{}]*\}", "", line)
+        line = re.sub(r":::[\w-]+", "", line)
+        line = re.sub(r"(--|==)\s+[^\s>=-][^>]*?\s+(--|==)>", r"\2>", line)  # A -- x --> B
+        line = re.sub(r"-\.\s+[^\s.>-][^>]*?\s+\.->", "-.->", line)  # A -. x .-> B
+        parts = MERMAID_ARROW.split(line)
+        groups = [[x.strip() for x in g.split("&") if x.strip()] for g in parts[0::2]]
+        for g in groups:
+            nodes.update(x for x in g if MERMAID_ID.match(x))
+        for i, arrow in enumerate(parts[1::2]):
+            left, right = groups[i], groups[i + 1]
+            pairs = [(a, b) for a in left for b in right]
+            if arrow.endswith(">"):
+                edges += pairs
+            if arrow.startswith("<"):
+                edges += [(b, a) for a, b in pairs]
+    return nodes, edges
+
+
+def diagram_views(text):
+    """{vista: (nodos, aristas)} de las secciones de diagrams.md con bloque mermaid."""
+    out = {}
+    for key, title in DIAGRAM_VIEWS:
+        blocks = MERMAID_BLOCK.findall(section(text, title))
+        if blocks:
+            nodes, edges = set(), []
+            for b in blocks:
+                n, e = mermaid_graph(b)
+                nodes |= n
+                edges += e
+            out[key] = (nodes, edges)
+    return out
+
+
+def check_diagrams(root):
+    """R005, R006, R007 y R009 sobre architecture/diagrams.md (D4)."""
+    rel = f"{ARCH_DIR}/{DIAGRAMS}"
+    text = read_arch(root, DIAGRAMS)
+    if text is None:
+        return [_finding("W-ARCH-NO-DIAGRAMS",
+                         f"No hay {rel}: genera las vistas C4 con /architecture:diagram.", rel)]
+    out = []
+    known = [c["id"] for c in components(root)]
+    views = diagram_views(text)
+    titles = dict(DIAGRAM_VIEWS)
+    unknown = sorted({n for nodes, _e in views.values() for n in nodes
+                      if re.match(r"^C\d+$", n) and n not in known},
+                     key=lambda x: int(x[1:]))
+    for n in unknown:
+        out.append(_finding("E-ARCH-DIAGRAM-UNKNOWN",
+                            f"{rel} dibuja {n}, que no es un componente de components.md.", rel))
+    for key, title in DIAGRAM_VIEWS:
+        if key not in views:
+            out.append(_finding("E-ARCH-DIAGRAM-MISSING",
+                                f"{rel} no tiene la vista {title} (sección ## {title} con un "
+                                "bloque mermaid).", rel))
+        elif key != "contexto":
+            for c in known:
+                if c not in views[key][0]:
+                    out.append(_finding("E-ARCH-DIAGRAM-MISSING",
+                                        f"A la vista {title} de {rel} le falta {c}.", rel))
+    deps = standard_pairs(root, "dependencia")
+    banned = standard_pairs(root, "prohibida")
+    seen = set()
+    for key, title in DIAGRAM_VIEWS:
+        for a, b in (views.get(key) or (set(), []))[1]:
+            for x, y, sid, _adr in deps:
+                if (a, b) == (y, x) and (key, a, b, sid) not in seen:
+                    seen.add((key, a, b, sid))
+                    out.append(_finding(
+                        "E-ARCH-DIAGRAM-VIOLATION",
+                        f"{rel} dibuja {a} → {b} en la vista {title}, pero {sid} declara "
+                        f"{x} → {y}.", rel))
+            for x, y, sid, _adr in banned:
+                if (a, b) == (x, y) and (key, a, b, sid) not in seen:
+                    seen.add((key, a, b, sid))
+                    out.append(_finding(
+                        "E-ARCH-DIAGRAM-VIOLATION",
+                        f"{rel} dibuja {a} → {b} en la vista {title}, una dependencia que "
+                        f"{sid} prohíbe.", rel))
+    return out
+
+
 def cmd_init(_args):
     """Copia las plantillas a architecture/ si el producto esta aprobado (R001).
     No sobrescribe: un artefacto que ya existe se deja como esta."""
@@ -1235,6 +1477,7 @@ def cmd_init(_args):
 
 COMMANDS = {
     "init": cmd_init,
+    "diagram": cmd_diagram,
     "next-id": cmd_next_id,
     "check": cmd_check,
     "approve": cmd_approve,
@@ -1261,6 +1504,11 @@ FINDINGS = {
                            "candidata inexistente"),
     "E-ARCH-OPEN-QUESTION": "Pregunta abierta sobre una decisión o un atributo",
     "E-ARCH-TEMPLATE": "Hueco de plantilla sin rellenar",
+    "E-ARCH-DIAGRAM-UNKNOWN": "Un diagrama dibuja un componente que no existe",
+    "E-ARCH-DIAGRAM-MISSING": "A una vista le falta un componente, o falta la vista",
+    "E-ARCH-DIAGRAM-VIOLATION": ("Un diagrama dibuja una dependencia que un estándar "
+                                 "prohíbe o declara en sentido contrario"),
+    "W-ARCH-NO-DIAGRAMS": "La arquitectura no tiene diagramas",
     "W-ARCH-NOT-APPROVED": "Artefacto sin aprobar o cambiado después de aprobarse",
     "W-ARCH-PRODUCT-CHANGED": "El producto cambió desde la aprobación de la arquitectura",
 }

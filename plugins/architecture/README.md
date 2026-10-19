@@ -24,12 +24,13 @@ van aquí. Una librería que usa una sola feature va a su plan.
 ```
 /architecture:init       # tras /discovery:approve: atributos de calidad y componentes
 /architecture:decide     # decisiones (ADR) y estándares; lo que no decides queda como pregunta
+/architecture:diagram    # vistas C4 (contexto, contenedores, componentes) en Mermaid
 /architecture:check      # coherencia; también en CI
 /architecture:approve    # tú apruebas el conjunto
 /architecture:review ADR-0004 aceptar|rechazar   # tú decides una decisión propuesta
 ```
 
-`init`, `decide`, `approve` y `review` los lanza el usuario
+`init`, `decide`, `diagram`, `approve` y `review` los lanza el usuario
 (`disable-model-invocation`). `check` lo puede lanzar también el modelo, porque
 solo lee; en `discovery` no es así, pero aquí el plan lo decidió de este modo.
 Por debajo usan `scripts/architecture.py`, que también se puede llamar a mano:
@@ -37,6 +38,7 @@ Por debajo usan `scripts/architecture.py`, que también se puede llamar a mano:
 | Subcomando | Qué hace | Salida |
 | ---------- | -------- | ------ |
 | `init` | Crea `architecture/` desde las plantillas si el producto está aprobado; no sobrescribe | 0, o 1 si se niega |
+| `diagram` | Crea `architecture/diagrams.md` con el esqueleto de las tres vistas; no sobrescribe | 0, o 1 sin componentes |
 | `next-id Q\|C\|S\|ADR` | Siguiente atributo, componente, estándar o decisión libre; nunca recicla | 0; 2 con un tipo desconocido |
 | `check [--json] [--check]` | Coherencia de la arquitectura | 0; 1 con `--check` y errores; 2 con un argumento desconocido |
 | `approve [--skill]` | Aprueba el conjunto | 0, o 1 si se niega; con `--skill`, siempre 0 |
@@ -51,6 +53,7 @@ architecture/
 ├── components.md    C1… componentes: responsabilidad y candidatas; fila Producto
 ├── standards.md     S1… estándares: tipo (capas, dependencia, prohibida), detalle, decisión
 ├── questions.md     preguntas abiertas: - [ ] (ADR-0002; Q1) ¿…?
+├── diagrams.md      opcional: vistas C4 de contexto, contenedores y componentes
 └── adr/
     └── 0001-slug.md una decisión: Motivo, Sustituye; Contexto, Decisión,
                      Alternativas descartadas, Consecuencias
@@ -89,6 +92,10 @@ los `W-` informan.
 | `E-ARCH-TEMPLATE` | hueco de plantilla sin rellenar |
 | `W-ARCH-NOT-APPROVED` | artefacto sin aprobar o cambiado después de aprobarse |
 | `W-ARCH-PRODUCT-CHANGED` | el brief o el backlog cambiaron desde que se aprobó la arquitectura |
+| `E-ARCH-DIAGRAM-UNKNOWN` | un diagrama dibuja un componente que no existe |
+| `E-ARCH-DIAGRAM-MISSING` | a la vista de contenedores o de componentes le falta un componente, o falta una vista |
+| `E-ARCH-DIAGRAM-VIOLATION` | un diagrama dibuja una dependencia que un estándar prohíbe o declara al revés |
+| `W-ARCH-NO-DIAGRAMS` | no hay `diagrams.md`; no impide aprobar |
 
 Las citas a candidatas, componentes y estándares se comprueban en los campos
 (Candidatas, Detalle, Decisión, Motivo, Sustituye) y en el paréntesis de las
@@ -104,11 +111,46 @@ En CI del repositorio de producto:
 - run: python3 path/to/plugins/architecture/scripts/architecture.py check --check
 ```
 
+## Diagramas
+
+`/architecture:diagram` deja en `architecture/diagrams.md` tres vistas del
+modelo C4 en Mermaid, que GitHub y los editores muestran dibujadas: **Contexto**
+(usuarios, sistema y sistemas externos), **Contenedores** (cada componente,
+con su tecnología) y **Componentes** (las dependencias entre ellos, con su
+ADR). La cuarta vista, código, no se dibuja.
+
+- **Esqueleto.** `architecture.py diagram` lo genera sin el modelo: un nodo
+  `U<n>` por viñeta de primer nivel de `## Usuarios` del brief, cada
+  componente con su ID (`C1`), nombre y responsabilidad, y una arista por cada
+  estándar `dependencia` (`C2 -->|usa · ADR-0001| C1`). Deja dos huecos por
+  vista: el nombre del sistema y una línea `%%` que pide sistemas externos y
+  tecnologías. Si el archivo ya existe, no lo toca.
+- **Completar.** La skill añade los sistemas externos (`X<Nombre>`) y las
+  tecnologías a partir de los ADR y del brief, y borra los huecos; mientras
+  queden, `E-ARCH-TEMPLATE` impide aprobar.
+- **Convenciones.** `flowchart LR` (no la sintaxis C4 experimental de
+  Mermaid), frontera `subgraph SYS`, clases `persona`, `sistema`,
+  `contenedor` y `externo`, comillas como `#quot;`.
+- **Comprobación.** `check` lee los nodos y las aristas (`-->`, `-->|x|`,
+  `-- x -->`, `-.->`, `-. x .->`) de cada vista, reconocida por su encabezado,
+  y los contrasta con `components.md` y con los estándares `dependencia` y
+  `prohibida` (`Detalle: C1 → C3`). No comprueba las capas, los sistemas
+  externos ni las tecnologías, ni valida la sintaxis Mermaid completa.
+- **Límites.** Un `subgraph C3` cuenta como C3 dibujado, y una etiqueta en
+  cursiva (`_así_`) se toma por un hueco.
+
+`sdd` no lee los diagramas: los de cada feature son otra feature.
+
 ## Aprobación y revisión
 
 `/architecture:approve` sella con `Approved · <huella>` el conjunto:
-`quality.md`, `components.md`, `standards.md`, `questions.md` y cada ADR en
-`Draft` o que cambió tras aprobarse. Se niega, sin cambiar nada, en estos casos:
+`quality.md`, `components.md`, `standards.md`, `questions.md`,
+`diagrams.md` si existe, y cada ADR en `Draft` o que cambió tras aprobarse.
+Sin `diagrams.md` la aprobación sigue adelante, con el aviso
+`W-ARCH-NO-DIAGRAMS`; con él, editarlo tras aprobar da `W-ARCH-NOT-APPROVED`
+como con el resto, y el guardrail impide que el modelo lo apruebe.
+
+La aprobación se niega, sin cambiar nada, en estos casos:
 
 - el producto de `discovery` no está aprobado o cambió;
 - falta algún artefacto, o alguno no tiene la fila `| Estado |` en su cabecera;
@@ -176,6 +218,6 @@ funciona igual con o sin `architecture/`.
 python3 plugins/architecture/tests/selftest.py
 ```
 
-Cada prueba cita el requisito de la feature 006 de este repositorio
-(`test_F006_R0NN_…`). El selftest falla si un código de hallazgo declarado no
-se prueba.
+Cada prueba cita el requisito de la feature de este repositorio que comprueba
+(`test_F006_R0NN_…`, `test_F008_R0NN_…` para los diagramas). El selftest
+falla si un código de hallazgo declarado no se prueba.

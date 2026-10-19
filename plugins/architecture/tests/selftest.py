@@ -1063,6 +1063,251 @@ def test_F006_R012_escape_y_nunca_allow():
 
 # --------------------------------------------------------------------------
 
+# ------------------------------------------------------------ F008 T001
+
+def diagrama(p):
+    """Genera el esqueleto en p y devuelve (resultado, texto de diagrams.md)."""
+    r = run(p, "diagram")
+    f = p / "architecture" / "diagrams.md"
+    return r, (f.read_text(encoding="utf-8") if f.exists() else "")
+
+
+def vista(texto, titulo):
+    """Bloque mermaid de la seccion ## titulo de diagrams.md."""
+    m = re.search(rf"^## {titulo}\n.*?```mermaid\n(.*?)```", texto, re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def test_F008_R001_tres_vistas():
+    r, texto = diagrama(con_arquitectura(proyecto("f008-r001")))
+    expect(r.returncode == 0 and architecture.doc_status(texto) == "Draft",
+           "diagram escribe diagrams.md en Draft", r.stdout + r.stderr)
+    for titulo in ("Contexto", "Contenedores", "Componentes"):
+        expect(vista(texto, titulo).startswith("flowchart LR\n"),
+               f"la vista {titulo} es un bloque mermaid flowchart", texto)
+    p = proyecto("f008-r001-sin-componentes")
+    con_arquitectura(p, components=ARQ_COMPONENTS.split("### C1")[0])
+    r, texto = diagrama(p)
+    expect(r.returncode == 1 and "/architecture:init" in r.stderr and not texto,
+           "sin componentes: sale con 1, no escribe nada y remite a /architecture:init",
+           r.stdout + r.stderr)
+
+
+def test_F008_R002_usuarios_y_componentes():
+    p = con_arquitectura(proyecto("f008-r002"))
+    (p / "product" / "brief.md").write_text(PRODUCTO_BRIEF.replace(
+        "- Dueños de comercios pequeños (D1§2)\n",
+        '- Dueños de comercios pequeños (D1§2)\n  - con un solo local\n'
+        '- Gestor "externo": lleva las cuentas (D1§4)\n'),
+        encoding="utf-8")
+    r, texto = diagrama(p)
+    contexto = vista(texto, "Contexto")
+    expect('U1["Dueños de comercios pequeños<br/>[Persona]"]:::persona' in contexto
+           and 'U2["Gestor #quot;externo#quot;<br/>[Persona]"]:::persona' in contexto
+           and "SYS[" in contexto and "U1 -->|usa| SYS" in contexto
+           and "U2 -->|usa| SYS" in contexto,
+           "el contexto: cada usuario del brief, sin su cita y con las comillas "
+           "escapadas, usa el sistema", contexto)
+    expect("U3" not in contexto and "lleva las cuentas" not in contexto,
+           "una subviñeta no es otro usuario, y el tipo es lo anterior a ': '", contexto)
+    for titulo in ("Contenedores", "Componentes"):
+        cuerpo = vista(texto, titulo)
+        expect('C1["Ventas<br/>' in cuerpo and 'C2["Exportación<br/>' in cuerpo
+               and 'subgraph SYS[' in cuerpo,
+               f"{titulo}: C1 y C2 con su nombre, dentro del sistema", cuerpo)
+    expect("U1 -->|usa| SYS" in vista(texto, "Contenedores")
+           and "U1" not in vista(texto, "Componentes"),
+           "los usuarios van en contenedores, no en componentes")
+    expect(texto.count("_nombre del sistema_") == 3 and texto.count("%% _Completa") == 3,
+           "deja los dos huecos para el modelo en cada vista", texto)
+
+
+def test_F008_R003_dependencia_con_su_decision():
+    r, texto = diagrama(con_arquitectura(proyecto("f008-r003")))
+    componentes = vista(texto, "Componentes")
+    expect("C2 -->|usa · ADR-0001| C1" in componentes,
+           "la dependencia S1 (C2 → C1) se dibuja citando ADR-0001", componentes)
+    expect("C1 -->" not in componentes and "-->" not in vista(texto, "Contenedores")
+           .replace("U1 -->|usa| SYS", ""),
+           "no se inventan otras dependencias")
+
+
+def test_F008_R004_no_sobrescribe():
+    p = con_arquitectura(proyecto("f008-r004"))
+    diagrama(p)
+    f = p / "architecture" / "diagrams.md"
+    completado = f.read_bytes().replace(
+        b"  SYS[", b'  XBanco["Banco<br/>[Sistema externo]"]:::externo\n  SYS[', 1)
+    f.write_bytes(completado)
+    r = run(p, "diagram")
+    expect(r.returncode == 0 and f.read_bytes() == completado and "ya existe" in r.stdout,
+           "un segundo diagram deja el archivo igual byte a byte y dice que ya existía",
+           r.stdout + r.stderr)
+
+
+# ------------------------------------------------------------ F008 T002
+
+def completado(p):
+    """Genera el esqueleto en p y lo completa como lo haria el modelo: nombre del
+    sistema, un sistema externo y sin la linea de pendientes."""
+    diagrama(p)
+    f = p / "architecture" / "diagrams.md"
+    texto = f.read_text(encoding="utf-8").replace("_nombre del sistema_", "Caja")
+    texto = re.sub(r"^  %% _Completa.*\n", "", texto, flags=re.M)
+    texto = texto.replace(
+        "  end\n  C2 -->|usa · ADR-0001| C1\n",
+        '  end\n  C2 -->|usa · ADR-0001| C1\n'
+        '  XHoja["Hoja de cálculo<br/>[Sistema externo]"]:::externo\n'
+        "  C2 -. exporta .-> XHoja\n  C1 -- lee --> XHoja\n")
+    f.write_text(texto, encoding="utf-8")
+    return f
+
+
+def con_diagramas(nombre, cambio=None):
+    """Arquitectura con diagramas completados; cambio(texto) los altera."""
+    p = con_arquitectura(proyecto(nombre))
+    f = completado(p)
+    if cambio:
+        f.write_text(cambio(f.read_text(encoding="utf-8")), encoding="utf-8")
+    return p
+
+
+def test_F008_R005_componente_inexistente():
+    p = con_diagramas("f008-coherente")
+    expect(not {c for c in codigos(p) if c.startswith("E-")},
+           "un esqueleto generado y completado no da errores", f"{codigos(p)}")
+    expect("XHoja" in architecture.diagram_views(
+               (p / "architecture" / "diagrams.md").read_text(encoding="utf-8"))
+           ["componentes"][0], "lee los nodos externos, con etiqueta y sin ella")
+    grafo = architecture.mermaid_graph(
+        "A --> B\nB -->|x| C\nC -- y --> D\nD -.-> E\nE -. z .-> F\nF & G --> H\n"
+        'H["a [b] (c)"]:::externo --> I{d} <--> J\nJ --- K\n')
+    expect(set(grafo[1]) == {("A", "B"), ("B", "C"), ("C", "D"), ("D", "E"), ("E", "F"),
+                             ("F", "H"), ("G", "H"), ("H", "I"), ("I", "J"), ("J", "I")}
+           and grafo[0] == set("ABCDEFGHIJK"),
+           "lee las formas de arista de D4, encadenadas y con etiquetas anidadas",
+           f"{grafo}")
+    p = con_diagramas("f008-r005", lambda t: t.replace(
+        "  C2 -->|usa · ADR-0001| C1\n",
+        "  C2 -->|usa · ADR-0001| C1\n  C7[Facturación] --> C1\n"))
+    hall = con_codigo(p, "E-ARCH-DIAGRAM-UNKNOWN")
+    expect(len(hall) == 1 and "C7" in hall[0]["message"]
+           and hall[0]["severity"] == "error",
+           "un componente inexistente es un error que lo nombra", f"{hall}")
+
+
+def test_F008_R006_componente_que_falta():
+    def sin_c2_en_contenedores(t):
+        a, _, b = t.partition("## Contenedores")
+        b, sep, c = b.partition("## Componentes")
+        return a + "## Contenedores" + re.sub(r"^    C2\[.*\n", "", b, flags=re.M) + sep + c
+    p = con_diagramas("f008-r006", sin_c2_en_contenedores)
+    hall = con_codigo(p, "E-ARCH-DIAGRAM-MISSING")
+    expect(len(hall) == 1 and "C2" in hall[0]["message"]
+           and "Contenedores" in hall[0]["message"],
+           "falta C2 en contenedores: un error que nombra C2 y la vista", f"{hall}")
+    p = con_diagramas("f008-r006-vista", lambda t: t.split("## Componentes")[0])
+    hall = codigos_de(p, "E-ARCH-DIAGRAM-MISSING")
+    expect(len(hall) == 1 and "Componentes" in hall[0]["message"]
+           and "C1" not in hall[0]["message"],
+           "falta una vista: un error que nombra la vista, no un componente", f"{hall}")
+
+
+def test_F008_R007_dependencia_contra_estandar():
+    p = con_diagramas("f008-r007", lambda t: t.replace(
+        "C2 -->|usa · ADR-0001| C1", "C1 -->|usa · ADR-0001| C2"))
+    hall = con_codigo(p, "E-ARCH-DIAGRAM-VIOLATION")
+    expect(len(hall) == 1 and "S1" in hall[0]["message"] and "C1 → C2" in hall[0]["message"],
+           "una dependencia invertida es un error que nombra el estándar", f"{hall}")
+    p = con_arquitectura(proyecto("f008-r007-prohibida"), standards=ARQ_STANDARDS + """
+### S2 — Ventas no depende de Exportación
+
+- **Tipo:** prohibida
+- **Detalle:** C1 → C2
+- **Decisión:** ADR-0001
+""")
+    f = completado(p)
+    texto = f.read_text(encoding="utf-8")
+    f.write_text(texto.replace("  C2 -->|usa · ADR-0001| C1\n",
+                               "  C2 -->|usa · ADR-0001| C1\n  C1 -- avisa --> C2\n"),
+                 encoding="utf-8")
+    hall = codigos_de(p, "E-ARCH-DIAGRAM-VIOLATION")
+    expect(any("S2" in h["message"] and "prohíbe" in h["message"] for h in hall),
+           "un par prohibido es un error que nombra el estándar", f"{hall}")
+
+
+def test_F008_R009_sin_diagramas_avisa():
+    p = con_arquitectura(proyecto("f008-r009"))
+    hall = con_codigo(p, "W-ARCH-NO-DIAGRAMS")
+    expect(len(hall) == 1 and hall[0]["severity"] == "warning"
+           and "/architecture:diagram" in hall[0]["message"],
+           "sin diagrams.md: un aviso que pide generarlos", f"{hall}")
+    r = run(p, "approve")
+    expect(r.returncode == 0 and estado(p, "architecture/components.md").startswith("Approved"),
+           "approve no se niega por faltar los diagramas", r.stdout + r.stderr)
+    p = con_arquitectura(proyecto("f008-r009-esqueleto"))
+    diagrama(p)
+    hall = codigos_de(p, "E-ARCH-TEMPLATE")
+    expect(any("diagrams.md" in h["message"] for h in hall),
+           "un esqueleto sin completar conserva huecos (E-ARCH-TEMPLATE)", f"{hall}")
+
+
+# ------------------------------------------------------------ F008 T003
+
+def test_F008_R008_diagramas_en_la_aprobacion():
+    p = con_diagramas("f008-r008")
+    rel = "architecture/diagrams.md"
+    r = run(p, "approve")
+    texto = (p / rel).read_text(encoding="utf-8")
+    expect(r.returncode == 0 and rel in r.stdout
+           and architecture.artifact_state(texto) == "approved"
+           and estado(p, "architecture/components.md").startswith("Approved"),
+           "los diagramas se sellan con el conjunto, con la huella de su contenido",
+           r.stdout + r.stderr)
+    expect("W-ARCH-NOT-APPROVED" not in codigos(p), "y quedan aprobados")
+    (p / rel).write_text(texto.replace("Caja", "Caja registradora"), encoding="utf-8")
+    h = con_codigo(p, "W-ARCH-NOT-APPROVED")
+    expect(len(h) == 1 and h[0]["artifact"] == rel and "cambió" in h[0]["message"],
+           "editarlos tras aprobar: aviso que nombra diagrams.md", f"{h}")
+    p = con_arquitectura(proyecto("f008-r008-esqueleto"))
+    diagrama(p)
+    antes = foto(p)
+    r = run(p, "approve")
+    expect(r.returncode == 1 and "E-ARCH-TEMPLATE" in r.stderr and foto(p) == antes,
+           "un esqueleto sin completar impide aprobar y no se sella nada", r.stdout + r.stderr)
+
+
+def test_F008_R010_guardrails_de_diagramas():
+    p = con_diagramas("f008-r010")
+    rel = "architecture/diagrams.md"
+    f = p / rel
+    texto = f.read_text(encoding="utf-8")
+    aprobado = texto.replace("| Estado | Draft |", "| Estado | Approved · 0123456789ab |")
+    r = hook(p, "guard", "Write", {"file_path": rel, "content": aprobado})
+    expect(deniega(r) is True and "allow" not in r.stdout,
+           "un Write que aprueba diagrams.md se deniega", r.stdout)
+    r = hook(p, "guard", "Edit", {"file_path": str(f), "old_string": "| Estado | Draft |",
+                                  "new_string": "| Estado | Approved |"})
+    expect(deniega(r) is True, "un Edit que aprueba diagrams.md se deniega", r.stdout)
+    r = hook(p, "guard", "Write", {"file_path": "architecture/Diagrams.md", "content": aprobado})
+    expect(deniega(r) is True, "Diagrams.md con otras mayusculas tambien se reconoce")
+    r = hook(p, "guard", "Edit", {"file_path": str(f), "old_string": "Caja",
+                                  "new_string": "Caja registradora"})
+    expect(deniega(r) is False, "completar los diagramas no se bloquea")
+
+    hook(p, "guard", "Bash", {"command": "python3 sella.py"}, tool_use_id="d1")
+    f.write_text(aprobado, encoding="utf-8")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="d1")
+    expect(r.returncode == 2 and estado(p, rel) == "Draft" and rel in r.stderr,
+           "un comando que aprueba diagrams.md: la auditoria lo devuelve a Draft", r.stderr)
+    f.unlink()
+    hook(p, "guard", "Bash", {"command": "python3 crea.py"}, tool_use_id="d2")
+    f.write_text(aprobado, encoding="utf-8")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="d2")
+    expect(r.returncode == 2 and estado(p, rel) == "Draft",
+           "y uno que los crea ya aprobados, tambien", r.stderr)
+
+
 def cobertura_de_codigos():
     # main() la ejecuta despues de todas las pruebas: compara los codigos
     # declarados con los que las pruebas vieron emitirse.

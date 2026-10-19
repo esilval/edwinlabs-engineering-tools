@@ -67,8 +67,12 @@ no aquí. Ante la duda, pregunta al usuario.
 
 4. **Estándares** (`architecture/standards.md`): las reglas comprobables que
    se derivan de las decisiones, con `next-id S`:
-   - `Tipo: capas` (orden de capas), `dependencia` (`Detalle: C2 → C1`) o
-     `prohibida` (dependencias que no se pueden usar);
+   - `Tipo: capas` (orden de capas), `dependencia` (`Detalle: C2 → C1`: C2
+     depende de C1, nunca al revés) o `prohibida` (`Detalle: C1 → C3`: C1 no
+     puede depender de C3; varios pares separados por comas). `check` contrasta
+     los pares de estos dos tipos con las aristas de los diagramas. Una
+     prohibición que no es entre componentes (una librería, un servicio) se
+     escribe en prosa en el Detalle, sin flechas: no se comprueba;
    - `Decisión:` el ADR del que sale.
 
 5. Comprueba y corrige:
