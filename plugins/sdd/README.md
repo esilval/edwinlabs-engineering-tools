@@ -36,7 +36,7 @@ dependencias externas: el plugin no instala nada.
 /sdd:specify B03               # o desde una candidata del backlog de discovery
 /sdd:clarify                   # cierra las preguntas abiertas
 /sdd:approve                   # tú apruebas la siguiente fase pendiente (aquí, spec)
-/sdd:plan                      # decisiones de arquitectura
+/sdd:plan                      # decisiones de arquitectura y diagramas de la feature
 /sdd:approve                   # plan
 /sdd:tasks                     # descomposición en tareas atómicas
 /sdd:analyze                   # coherencia entre artefactos, solo lectura
@@ -102,6 +102,38 @@ de candidatas y objetivos y el algoritmo de huella de la aprobación. Si
 `discovery` cambia ese formato o esa huella, la prueba de contrato del selftest
 de `sdd`, que aprueba un producto con el `discovery.py` real, falla en CI.
 
+## Diagramas del plan
+
+`plan.md` tiene una sección `## Diagramas` en Mermaid, que GitHub y los editores
+muestran dibujada, con tres apartados: **Secuencia** (`sequenceDiagram`, el flujo
+principal), **Modelo de datos** (`erDiagram`) y **Clases** (`classDiagram`).
+Cada uno se rellena o dice «No aplica.»; mientras quede el hueco de la
+plantilla, el plan no se aprueba. Un plan sin la sección (de antes de que
+existiera) solo da el aviso `W-PLAN-NO-DIAGRAMS`.
+
+- **Esqueleto.** Con `architecture/`, `sdd.py diagram` escribe en el apartado de
+  secuencia un `participant` por componente que aloja la candidata
+  (`participant C1 as Ventas`) y una línea `%%` que pide completar el flujo y
+  citar la decisión de cada llamada. Sin candidata no pone participantes y
+  lista los componentes entre los que elegir. No toca un apartado que ya tiene
+  contenido; a un plan sin la sección se la añade al final; si el plan estaba
+  aprobado, lo dice, porque hay que volver a aprobarlo. Sale con 0 sin
+  `architecture/` (sin escribir nada) y con 1 sin `plan.md`, con la
+  arquitectura sin aprobar o con la candidata sin componente.
+- **Convenciones.** Un componente es un participante con su ID de
+  `components.md`. Una llamada es una flecha continua (`->>`, `->`, `-x`, `-)`)
+  y hace al que llama depender del llamado; una respuesta es discontinua
+  (`-->>`, `-->`, `--x`, `--)`) y no cuenta, y `A<<->>B` cuenta en los dos
+  sentidos. Cada llamada entre componentes cita su decisión:
+  `C2->>C1: totales (ADR-0001)` o `(D2)`.
+- **Comprobación.** Con `architecture/`, `trace` lee los participantes y los
+  mensajes de los `sequenceDiagram` (`Note`, `loop`, `alt`, `activate` y los
+  comentarios `%%` se ignoran) y da error si nombran un componente que no
+  existe (`E-PLAN-DIAGRAM-UNKNOWN`) o si una llamada va al revés de un estándar
+  `dependencia` o coincide con un par `prohibida`
+  (`E-PLAN-DIAGRAM-VIOLATION`). El modelo de datos, las clases y cualquier otro
+  tipo de diagrama no se comprueban. Sin `architecture/`, solo el aviso.
+
 ## Con architecture
 
 Si el proyecto tiene `architecture/` (la deja el plugin `architecture`: atributos
@@ -134,10 +166,12 @@ ella en lugar de volver a decidir el stack en cada feature. Sin
   `origin.components` y `context.components`.
 
 `sdd` lee `architecture/` con `scripts/sdd_architecture.py`, copia documentada
-del formato de `architecture.py` (los plugins no comparten código); la plantilla
-`templates/adr.md` es copia de la de `architecture` con Estado `Proposed`. Una
-prueba de contrato del selftest aprueba una arquitectura con el
-`architecture.py` real y comprueba que `sdd` la lee igual.
+del formato de `architecture.py`, incluida la lectura de los pares de los
+estándares que contrasta los diagramas (`standard_pairs`); los plugins no
+comparten código. La plantilla `templates/adr.md` es copia de la de
+`architecture` con Estado `Proposed`. Una prueba de contrato del selftest
+aprueba una arquitectura con el `architecture.py` real y comprueba que `sdd` la
+lee igual, también sus pares.
 
 ## La compuerta
 
@@ -359,6 +393,9 @@ Los `E-` bloquean `--check`; los `W-` solo informan.
 | `E-PLAN-ADR-NOT-APPROVED` | Con `architecture/`: el plan cita un ADR en borrador, propuesto, rechazado, cambiado tras aprobarse o sustituido (si el plan no está aprobado) |
 | `W-PLAN-NO-ARCHITECTURE-CHECK` | Con `architecture/`: el plan no tiene la sección «Comprobación de arquitectura» |
 | `W-PLAN-ADR-SUPERSEDED` | Con `architecture/`: un plan aprobado cita un ADR sustituido después |
+| `E-PLAN-DIAGRAM-UNKNOWN` | Con `architecture/`: un diagrama de secuencia del plan nombra un componente que no existe |
+| `E-PLAN-DIAGRAM-VIOLATION` | Con `architecture/`: una llamada del diagrama de secuencia va al revés de un estándar o está prohibida |
+| `W-PLAN-NO-DIAGRAMS` | El plan no tiene la sección «Diagramas» (ni «No aplica.» en ella) |
 | `W-TASK-NO-DONE-WHEN` | Tarea sin «hecho cuando» |
 | `W-TEST-EMPTY` | Prueba vacía (solo `pass`, `...`, comentarios): no cuenta |
 | `W-TEST-NO-ASSERT` | Prueba sin aserción reconocible: cuenta, pero revísala |

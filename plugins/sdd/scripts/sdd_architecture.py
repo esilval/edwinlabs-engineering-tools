@@ -90,6 +90,23 @@ def standards(root):
     return out
 
 
+# Copia de PAIR y standard_pairs de plugins/architecture/scripts/architecture.py
+# (feature 009, D4), sin la decision, que aqui no hace falta. La prueba de
+# contrato del selftest compara los pares de las dos copias.
+PAIR = re.compile(r"\b(C\d+)\s*(?:→|->)\s*(C\d+)\b")
+
+
+def standard_pairs(root, kind):
+    """[(desde, hacia, estandar)] de los estandares del tipo kind ('dependencia'
+    o 'prohibida') con Detalle 'C2 → C1' (o 'C2 -> C1')."""
+    out = []
+    for s in standards(root):
+        if product.norm(s["kind"]).strip(" _") != kind:
+            continue
+        out += [(a, b, s["id"]) for a, b in PAIR.findall(s["detail"])]
+    return out
+
+
 def adr_state(text):
     """'draft' | 'proposed' | 'approved' | 'stale' | 'rejected' | 'superseded',
     con la regla de architecture.py."""

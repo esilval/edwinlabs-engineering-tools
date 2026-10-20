@@ -11,6 +11,7 @@ alcanzables. Corre en CI y en local:
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -385,6 +386,11 @@ def test_trazabilidad(base):
     check(len(arquitectura) == 4, "los cuatro codigos de plan contra arquitectura se emiten",
           f"{sorted(arquitectura)}")
 
+    print("\nDiagramas del plan (feature 009)")
+    diagramas_plan = codigos_plan_diagramas(base)
+    check(len(diagramas_plan) == 3, "los tres codigos de diagramas del plan se emiten",
+          f"{sorted(diagramas_plan)}")
+
     sys.path.insert(0, str(PLUGIN / "scripts"))
     import sdd_trace
     declarados = set(sdd_trace.FINDINGS)
@@ -392,7 +398,7 @@ def test_trazabilidad(base):
                                 "E-REQ-NO-CRITERIA", "W-REQ-NO-TASK",
                                 "W-TEST-UNSCOPED", "W-TASK-NO-DONE-WHEN",
                                 "W-TEST-EMPTY", "W-TEST-NO-ASSERT"} | set(planes) \
-        | arquitectura
+        | arquitectura | diagramas_plan
     check(declarados == probados,
           f"los {len(declarados)} codigos declarados estan cubiertos",
           f"sin probar: {sorted(declarados - probados)}")
@@ -1714,6 +1720,15 @@ ARQ_STANDARDS = cabecera_arq("Estándares") + """## Estándares
 - **Decisión:** ADR-0001
 """
 
+# Un estandar prohibida con dos pares (feature 009).
+ESTANDAR_PROHIBIDO = """
+### S2 — Ventas no depende de Exportación ni de Cobros
+
+- **Tipo:** prohibida
+- **Detalle:** C1 → C2, C1 -> C3
+- **Decisión:** ADR-0001
+"""
+
 ARQ_QUESTIONS = cabecera_arq("Preguntas de arquitectura") + "## Preguntas\n\nNinguna por ahora.\n"
 
 
@@ -1839,6 +1854,22 @@ def test_F007_R009_contrato_con_architecture(base):
     expect(any("components.md cambió" in x for x in sa.approval_problems(p)),
            "un componente editado tras aprobar: cambiada para los dos plugins",
            f"{sa.approval_problems(p)}")
+
+    # F009-R005: los pares de los estandares (D4), copia de standard_pairs.
+    (p / "architecture" / "standards.md").write_text(ARQ_STANDARDS + ESTANDAR_PROHIBIDO,
+                                                     encoding="utf-8")
+    codigo = ("import json, sys; sys.path.insert(0, sys.argv[1]); import architecture; "
+              "print(json.dumps({k: [list(x[:3]) for x in "
+              "architecture.standard_pairs(sys.argv[2], k)] "
+              "for k in ('dependencia', 'prohibida')}))")
+    r = subprocess.run([sys.executable, "-c", codigo, str(ARCHITECTURE.parent), str(p)],
+                       capture_output=True, text=True, timeout=60)
+    reales = json.loads(r.stdout) if r.returncode == 0 else r.stderr
+    copia = {k: [list(x) for x in sa.standard_pairs(p, k)] for k in ("dependencia", "prohibida")}
+    expect(copia == reales and copia == {"dependencia": [["C2", "C1", "S1"]],
+                                         "prohibida": [["C1", "C2", "S2"], ["C1", "C3", "S2"]]},
+           "los pares dependencia y prohibida coinciden con los de architecture",
+           f"{copia} vs {reales}")
 
 
 def plan_con_adrs(*citas, seccion=True):
@@ -2104,6 +2135,315 @@ def test_F007_R001_traspaso_sin_arquitectura_igual(base):
            "Origen de tres grupos y sin componentes en el JSON", spec[:400])
 
 
+# ------------------------------------------- feature 009: diagramas en el plan
+
+PLANTILLA_PLAN = PLUGIN / "templates" / "plan.md"
+
+
+def seccion_diagramas():
+    """La seccion ## Diagramas de la plantilla del plan, tal cual."""
+    texto = PLANTILLA_PLAN.read_text(encoding="utf-8")
+    inicio = texto.index("## Diagramas")
+    fin = texto.index("\n## ", inicio + 1)
+    return texto[inicio:fin].rstrip() + "\n"
+
+
+def no_aplica(seccion):
+    """La seccion con los tres apartados cerrados con «No aplica.»."""
+    return "\n".join("No aplica." if l.startswith("_Bloque mermaid") else l
+                      for l in seccion.splitlines()) + "\n"
+
+
+def test_F009_R001_seccion_de_diagramas(base):
+    print("\nF009 · R001: el plan tiene un lugar para sus diagramas")
+    seccion = seccion_diagramas()
+    for apartado, tipo in (("### Secuencia", "sequenceDiagram"),
+                           ("### Modelo de datos", "erDiagram"),
+                           ("### Clases", "classDiagram")):
+        expect(apartado in seccion and tipo in seccion,
+               f"la plantilla tiene {apartado} con {tipo}", seccion)
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd
+    import sdd_trace
+    expect(not sdd_trace.ADR_REF.search(seccion) and not sdd_trace.REQ_ID.search(seccion),
+           "la seccion no cita un ADR ni un requisito literal")
+    p = repo_con_feature(base, "f009-r001-huecos", spec=SPEC_LISTA, archivos={
+        "specs/001-x/plan.md": PLAN_LISTO + "\n" + seccion})
+    huecos = hallazgos_de(p, "E-PLAN-TEMPLATE")
+    problemas = sdd.phase_problems(p / "specs" / "001-x", "plan")
+    expect(len(huecos) == 1 and re.search(r"\b3 hueco", huecos[0]["message"])
+           and any("hueco" in x for x in problemas),
+           "con los tres huecos sin tocar: E-PLAN-TEMPLATE y la compuerta no lo aprueba",
+           f"{huecos} {problemas}")
+    p = repo_con_feature(base, "f009-r001-no-aplica", spec=SPEC_LISTA, archivos={
+        "specs/001-x/plan.md": PLAN_LISTO + "\n" + no_aplica(seccion)})
+    expect(not hallazgos_de(p, "E-PLAN-TEMPLATE")
+           and sdd.phase_problems(p / "specs" / "001-x", "plan") == [],
+           "con «No aplica.» en los tres apartados: ningun hueco",
+           f"{hallazgos_de(p, 'E-PLAN-TEMPLATE')}")
+
+
+def feature_con_plan(base, nombre, plan, candidata="B01", arquitectura=True):
+    """Proyecto con producto (y arquitectura), la feature de la candidata (o una
+    descripcion libre si candidata es None) y su plan.md. Devuelve (p, plan)."""
+    p = base / nombre
+    p.mkdir()
+    if arquitectura:
+        con_arquitectura(p)
+    else:
+        con_producto(p)
+    r = run("new", [candidata or "informe libre de prueba"], cwd=p)
+    feature = p / json.loads(r.stdout)["dir"]
+    (feature / "plan.md").write_text(plan, encoding="utf-8")
+    return p, feature / "plan.md"
+
+
+def secuencia(texto):
+    """Cuerpo del apartado ### Secuencia del plan."""
+    m = re.search(r"^### Secuencia\n(.*?)(?=^#{2,3} |\Z)", texto, re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def test_F009_R002_esqueleto_con_componentes(base):
+    print("\nF009 · R002: el esqueleto de secuencia trae los componentes de la feature")
+    p, plan = feature_con_plan(base, "f009-r002", PLAN_LISTO + "\n" + seccion_diagramas())
+    r = run("diagram", cwd=p)
+    cuerpo = secuencia(plan.read_text(encoding="utf-8"))
+    expect(r.returncode == 0 and "```mermaid\nsequenceDiagram\n  participant C1 as Ventas\n"
+           in cuerpo and "C2" not in cuerpo.split("%%")[0],
+           "una feature de B01: participant C1 as Ventas, y solo C1", r.stdout + r.stderr + cuerpo)
+    huecos = [h for h in hallazgos_de(p, "E-PLAN-TEMPLATE")]
+    adr = hallazgos_de(p, "E-PLAN-ADR-UNKNOWN") + hallazgos_de(p, "E-PLAN-ADR-NOT-APPROVED")
+    expect(len(huecos) == 1 and "%% _Completa" in huecos[0]["message"] and not adr,
+           "sin completar: E-PLAN-TEMPLATE por el hueco, y ninguna cita de ADR falsa",
+           f"{huecos} {adr}")
+    texto = plan.read_text(encoding="utf-8")
+    texto = re.sub(r"^  %% _Completa.*$", "  actor U as Dueño\n  U->>C1: cierra la caja (D1)",
+                   texto, flags=re.M)
+    plan.write_text(no_aplica(texto), encoding="utf-8")
+    expect(not hallazgos_de(p, "E-PLAN-TEMPLATE")
+           and not [f for f in traza(p)["findings"] if "DIAGRAM" in f["code"]],
+           "completado: ningun hueco ni hallazgo de diagramas", f"{traza(p)['findings']}")
+
+    p, plan = feature_con_plan(base, "f009-r002-libre", PLAN_LISTO + "\n" + seccion_diagramas(),
+                               candidata=None)
+    r = run("diagram", cwd=p)
+    cuerpo = secuencia(plan.read_text(encoding="utf-8"))
+    expect(r.returncode == 0 and "  participant " not in cuerpo
+           and "C1 (Ventas), C2 (Exportación)" in cuerpo,
+           "sin candidata: ningun participante, y el hueco lista los componentes", cuerpo)
+
+    p, plan = feature_con_plan(base, "f009-r002-sin-seccion", PLAN_LISTO)
+    r = run("diagram", cwd=p)
+    texto = plan.read_text(encoding="utf-8")
+    expect(r.returncode == 0 and texto.startswith(PLAN_LISTO.rstrip("\n"))
+           and texto.rstrip().endswith("o «No aplica.»_")
+           and "participant C1 as Ventas" in secuencia(texto)
+           and "### Modelo de datos" in texto and "### Clases" in texto,
+           "un plan anterior sin la seccion la recibe al final, con el esqueleto", texto)
+
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_trace
+    aprobado = sdd_trace.set_status(PLAN_LISTO, "Approved · "
+                                    + sdd_trace.content_digest(PLAN_LISTO, "plan.md"))[0]
+    p, plan = feature_con_plan(base, "f009-r002-aprobado", aprobado)
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 0 and "participant C1" in plan.read_text(encoding="utf-8")
+           and "estaba aprobado" in r.stdout and "/sdd:approve" in r.stdout
+           and "tasks.md" in r.stdout,
+           "un plan aprobado se escribe, y se avisa de volver a aprobarlo", r.stdout)
+
+    # El traspaso exige la arquitectura aprobada: se cambia despues de crear la feature.
+    p, plan = feature_con_plan(base, "f009-r002-sin-aprobar", PLAN_LISTO)
+    comp = p / "architecture" / "components.md"
+    comp.write_text(comp.read_text(encoding="utf-8").replace("registra ventas",
+                                                             "registra ventas y cobros"),
+                    encoding="utf-8")
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 1 and "no está aprobada" in r.stderr
+           and "components.md cambió" in r.stderr
+           and plan.read_text(encoding="utf-8") == PLAN_LISTO,
+           "arquitectura sin aprobar: sale con 1, dice por que y no escribe", r.stderr)
+    plan.unlink()
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 1 and "/sdd:plan" in r.stderr,
+           "sin plan.md: sale con 1 y remite a /sdd:plan", r.stderr)
+
+    import sdd
+    bloque = sdd.sequence_skeleton({"components_scope": "candidate", "components": [
+        {"id": "C3", "title": "Cobros; pagos"}]})
+    expect("  participant C3 as Cobros#59; pagos\n" in bloque,
+           "un ; en el nombre se escribe #59;, que Mermaid no toma por separador", bloque)
+
+
+def test_F009_R003_no_sobrescribe(base):
+    print("\nF009 · R003: un plan con diagramas no se sobrescribe")
+    p, plan = feature_con_plan(base, "f009-r003", PLAN_LISTO + "\n" + seccion_diagramas())
+    run("diagram", cwd=p)
+    antes = plan.read_bytes()
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 0 and plan.read_bytes() == antes and "ya tenía" in r.stdout,
+           "un segundo diagram deja el plan igual byte a byte y lo dice", r.stdout + r.stderr)
+    sin_secuencia = re.sub(r"### Secuencia\n\n[^\n]*\n\n", "", seccion_diagramas())
+    p, plan = feature_con_plan(base, "f009-r003-sin-apartado", PLAN_LISTO + "\n" + sin_secuencia)
+    antes = plan.read_bytes()
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 0 and plan.read_bytes() == antes and "### Secuencia" in r.stdout,
+           "una seccion sin el apartado de secuencia no se toca, y se dice", r.stdout)
+    p, plan = feature_con_plan(base, "f009-r003-no-aplica",
+                               PLAN_LISTO + "\n" + no_aplica(seccion_diagramas()))
+    antes = plan.read_bytes()
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 0 and plan.read_bytes() == antes and "ya tenía" in r.stdout,
+           "un apartado con «No aplica.» tampoco se toca", r.stdout + r.stderr)
+
+
+def test_F009_R007_sin_arquitectura(base):
+    print("\nF009 · R007: sin architecture/ no hay esqueleto")
+    p, plan = feature_con_plan(base, "f009-r007", PLAN_LISTO + "\n" + seccion_diagramas(),
+                               arquitectura=False)
+    antes = plan.read_bytes()
+    r = run("diagram", cwd=p)
+    expect(r.returncode == 0 and plan.read_bytes() == antes and "architecture/" in r.stdout,
+           "diagram sale con 0, no escribe y dice que hace falta arquitectura",
+           r.stdout + r.stderr)
+
+
+def plan_con_secuencia(base, nombre, cuerpo, arquitectura=True, estandares=None):
+    """Feature 001-x con un plan cuyo diagrama de secuencia es cuerpo, sobre la
+    arquitectura de prueba (con otros estandares si se dan)."""
+    plan = (PLAN_LISTO + "\n## Comprobación de arquitectura\n\n| Decisión | Cómo |\n"
+            "| - | - |\n| ADR-0001 | se respeta |\n\n"
+            + no_aplica(seccion_diagramas()).replace(
+                "### Secuencia\n\nNo aplica.\n",
+                "### Secuencia\n\n```mermaid\nsequenceDiagram\n" + cuerpo + "```\n", 1))
+    p = repo_con_feature(base, nombre, spec=SPEC_LISTA,
+                         archivos={"specs/001-x/plan.md": plan})
+    if arquitectura:
+        con_arquitectura(p)
+        if estandares:
+            (p / "architecture" / "standards.md").write_text(estandares, encoding="utf-8")
+    return p
+
+
+SECUENCIA_COHERENTE = """  actor U as Dueño
+  participant C2 as Exportación
+  participant C1 as Ventas
+  U->>C2: exporta el mes (D1)
+  C2->>C1: movimientos del mes (ADR-0001)
+  C1-->>C2: movimientos
+  C2-->>U: archivo
+"""
+
+
+def codigos_plan_diagramas(base):
+    """Los tres codigos de la feature 009, emitidos de verdad (para la cobertura)."""
+    vistos = set()
+    p = plan_con_secuencia(base, "tr-diag-codigos",
+                           "  participant C7 as Otro\n  C1->>C2: al reves (D1)\n")
+    vistos |= {f["code"] for f in traza(p)["findings"]}
+    p = proyecto_plan(base, "tr-diag-sin", "ADR-0001")
+    vistos |= {f["code"] for f in traza(p)["findings"]}
+    return vistos & {"E-PLAN-DIAGRAM-UNKNOWN", "E-PLAN-DIAGRAM-VIOLATION", "W-PLAN-NO-DIAGRAMS"}
+
+
+def diagramas(p):
+    return [f for f in traza(p)["findings"] if "DIAGRAM" in f["code"]]
+
+
+def test_F009_R004_componente_inexistente(base):
+    print("\nF009 · R004: un componente inexistente en el diagrama se nombra")
+    p = plan_con_secuencia(base, "f009-coherente", SECUENCIA_COHERENTE)
+    errores = [f for f in traza(p)["findings"] if f["severity"] == "error"
+               and f["code"].startswith("E-PLAN")]
+    expect(not diagramas(p) and not errores,
+           "un diagrama que respeta la arquitectura no da hallazgos de plan", f"{errores}")
+    p = plan_con_secuencia(base, "f009-r004", "  participant C1 as Ventas\n"
+                           "  participant C7 as Facturación\n  C1->>C7: factura (D1)\n"
+                           "  C1->>C8: avisa (D1)\n")
+    h = hallazgos_de(p, "E-PLAN-DIAGRAM-UNKNOWN")
+    expect(len(h) == 2 and "C7" in h[0]["message"] and "C8" in h[1]["message"]
+           and h[0]["severity"] == "error",
+           "C7 declarado y C8 solo en un mensaje: un error que nombra cada uno", f"{h}")
+
+
+def test_F009_R005_llamada_contra_estandar(base):
+    print("\nF009 · R005: una llamada contra un estandar nombra el estandar")
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_trace
+    nombres, llamadas = sdd_trace.sequence_graph(
+        "participant A\nactor U as Usuario\ncreate participant N\n"
+        "A->>B: a\nB-->>A: b\nA->C: c\nC-->A: d\nA-xD: e\nA--xD: f\nA-)E: g\n"
+        "A--)E: h\nF<<->>G: i\nH<<-->>I: j\nA->>+J: k\nJ-->>-A: l\n"
+        "Note over A,B: nota\nloop cada dia\nend\n%% A->>Z: comentario\n")
+    expect(set(llamadas) == {("A", "B"), ("A", "C"), ("A", "D"), ("A", "E"), ("F", "G"),
+                             ("G", "F"), ("A", "J")}
+           and nombres >= {"A", "U", "N", "B", "J"} and "Z" not in nombres,
+           "solo las flechas continuas son llamadas; respuestas, notas y comentarios no",
+           f"{nombres} {llamadas}")
+    p = plan_con_secuencia(base, "f009-r005", "  participant C1 as Ventas\n"
+                           "  participant C2 as Exportación\n  C1->>C2: pide (D1)\n")
+    h = hallazgos_de(p, "E-PLAN-DIAGRAM-VIOLATION")
+    expect(len(h) == 1 and "S1" in h[0]["message"] and "C1 a C2" in h[0]["message"],
+           "C1->>C2 contra S1 (C2 -> C1): un error que nombra S1", f"{h}")
+    expect(sdd_trace.diagram_kind("---\ntitle: x\n---\n%%{init: {}}%%\nsequenceDiagram\n")
+           == "sequenceDiagram", "el frontmatter y las directivas no ocultan el tipo")
+    p = plan_con_secuencia(base, "f009-r005-respuesta", "  C1-->>C2: totales\n")
+    expect(not hallazgos_de(p, "E-PLAN-DIAGRAM-VIOLATION"),
+           "la respuesta C1-->>C2 no es una dependencia")
+    p = plan_con_secuencia(base, "f009-r005-prohibida",
+                           "  participant C1 as Ventas\n  C1-)C2: avisa (D1)\n",
+                           estandares=ARQ_STANDARDS.replace(
+                               "- **Detalle:** C2 → C1", "- **Detalle:** C3 → C2")
+                           + ESTANDAR_PROHIBIDO)
+    h = hallazgos_de(p, "E-PLAN-DIAGRAM-VIOLATION")
+    expect(len(h) == 1 and "S2" in h[0]["message"] and "prohibe" in h[0]["message"],
+           "una llamada prohibida por S2: un error que nombra S2", f"{h}")
+
+
+def test_F009_R006_sin_diagramas_avisa(base):
+    print("\nF009 · R006: un plan sin diagramas solo avisa")
+    p = proyecto_plan(base, "f009-r006", "ADR-0001")
+    h = hallazgos_de(p, "W-PLAN-NO-DIAGRAMS")
+    expect(len(h) == 1 and h[0]["severity"] == "warning"
+           and not [f for f in diagramas(p) if f["severity"] == "error"],
+           "sin la seccion: un aviso y ningun error de diagramas", f"{diagramas(p)}")
+    nota = "\n## Diagramas\n\n> Solo una nota.\n"
+    p = repo_con_feature(base, "f009-r006-nota", spec=SPEC_LISTA,
+                         archivos={"specs/001-x/plan.md": PLAN_LISTO + nota})
+    expect(len(hallazgos_de(p, "W-PLAN-NO-DIAGRAMS")) == 1,
+           "una seccion con solo notas tambien avisa")
+    p = repo_con_feature(base, "f009-r006-no-aplica", spec=SPEC_LISTA, archivos={
+        "specs/001-x/plan.md": PLAN_LISTO + "\n" + no_aplica(seccion_diagramas())})
+    expect(not hallazgos_de(p, "W-PLAN-NO-DIAGRAMS"),
+           "con «No aplica.» declarado, ningun aviso")
+
+
+def test_F009_R007_trace_sin_arquitectura(base):
+    print("\nF009 · R007: sin architecture/ los diagramas no se contrastan")
+    p = plan_con_secuencia(base, "f009-r007-trace", "  participant C7 as Otro\n"
+                           "  C1->>C2: al reves (D1)\n", arquitectura=False)
+    expect(not diagramas(p), "ningun hallazgo de diagramas sin arquitectura",
+           f"{diagramas(p)}")
+
+
+def test_F009_R008_pide_citar_la_decision(base):
+    print("\nF009 · R008: al completar los diagramas se pide citar la decision")
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd
+    for alcance in ("candidate", "all"):
+        bloque = sdd.sequence_skeleton({"components_scope": alcance, "components": [
+            {"id": "C1", "title": "Ventas"}]})
+        hueco = [x for x in bloque.splitlines() if x.lstrip().startswith("%%")]
+        expect(len(hueco) == 1 and "cita en cada llamada entre componentes la decisión"
+               in hueco[0] and "(Dn) o el ADR" in hueco[0],
+               f"el hueco del esqueleto ({alcance}) pide citar la Dn o el ADR", bloque)
+    skill = (PLUGIN / "skills" / "plan" / "SKILL.md").read_text(encoding="utf-8")
+    expect("Cada llamada entre componentes cita en su texto la decisión" in skill
+           and "(ADR-0001)" in skill,
+           "la skill del plan pide citar la decision en cada llamada, con un ejemplo")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -2159,6 +2499,15 @@ def main():
         test_F007_R007_origen_con_componentes(base)
         test_F007_R008_traspaso_sin_arquitectura_lista(base)
         test_F007_R001_traspaso_sin_arquitectura_igual(base)
+        test_F009_R001_seccion_de_diagramas(base)
+        test_F009_R002_esqueleto_con_componentes(base)
+        test_F009_R003_no_sobrescribe(base)
+        test_F009_R007_sin_arquitectura(base)
+        test_F009_R004_componente_inexistente(base)
+        test_F009_R005_llamada_contra_estandar(base)
+        test_F009_R006_sin_diagramas_avisa(base)
+        test_F009_R007_trace_sin_arquitectura(base)
+        test_F009_R008_pide_citar_la_decision(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
