@@ -2427,6 +2427,23 @@ def test_F009_R007_trace_sin_arquitectura(base):
            f"{diagramas(p)}")
 
 
+def test_F009_R008_pide_citar_la_decision(base):
+    print("\nF009 · R008: al completar los diagramas se pide citar la decision")
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd
+    for alcance in ("candidate", "all"):
+        bloque = sdd.sequence_skeleton({"components_scope": alcance, "components": [
+            {"id": "C1", "title": "Ventas"}]})
+        hueco = [x for x in bloque.splitlines() if x.lstrip().startswith("%%")]
+        expect(len(hueco) == 1 and "cita en cada llamada entre componentes la decisión"
+               in hueco[0] and "(Dn) o el ADR" in hueco[0],
+               f"el hueco del esqueleto ({alcance}) pide citar la Dn o el ADR", bloque)
+    skill = (PLUGIN / "skills" / "plan" / "SKILL.md").read_text(encoding="utf-8")
+    expect("Cada llamada entre componentes cita en su texto la decisión" in skill
+           and "(ADR-0001)" in skill,
+           "la skill del plan pide citar la decision en cada llamada, con un ejemplo")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -2490,6 +2507,7 @@ def main():
         test_F009_R005_llamada_contra_estandar(base)
         test_F009_R006_sin_diagramas_avisa(base)
         test_F009_R007_trace_sin_arquitectura(base)
+        test_F009_R008_pide_citar_la_decision(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
