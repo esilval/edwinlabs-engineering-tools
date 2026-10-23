@@ -43,7 +43,7 @@ features de prueba escritas en el formato de `sdd`. Las de `sdd`, en
 
 ### T002 — `sdd`: `trace --feature`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R018
 - **Depende de:** T001
 - **Archivos:** `plugins/sdd/scripts/sdd.py`, `plugins/sdd/tests/selftest.py`

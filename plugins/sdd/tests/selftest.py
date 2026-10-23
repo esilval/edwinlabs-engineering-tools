@@ -2473,6 +2473,45 @@ def test_F010_R017_tipo(base):
            "la skill dice cuándo cambiarla a corrección")
 
 
+def test_F010_R018_trace_de_otra_feature(base):
+    print("\nF010 · R018: trace --feature traza otra feature sin cambiar la activa")
+    p = repo_dos_features(base, "f010-trace-feature")
+    (p / "specs" / "001-a" / "spec.md").write_text(SPEC_BASE, encoding="utf-8")
+    actual = p / ".sdd" / "current"
+    antes = actual.read_text()
+    con_opcion = {arg: run("trace", ["--feature", arg, "--json"], cwd=p)
+                  for arg in ("001", "001-a")}
+    check_opcion = run("trace", ["--check", "--feature", "001"], cwd=p)
+    expect(actual.read_text() == antes, ".sdd/current no cambia", actual.read_text())
+    actual.write_text("001-a\n")
+    activa = run("trace", ["--json"], cwd=p)
+    check_activa = run("trace", ["--check"], cwd=p)
+    for arg, r in con_opcion.items():
+        expect(r.returncode == activa.returncode and r.stdout == activa.stdout
+               and json.loads(r.stdout)["requirements"],
+               f"--feature {arg} da el mismo JSON que con la 001 activa", r.stdout + r.stderr)
+    expect(check_opcion.returncode == check_activa.returncode == 1
+           and check_opcion.stdout == check_activa.stdout,
+           "--check se comporta igual", f"{check_opcion.returncode} {check_activa.returncode}")
+
+    actual.write_text("002-b\n")
+    r = run("trace", ["--feature", "042", "--json"], cwd=p)
+    expect(r.returncode == 1 and "042" in r.stderr and not r.stdout.strip(),
+           "--feature 042 sale con 1 y la nombra", r.stdout + r.stderr)
+    r = run("trace", ["--feature=001-a", "--json"], cwd=p)
+    expect(r.returncode == 0 and json.loads(r.stdout)["requirements"],
+           "--feature=001-a también vale", r.stdout + r.stderr)
+    (p / "specs" / "001-otra").mkdir()
+    r = run("trace", ["--feature", "001", "--json"], cwd=p)
+    expect(r.returncode == 1 and "001-a" in r.stderr and "001-otra" in r.stderr,
+           "dos features con el mismo número: sale con 1 y las nombra", r.stdout + r.stderr)
+    r = run("trace", ["--feature", "001-otra", "--json"], cwd=p)
+    expect(r.returncode == 0, "con el nombre completo no hay ambigüedad", r.stderr)
+    r = run("trace", ["--feature"], cwd=p)
+    expect(r.returncode == 1 and "--feature" in r.stderr, "--feature sin valor sale con 1", r.stderr)
+    expect(actual.read_text() == "002-b\n", "y la activa sigue siendo la 002")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -2538,6 +2577,7 @@ def main():
         test_F009_R007_trace_sin_arquitectura(base)
         test_F009_R008_pide_citar_la_decision(base)
         test_F010_R017_tipo(base)
+        test_F010_R018_trace_de_otra_feature(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
