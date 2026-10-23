@@ -22,13 +22,18 @@ from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PLUGIN / "scripts"))
+import release  # noqa: E402
 import release_specs  # noqa: E402
+
+SCRIPT = PLUGIN / "scripts" / "release.py"
 
 # El sdd.py del repositorio, solo para las pruebas de contrato.
 SDD = PLUGIN.parent / "sdd" / "scripts" / "sdd.py"
 
 fallos = []
 BASE = Path(tempfile.mkdtemp(prefix="release-selftest-"))
+# Codigos que alguna prueba vio emitirse (ver cobertura_de_codigos).
+PROBADOS = set()
 
 
 def expect(ok, nombre, detalle=""):
@@ -44,6 +49,13 @@ def proyecto(nombre):
     p = BASE / nombre
     p.mkdir(parents=True)
     return p
+
+
+def run(cwd, *args, stdin=None, env_extra=None):
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(PLUGIN), CLAUDE_PROJECT_DIR=str(cwd))
+    env.update(env_extra or {})
+    return subprocess.run([sys.executable, str(SCRIPT), *args], input=stdin,
+                          capture_output=True, text=True, cwd=str(cwd), env=env, timeout=60)
 
 
 def run_sdd(cwd, *args):
@@ -111,6 +123,39 @@ def feature(p, slug, aprobar=("spec", "plan", "tasks"), spec=None, plan=None, ta
         if fname[:-3] in aprobar:
             sella(d / fname)
     return d
+
+
+def release_md(version, features="008", estado="Draft", anterior="—", cuerpo=""):
+    """releases/vX.Y.Z.md escrita a mano con la cabecera de D2."""
+    return (f"# Versión {version}\n\n| Campo    | Valor |\n| -------- | ----- |\n"
+            f"| Estado   | {estado} |\n| Versión  | {version} |\n| Fecha    | 2026-10-22 |\n"
+            f"| Anterior | {anterior} |\n| Features | {features} |\n\n"
+            f"## Contenido\n\n{cuerpo or 'Algo.'}\n")
+
+
+def version(p, numero, features="008", aprobada=False, **kw):
+    """Escribe releases/v<numero>.md; aprobada la sella con su huella."""
+    path = p / "releases" / f"v{numero}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(release_md(numero, features, **kw), encoding="utf-8")
+    if aprobada:
+        texto = path.read_text(encoding="utf-8")
+        sello = f"Approved · {release.content_digest(texto)}"
+        path.write_text(texto.replace("| Estado   | Draft |", f"| Estado   | {sello} |"),
+                        encoding="utf-8")
+    return path
+
+
+def hallazgos(root, numero=None):
+    """Hallazgos de check; cada codigo visto cuenta como probado."""
+    out = release.analyze(root, numero)["findings"]
+    for f in out:
+        PROBADOS.add(f["code"])
+    return out
+
+
+def de(root, code, numero=None):
+    return [f["message"] for f in hallazgos(root, numero) if f["code"] == code]
 
 
 # ----------------------------------------------------------------- T003
@@ -240,10 +285,133 @@ def test_F010_R002_contrato_con_sdd():
            "una spec editada tras aprobarse está cambiada para los dos", estado)
 
 
+# ----------------------------------------------------------------- T004
+
+def test_F010_R002_fases_sin_aprobar():
+    print("\nF010 · R002: una feature con fases sin aprobar o cambiadas no entra")
+    p = proyecto("r002")
+    feature(p, "008-exportar", aprobar=("spec", "tasks"))
+    d = feature(p, "009-avisos")
+    (d / "spec.md").write_text((d / "spec.md").read_text(encoding="utf-8")
+                               .replace("Algo.", "Otra cosa."), encoding="utf-8")
+    feature(p, "010-limpio")
+    version(p, "0.1.0", "008, 009, 010")
+    msgs = de(p, "E-RELEASE-FEATURE-NOT-APPROVED")
+    expect(len(msgs) == 2, "un error por fase sin aprobar", f"{msgs}")
+    expect(any("008-exportar" in m and "plan.md" in m and "sin aprobar" in m for m in msgs),
+           "nombra la feature 008 y el plan", f"{msgs}")
+    expect(any("009-avisos" in m and "spec.md" in m and "cambió" in m for m in msgs),
+           "nombra la 009 y su spec cambiada tras aprobarse", f"{msgs}")
+    expect(not any("010-limpio" in m for m in msgs), "la feature aprobada no da error")
+
+
+def test_F010_R003_tareas_abiertas():
+    print("\nF010 · R003: una feature con tareas sin cerrar no entra")
+    p = proyecto("r003")
+    feature(p, "008-exportar", tasks=tasks_md(estados=("x", "x", "x", "~", " ")))
+    version(p, "0.1.0")
+    msgs = de(p, "E-RELEASE-FEATURE-OPEN-TASKS")
+    expect(len(msgs) == 1 and "008-exportar" in msgs[0] and "T004, T005" in msgs[0]
+           and "T003" not in msgs[0], "nombra la feature y las tareas T004 y T005", f"{msgs}")
+    expect(not de(p, "E-RELEASE-FEATURE-NOT-APPROVED"),
+           "cambiar el estado de las tareas no desaprueba tasks.md")
+
+
+def test_F010_R006_ya_publicada_o_inexistente():
+    print("\nF010 · R006: feature ya publicada o inexistente")
+    p = proyecto("r006")
+    feature(p, "008-exportar")
+    feature(p, "009-avisos")
+    version(p, "0.1.0", "008", aprobada=True)
+    version(p, "0.2.0", "008-exportar, 009, 042")
+    msgs = de(p, "E-RELEASE-FEATURE-RELEASED", "0.2.0")
+    expect(len(msgs) == 1 and "008-exportar" in msgs[0] and "v0.1.0" in msgs[0],
+           "la 008 ya salió en la 0.1.0, nombrada", f"{msgs}")
+    msgs = de(p, "E-RELEASE-FEATURE-UNKNOWN", "0.2.0")
+    expect(len(msgs) == 1 and "042" in msgs[0], "la 042 no existe y se nombra", f"{msgs}")
+    expect(not [f for f in hallazgos(p, "0.1.0") if f["severity"] == "error"],
+           "la versión publicada no se vuelve a juzgar por sus features")
+
+    (p / "specs" / "009-avisos-bis").mkdir()
+    version(p, "0.3.0", "009")
+    msgs = de(p, "E-RELEASE-FEATURE-UNKNOWN", "0.3.0")
+    expect(len(msgs) == 1 and "ambigua" in msgs[0] and "009-avisos-bis" in msgs[0],
+           "un número que comparten dos features es ambiguo", f"{msgs}")
+
+    q = proyecto("r006-vacia")
+    version(q, "0.1.0", "—")
+    expect(len(de(q, "E-RELEASE-NO-FEATURES")) == 1, "una versión sin features da error")
+
+
+def test_F010_R017_tipo():
+    print("\nF010 · R017: el Tipo de la spec solo vale funcionalidad o corrección")
+    p = proyecto("r017")
+    feature(p, "008-exportar", spec=spec_md(tipo="mejora"))
+    feature(p, "009-avisos", spec=spec_md(tipo="Correccion"))
+    feature(p, "010-sin-tipo", spec=spec_md(tipo=None))
+    feature(p, "011-vacio", spec=spec_md(tipo=""))
+    version(p, "0.1.0", "008, 009, 010, 011")
+    msgs = de(p, "E-RELEASE-FEATURE-TYPE")
+    expect(len(msgs) == 2 and "008-exportar" in msgs[0] and "«mejora»" in msgs[0],
+           "nombra la feature y el valor; las variantes y la fila ausente valen", f"{msgs}")
+    expect(len(msgs) == 2 and "011-vacio" in msgs[1] and "«»" in msgs[1],
+           "una fila Tipo vacía no es ninguno de los dos valores", f"{msgs}")
+
+
+def test_F010_R014_check_en_ci():
+    print("\nF010 · R014: check da lo mismo en local y en CI")
+    p = proyecto("r014")
+    feature(p, "008-exportar", aprobar=("spec",))
+    version(p, "0.1.0")
+    r = run(p, "check", "--check")
+    expect(r.returncode == 1 and "E-RELEASE-FEATURE-NOT-APPROVED" in r.stdout,
+           "--check sale con 1 y el informe trae el código", r.stdout + r.stderr)
+    r = run(p, "check", "v0.1.0", "--json")
+    data = json.loads(r.stdout) if r.returncode == 0 else {}
+    expect(data.get("schema") == "release.check/v1" and data.get("ok") is False
+           and {"code", "severity", "message", "artifact"} <= set(data["findings"][0])
+           and data["findings"][0]["artifact"] == "releases/v0.1.0.md"
+           and "E-RELEASE-FEATURE-NOT-APPROVED" in {f["code"] for f in data["findings"]},
+           "--json emite release.check/v1 con el código del error", r.stdout + r.stderr)
+    r = run(p, "check", "--check", "--json")
+    expect(r.returncode == 1 and json.loads(r.stdout)["ok"] is False,
+           "--check --json: sale con 1 y emite el JSON", r.stdout + r.stderr)
+    expect(run(p, "check", "0.1.0", "--json").stdout == r.stdout,
+           "la salida es estable y acepta el número sin v")
+    expect(run(p, "check", "--chek").returncode == 2, "un argumento desconocido sale con 2")
+    expect(run(p, "check", "v9.9.9").returncode == 2, "una versión que no existe sale con 2")
+    feature(p, "009-avisos")
+    version(p, "0.2.0", "009")
+    expect(run(p, "check", "v0.2.0", "--check").returncode == 0,
+           "una versión sin errores sale con 0, aunque otra tenga errores")
+    r = run(proyecto("r014-sin-nada"), "check", "--check")
+    expect(r.returncode == 0 and "Versiones: 0" in r.stdout,
+           "sin releases/ no hay nada que fallar")
+
+
+def test_F010_R014_borrador_avisa():
+    print("\nF010 · R014: una versión en borrador lo avisa")
+    p = proyecto("r012-borrador")
+    feature(p, "008-exportar")
+    version(p, "0.1.0")
+    expect(len(de(p, "W-RELEASE-NOT-APPROVED")) == 1, "aviso de versión sin aprobar")
+
+
+def cobertura_de_codigos():
+    # main() la ejecuta despues de todas las pruebas: compara los codigos
+    # declarados con los que las pruebas vieron emitirse.
+    print("\ncobertura de codigos de hallazgo")
+    declarados = set(release.FINDINGS)
+    expect(declarados <= PROBADOS, f"los {len(declarados)} codigos declarados se prueban",
+           f"sin probar: {sorted(declarados - PROBADOS)}")
+
+
 def main():
+    tests = [f for n, f in globals().items() if n.startswith("test_") and callable(f)]
     try:
-        test_F010_R006_lee_las_features()
-        test_F010_R002_contrato_con_sdd()
+        for fn in tests:
+            fn()
+        cobertura_de_codigos()
     finally:
         shutil.rmtree(BASE, ignore_errors=True)
 

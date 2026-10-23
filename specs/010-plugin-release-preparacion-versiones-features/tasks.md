@@ -71,7 +71,7 @@ features de prueba escritas en el formato de `sdd`. Las de `sdd`, en
 
 ### T004 — `release.py check`: comprobaciones de features y CI
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R002, R003, R006, R014, R017
 - **Depende de:** T003
 - **Archivos:** `plugins/release/scripts/release.py`, `plugins/release/tests/selftest.py`

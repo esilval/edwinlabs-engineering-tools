@@ -182,7 +182,8 @@ def requirements(spec_text):
         if rid in seen:
             continue
         seen.add(rid)
-        prio = next((x for x in ("MUST", "SHOULD", "COULD") if x in m.group(0).upper()), "MUST")
+        head = m.group(0).upper()
+        prio = next((x for x in ("MUST", "SHOULD", "COULD") if x in head), "MUST")
         out.append({"id": rid, "priority": prio})
     return out
 
@@ -238,9 +239,10 @@ def plan_info(plan_text):
 
 def feature_type(spec_text):
     """(tipo, valor_escrito): tipo es 'funcionalidad', 'corrección' o None si
-    el valor no es ninguno de los dos. Sin la fila, 'funcionalidad' (R017)."""
+    el valor no es ninguno de los dos, tambien si esta vacio. Sin la fila,
+    'funcionalidad' (R017, D5)."""
     raw = header_row(spec_text, "Tipo")
-    if raw is None or not raw.strip("`*_ "):
+    if raw is None:
         return "funcionalidad", raw
     return TYPES.get(norm(raw).strip("`*_ .")), raw
 
