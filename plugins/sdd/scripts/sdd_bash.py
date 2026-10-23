@@ -19,9 +19,9 @@ El analizador no pretende ser un parser de shell completo. Lo que no entiende
 lo deja pasar y lo recoge la capa 2.
 
 invokes_approve y sus ayudantes tienen copias adaptadas en
-plugins/discovery/scripts/discovery.py y plugins/architecture/scripts/
-architecture.py: los plugins no comparten codigo. Un arreglo en una copia se
-replica en las otras.
+plugins/discovery/scripts/discovery.py, plugins/architecture/scripts/
+architecture.py y plugins/release/scripts/release.py: los plugins no
+comparten codigo. Un arreglo en una copia se replica en las otras.
 """
 
 import hashlib

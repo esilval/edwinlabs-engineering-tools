@@ -53,7 +53,8 @@ DIAGRAMS = "diagrams.md"
 
 # --------------------------------------------------------------------------
 # Raiz del proyecto. Copia de find_upwards de plugins/sdd/scripts/sdd.py y
-# plugins/discovery/scripts/discovery.py: los plugins no comparten codigo.
+# plugins/discovery/scripts/discovery.py, copiada a su vez en
+# plugins/release/scripts/release.py: los plugins no comparten codigo.
 # --------------------------------------------------------------------------
 
 def project_root(payload=None):
@@ -730,7 +731,8 @@ def cmd_check(args):
 # --------------------------------------------------------------------------
 
 def set_status(text, value):
-    """Devuelve (texto_nuevo, cambiado?). Copia de discovery.py."""
+    """Devuelve (texto_nuevo, cambiado?). Copia de discovery.py, copiada a
+    su vez en plugins/release/scripts/release.py."""
     end = _header_end(text)
     head, n = STATUS_ROW.subn(lambda m: m.group(1) + value + m.group(3), text[:end], count=1)
     return head + text[end:], bool(n)
@@ -952,9 +954,10 @@ def _guarded_target(root, raw_path):
 # Analisis de comandos: ejecutar approve o review frente a mencionarlos.
 #
 # Copia adaptada del analizador de plugins/discovery/scripts/discovery.py, que a
-# su vez copia el de plugins/sdd/scripts/sdd_bash.py: los plugins no comparten
-# codigo. Un arreglo en una copia se replica en las otras, y los selftests usan
-# listas de casos equivalentes.
+# su vez copia el de plugins/sdd/scripts/sdd_bash.py, y copiada en
+# plugins/release/scripts/release.py: los plugins no comparten codigo. Un
+# arreglo en una copia se replica en las otras, y los selftests usan listas de
+# casos equivalentes.
 
 _WRAPPERS = {"sudo", "env", "command", "nohup", "time", "nice", "builtin", "exec"}
 _SEPARATORS = {";", "&&", "||", "|", "|&", "&", "(", ")", ";;"}

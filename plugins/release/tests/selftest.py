@@ -919,6 +919,138 @@ def test_F010_R012_cambio_tras_aprobar():
            "y con huecos tampoco se vuelve a sellar", r.stdout + r.stderr)
 
 
+# ----------------------------------------------------------------- T009
+
+# La misma lista de casos que plugins/architecture/tests/selftest.py (y que los
+# de discovery y sdd), con release.py approve en lugar de la orden de cada
+# plugin: las cuatro copias del analizador de comandos responden igual.
+MENCIONES = [
+    "git commit -q -m 'release: la compuerta ya no bloquea release.py approve'",
+    'gh pr create --title t --body "Corrige: python3 release.py approve en texto"',
+    "cat > notas.md <<'EOF'\npython3 plugins/release/scripts/release.py approve\nEOF",
+    'echo "para aprobar: python3 release.py approve"',
+    "grep -rn 'release.py approve' plugins/release/README.md",
+    "git commit -m 'la compuerta ya no bloquea `python3 release.py approve`'",
+    "gh pr create --title t --body 'Ahora `release.py approve` solo se bloquea si se ejecuta'",
+    "git commit -m 'cita $(python3 release.py approve) en texto'",
+]
+
+EJECUCIONES = [
+    "python3 release.py approve",
+    "python3 /x/plugins/release/scripts/release.py approve --skill",
+    'python3 "$HOME/plugins/release/scripts/release.py" approve v0.4.0',
+    "cd plugins/release && python3 scripts/release.py approve",
+    "ls; FOO=1 python3 release.py approve v0.1.0",
+    "echo `python3 release.py approve`",
+    'echo "$(python3 release.py approve)"',
+    'git commit -m "$(python3 /x/release.py approve)"',
+    "x=$(cd y && python3 release.py approve)",
+    "python3 release.py approve; echo $'it\\'s'",
+]
+
+
+def hook(root, sub, tool, tool_input, tool_use_id="t1", env_extra=None):
+    payload = json.dumps({"tool_name": tool, "tool_use_id": tool_use_id, "cwd": str(root),
+                          "tool_input": tool_input})
+    return run(root, sub, stdin=payload, env_extra=env_extra)
+
+
+def deniega(r):
+    if r.returncode != 0:
+        return None
+    if not r.stdout.strip():
+        return False
+    d = json.loads(r.stdout)["hookSpecificOutput"]
+    return d["permissionDecision"] == "deny" and bool(d["permissionDecisionReason"])
+
+
+def estado(path):
+    return release_specs.doc_status(path.read_text(encoding="utf-8"))
+
+
+def test_F010_R013_guardrails():
+    print("\nF010 · R013: el modelo no puede aprobar una versión")
+    p, path = borrador_listo("r013")
+    rel = "releases/v0.1.0.md"
+    for nuevo in ("Approved", "Approved · 0123456789ab", "Aprobada", "Draft · 0123456789ab"):
+        r = hook(p, "guard", "Edit", {"file_path": rel, "old_string": "| Estado   | Draft |",
+                                      "new_string": f"| Estado   | {nuevo} |"})
+        expect(deniega(r) is True and "/release:approve" in r.stdout,
+               f"un Edit que pone {nuevo!r} se deniega", r.stdout)
+    texto = path.read_text(encoding="utf-8")
+    r = hook(p, "guard", "Write", {"file_path": str(path), "content": texto.replace(
+        "| Estado   | Draft |", "| Estado   | Approved · 0123456789ab |")})
+    expect(deniega(r) is True, "un Write que aprueba se deniega", r.stdout)
+    r = hook(p, "guard", "Write", {"file_path": "releases/v9.0.0.md",
+                                   "content": release_md("9.0.0", estado="Approved")})
+    expect(deniega(r) is True, "crear una versión ya aprobada se deniega")
+    r = hook(p, "guard", "Edit", {"file_path": rel, "old_string": "Texto redactado.",
+                                  "new_string": "Otro texto."})
+    expect(deniega(r) is False, "editar las notas de un borrador no se bloquea")
+    r = hook(p, "guard", "Write", {"file_path": "specs/notas.md",
+                                   "content": "| Estado | Approved |"})
+    expect(deniega(r) is False, "fuera de releases/ no opina")
+
+    for cmd in MENCIONES:
+        corto = cmd.splitlines()[0][:50]
+        expect(not release.invokes_approve(cmd), f"no es ejecución: {corto!r}")
+        expect(deniega(hook(p, "guard", "Bash", {"command": cmd})) is False,
+               f"la compuerta no bloquea: {corto!r}")
+    for cmd in EJECUCIONES:
+        expect(release.invokes_approve(cmd), f"es ejecución: {cmd!r}")
+        r = hook(p, "guard", "Bash", {"command": cmd})
+        expect(deniega(r) is True and "allow" not in r.stdout, f"bloquea: {cmd!r}", r.stdout)
+    for cmd in ("python3 release.py check --check", "python3 release.py new 008"):
+        expect(deniega(hook(p, "guard", "Bash", {"command": cmd})) is False,
+               f"otros subcomandos pasan: {cmd!r}")
+
+    print("  auditoría")
+    opaco = "bash -c 'python3 plugins/release/scripts/release.py approve'"
+    r = hook(p, "guard", "Bash", {"command": opaco}, tool_use_id="a1")
+    expect(deniega(r) is False, "la compuerta deja pasar un bash -c", r.stdout)
+    run(p, "approve")
+    expect(estado(path).startswith("Approved"), "el comando opaco aprobó")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="a1")
+    expect(r.returncode == 2 and estado(path) == "Draft" and rel in r.stderr,
+           "y la auditoría devuelve la versión a Draft y avisa", r.stderr)
+    hook(p, "guard", "Bash", {"command": "ls"}, tool_use_id="a2")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="a2")
+    expect(r.returncode == 0 and not r.stderr, "un comando que no toca el Estado: silencio")
+    expect(hook(p, "audit", "Bash", {}, tool_use_id="sin-foto").returncode == 0,
+           "sin instantánea no opina")
+
+    q = con_dos_features("r013-sin-releases")
+    hook(q, "guard", "Bash", {"command": "python3 crea.py"}, tool_use_id="a3")
+    version(q, "0.1.0", estado="Approved · 0123456789ab")
+    r = hook(q, "audit", "Bash", {}, tool_use_id="a3")
+    expect(r.returncode == 2 and estado(q / "releases" / "v0.1.0.md") == "Draft",
+           "sin releases/ al empezar: una versión creada ya aprobada vuelve a Draft", r.stderr)
+
+    print("  escape y fallo abierto")
+    r = hook(p, "guard", "Bash", {"command": "python3 release.py approve"},
+             env_extra={"RELEASE_BYPASS": "1"})
+    expect(deniega(r) is False, "RELEASE_BYPASS=1 desactiva la compuerta")
+    hook(p, "guard", "Bash", {"command": "python3 x.py"}, tool_use_id="b1")
+    run(p, "approve")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="b1", env_extra={"RELEASE_BYPASS": "1"})
+    expect(r.returncode == 0 and estado(path).startswith("Approved"),
+           "RELEASE_BYPASS=1 también desactiva la auditoría")
+    r = run(p, "guard", stdin="no soy json")
+    expect(r.returncode == 0 and not r.stdout, "un payload ilegible falla abierto")
+    r = run(p, "guard", stdin=json.dumps({"tool_name": "Edit", "cwd": str(p),
+                                          "tool_input": {"file_path": 7}}))
+    expect(r.returncode == 0 and not r.stdout, "un payload inesperado falla abierto", r.stderr)
+    fuente = SCRIPT.read_text(encoding="utf-8")
+    expect('"allow"' not in fuente and "'allow'" not in fuente, "nunca devuelve allow")
+
+    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    expect(all(h.get("timeout") and h.get("command") == "python3" and h.get("args")
+               for grupo in hooks.values() for m in grupo for h in m["hooks"])
+           and any(m["matcher"] == "Write|Edit|Bash" for m in hooks["PreToolUse"])
+           and any(m["matcher"] == "Bash" for m in hooks["PostToolUse"]),
+           "hooks.json registra guard y audit en forma exec con timeout")
+
+
 def cobertura_de_codigos():
     # main() la ejecuta despues de todas las pruebas: compara los codigos
     # declarados con los que las pruebas vieron emitirse.

@@ -140,7 +140,7 @@ features de prueba escritas en el formato de `sdd`. Las de `sdd`, en
 
 ### T009 — Guardrails de `release`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R013
 - **Depende de:** T008
 - **Archivos:** `plugins/release/scripts/release.py`, `plugins/release/hooks/hooks.json`, `plugins/release/tests/selftest.py`, `plugins/sdd/scripts/sdd_bash.py`, `plugins/discovery/scripts/discovery.py`, `plugins/architecture/scripts/architecture.py`

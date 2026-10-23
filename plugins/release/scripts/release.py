@@ -23,6 +23,9 @@ Subcomandos:
                       'Approved · <huella>' y muestra el git tag que ejecuta
                       el usuario. Solo lo lanza el usuario, con
                       /release:approve.
+  guard               Hook PreToolUse: impide que el modelo apruebe.
+  audit               Hook PostToolUse sobre Bash: revierte una aprobacion
+                      escrita por un comando.
   check [vX.Y.Z] [--json] [--check]
                       Comprueba la version indicada, o todas las de
                       releases/. --json emite release.check/v1; --check sale
@@ -785,11 +788,314 @@ def cmd_approve(args):
     return 0 if (ok or "--skill" in args) else 1
 
 
+# --------------------------------------------------------------------------
+# Guardrails (D8, R013): el modelo no puede aprobar una version, ni
+# escribiendo el Estado ni ejecutando release.py approve.
+# --------------------------------------------------------------------------
+
+BYPASS = "RELEASE_BYPASS"
+APPROVE_TEXT = re.compile(r"release\.py['\"]?\s+approve\b")
+
+GUARD_REASON = (
+    "Guardrail release: aprobar una versión es del usuario, no tuya. Es la prueba "
+    "de que una persona revisó qué sale y cómo se cuenta.\n\n"
+    "No pongas Approved ni una huella en el campo Estado de releases/*.md, ni "
+    "ejecutes `release.py approve`: pídele al usuario que la revise y ejecute "
+    "/release:approve. Puedes dejarla en Draft.\n\nEscape puntual: RELEASE_BYPASS=1."
+)
+
+
+def claims_approval(text):
+    """True si el Estado de la cabecera dice Approved o lleva una huella."""
+    status = doc_status(text) or ""
+    words = specs.norm(status).strip("`*_ ").split()
+    return bool(words and words[0].strip("`*_") in APPROVED) or bool(specs.DIGEST.search(status))
+
+
+def doc_status(text):
+    return specs.doc_status(text)
+
+
+def guarded_files(root):
+    """Rutas relativas de las versiones de releases/ que se protegen."""
+    try:
+        return sorted(f"{RELEASES_DIR}/{p.name}" for p in (Path(root) / RELEASES_DIR).iterdir()
+                      if p.suffix.lower() == ".md")
+    except OSError:
+        return []
+
+
+def _guarded_target(root, raw_path):
+    """Ruta relativa de la version de releases/ a la que apunta raw_path, o None."""
+    try:
+        target = Path(raw_path)
+        if not target.is_absolute():
+            target = Path(root) / target
+        rel = target.resolve().relative_to((Path(root) / RELEASES_DIR).resolve())
+    except (OSError, ValueError):
+        return None
+    if len(rel.parts) == 1 and rel.parts[0].lower().endswith(".md"):
+        return f"{RELEASES_DIR}/{rel.parts[0]}"
+    return None
+
+
+# Analisis de comandos: ejecutar approve frente a mencionarlo.
+#
+# Copia adaptada del analizador de plugins/architecture/scripts/architecture.py,
+# que copia el de plugins/discovery/scripts/discovery.py, que a su vez copia el
+# de plugins/sdd/scripts/sdd_bash.py: los plugins no comparten codigo. Es la
+# cuarta copia. Un arreglo en una se replica en las otras, y los selftests usan
+# la misma lista de casos MENCIONES/EJECUCIONES.
+
+_WRAPPERS = {"sudo", "env", "command", "nohup", "time", "nice", "builtin", "exec"}
+_SEPARATORS = {";", "&&", "||", "|", "|&", "&", "(", ")", ";;"}
+_REDIRECTS = {">", ">>", ">|", "&>", "&>>", "<", "<<", "<<<", "<<-", "<>", ">&", "<&"}
+_HEREDOC = re.compile(
+    r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|$)",
+    re.S,
+)
+
+
+def _strip_heredocs(command):
+    """Quita el cuerpo de los heredocs: es texto, no comandos."""
+    return _HEREDOC.sub(lambda m: m.group(0).split("\n", 1)[0], command)
+
+
+def _command_segments(command):
+    """Palabras de cada comando simple, sin redirecciones ni su destino."""
+    import shlex
+    lex = shlex.shlex(command.replace("\n", " ; "), posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    lex.commenters = ""
+    tokens = list(lex)  # ValueError si las comillas no cierran
+    segments, seg, i = [], [], 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in _SEPARATORS:
+            segments.append(seg)
+            seg = []
+        elif tok in _REDIRECTS:
+            i += 1
+        else:
+            seg.append(tok)
+        i += 1
+    segments.append(seg)
+    return segments
+
+
+def _command_words(seg):
+    """Quita asignaciones VAR=x y envoltorios como sudo o env."""
+    words = list(seg)
+    while words and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0])
+                     or os.path.basename(words[0]) in _WRAPPERS):
+        words.pop(0)
+    return words
+
+
+def _substitutions(command):
+    """Contenido de las sustituciones `…` y $(…) que bash ejecutaria,
+    respetando las comillas simples y los escapes."""
+    found, i, n, single = [], 0, len(command), False
+    while i < n:
+        ch = command[i]
+        if single:
+            if ch == "'":
+                single = False
+            i += 1
+            continue
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            if command.count('"', 0, i) % 2 == 0:
+                single = True
+            i += 1
+            continue
+        if ch == "`":
+            j = i + 1
+            while j < n and command[j] != "`":
+                j += 2 if command[j] == "\\" else 1
+            if j >= n:
+                break
+            found.append(command[i + 1:j])
+            i = j + 1
+            continue
+        if command.startswith("$(", i) and not command.startswith("$((", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if command[j] == "\\":
+                    j += 2
+                    continue
+                if command[j] == "(":
+                    depth += 1
+                elif command[j] == ")":
+                    depth -= 1
+                j += 1
+            if depth:
+                break
+            found.append(command[i + 2:j - 1])
+            i = j
+            continue
+        i += 1
+    return found
+
+
+def invokes_approve(command):
+    """
+    True si el comando **ejecuta** release.py approve: en algun segmento, una
+    palabra cuyo nombre de archivo es release.py seguida de approve, tambien
+    dentro de una sustitucion que se ejecuta. Una mencion (mensaje de commit,
+    PR, heredoc) no cuenta. Lo que no se puede analizar se evalua por su
+    texto; lo que no se ve lo revierte la auditoria.
+    """
+    command = _strip_heredocs(command or "")
+    if any(invokes_approve(inner) for inner in _substitutions(command)):
+        return True
+    try:
+        segments = _command_segments(command)
+    except ValueError:
+        return bool(APPROVE_TEXT.search(command))
+    for seg in segments:
+        words = _command_words(seg)
+        for word, nxt in zip(words, words[1:]):
+            if os.path.basename(word) == "release.py" and nxt == "approve":
+                return True
+    return False
+
+
+def deny(reason):
+    """Bloquea. El JSON solo se procesa con exit 0: nunca combinar con exit 2."""
+    json.dump({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                      "permissionDecision": "deny",
+                                      "permissionDecisionReason": reason}}, sys.stdout)
+    sys.stdout.write("\n")
+    return 0
+
+
+SNAPSHOT_TTL = 24 * 3600
+
+
+def _snapshot_path(root, payload):
+    import tempfile
+    key = payload.get("tool_use_id") or payload.get("session_id") or "nosession"
+    digest = hashlib.sha1(f"{root}|{key}".encode("utf-8")).hexdigest()[:20]
+    return Path(tempfile.gettempdir()) / "release-audit" / f"{digest}.json"
+
+
+def _prune(directory):
+    """Si un comando falla o se rechaza, PostToolUse no llega y la instantanea
+    queda huerfana. Se barren las de mas de un dia."""
+    import time
+    limit = time.time() - SNAPSHOT_TTL
+    try:
+        for old in directory.glob("*.json"):
+            if old.stat().st_mtime < limit:
+                old.unlink()
+    except OSError:
+        pass
+
+
+def _statuses(root):
+    out = {}
+    for rel in guarded_files(root):
+        text = specs.read_text(Path(root) / rel)
+        if text is not None:
+            out[rel] = doc_status(text)
+    return out
+
+
+def cmd_guard(_args):
+    """Hook PreToolUse sobre Write|Edit|Bash. Nunca devuelve allow."""
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError:
+        return 0
+    root = project_root(payload)
+    # Sin releases/ tambien se vigila: un Write puede crear la primera version
+    # ya aprobada, y un comando, crearla con approve.
+    if os.environ.get(BYPASS) == "1":
+        return 0
+    tool_input = payload.get("tool_input") or {}
+
+    if payload.get("tool_name") == "Bash":
+        if invokes_approve(tool_input.get("command") or ""):
+            return deny(GUARD_REASON)
+        # Lo que un comando opaco cambie lo revisa la auditoria de PostToolUse.
+        path = _snapshot_path(root, payload)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(_statuses(root)), encoding="utf-8")
+        except OSError:
+            return 0
+        _prune(path.parent)
+        return 0
+
+    rel = _guarded_target(root, tool_input.get("file_path") or "")
+    if not rel:
+        return 0
+    target = root / rel
+    before = specs.read_text(target) if target.is_file() else ""
+    if "content" in tool_input:
+        after = tool_input.get("content") or ""
+    elif "new_string" in tool_input:
+        old = tool_input.get("old_string") or ""
+        if not old or old not in (before or ""):
+            return 0
+        count = -1 if tool_input.get("replace_all") else 1
+        after = before.replace(old, tool_input.get("new_string") or "", count)
+    else:
+        return 0
+    if claims_approval(after) and doc_status(after) != doc_status(before or ""):
+        return deny(GUARD_REASON)
+    return 0
+
+
+def cmd_audit(_args):
+    """
+    Hook PostToolUse sobre Bash: si un comando aprobo una version, devuelve su
+    Estado al valor anterior. Exit 2 para que el modelo lea el aviso;
+    PostToolUse no puede deshacer el comando.
+    """
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError:
+        return 0
+    root = project_root(payload)
+    path = _snapshot_path(root, payload)
+    try:
+        before = json.loads(path.read_text(encoding="utf-8"))
+        path.unlink()
+    except (OSError, ValueError):
+        return 0
+    if os.environ.get(BYPASS) == "1":
+        return 0
+    restored = []
+    # Se recorren todas las versiones de ahora, no solo las de antes: una
+    # creada ya aprobada tambien vuelve a Draft.
+    for rel in guarded_files(root):
+        text = specs.read_text(root / rel)
+        old = before.get(rel)
+        if text is not None and claims_approval(text) and doc_status(text) != old:
+            (root / rel).write_text(set_status(text, old or "Draft")[0], encoding="utf-8")
+            restored.append(f"{rel} (vuelve a '{old or 'Draft'}')")
+    if not restored:
+        return 0
+    sys.stderr.write("Guardrail release: el comando cambió el Estado de "
+                     + ", ".join(restored) + ". Aprobar una versión es del usuario, con "
+                     "/release:approve. Detente y dile al usuario lo que pasó.\n")
+    return 2
+
+
 COMMANDS = {
     "new": cmd_new,
     "approve": cmd_approve,
     "check": cmd_check,
+    "guard": cmd_guard,
+    "audit": cmd_audit,
 }
+
+# Un hook que revienta nunca debe bloquear al usuario: falla abierto.
+HOOKS = {"guard", "audit"}
 
 # Codigos de hallazgo declarados: el selftest exige probar cada uno. Son
 # contrato publico (prefijo *-RELEASE-* reservado en el registro comun).
@@ -815,7 +1121,13 @@ def main(argv):
     if len(argv) < 2 or argv[1] not in COMMANDS:
         print(__doc__.strip(), file=sys.stderr)
         return 2
-    return COMMANDS[argv[1]](argv[2:])
+    try:
+        return COMMANDS[argv[1]](argv[2:])
+    except Exception as exc:  # noqa: BLE001
+        if argv[1] in HOOKS:
+            print(f"release.py {argv[1]}: {exc}", file=sys.stderr)
+            return 0
+        raise
 
 
 if __name__ == "__main__":
