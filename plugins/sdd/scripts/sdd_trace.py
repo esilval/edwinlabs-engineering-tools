@@ -252,7 +252,9 @@ def is_stale(text, fname):
 
 
 def set_status(text, value):
-    """Devuelve (texto_nuevo, cambiado?)."""
+    """Devuelve (texto_nuevo, cambiado?). Hay copias en plugins/discovery/
+    scripts/discovery.py, plugins/architecture/scripts/architecture.py y
+    plugins/release/scripts/release.py: los plugins no comparten codigo."""
     end = _header_end(text)
     head, n = STATUS_ROW.subn(lambda m: m.group(1) + value + m.group(3),
                               text[:end], count=1)
