@@ -56,7 +56,7 @@ features de prueba escritas en el formato de `sdd`. Las de `sdd`, en
 
 ### T003 — `release`: esqueleto y lectura de `specs/` `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R002, R003, R006, R017
 - **Depende de:** —
 - **Archivos:** `plugins/release/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `plugins/release/scripts/release_specs.py`, `plugins/release/tests/selftest.py`
