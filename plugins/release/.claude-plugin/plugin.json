@@ -1,0 +1,15 @@
+{
+  "name": "release",
+  "displayName": "Release",
+  "description": "De features terminadas a versión preparada: features elegidas, comprobación de que están aprobadas, cerradas y trazadas, número SemVer propuesto, notas para usuarios y cambios técnicos, con aprobación del usuario. No despliega.",
+  "author": {
+    "name": "Edwin Silva"
+  },
+  "license": "MIT",
+  "keywords": [
+    "release",
+    "semver",
+    "changelog",
+    "spec-driven"
+  ]
+}

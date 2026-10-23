@@ -27,6 +27,13 @@
       "source": "./plugins/architecture",
       "category": "development",
       "keywords": ["architecture", "adr", "components", "spec-driven"]
+    },
+    {
+      "name": "release",
+      "description": "De features terminadas a version preparada: features elegidas, comprobacion de que estan aprobadas, cerradas y trazadas, numero SemVer propuesto y notas para usuarios y equipo, con aprobacion del usuario. No despliega.",
+      "source": "./plugins/release",
+      "category": "development",
+      "keywords": ["release", "semver", "changelog", "spec-driven"]
     }
   ]
 }

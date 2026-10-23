@@ -63,8 +63,10 @@ def find_upwards(start, markers):
     no sale del repositorio. Un directorio que no se puede leer cuenta como
     vacio.
 
-    Copia de find_upwards en plugins/sdd/scripts/sdd.py: los plugins no
-    comparten codigo. Un arreglo en una se replica en la otra.
+    Copia de find_upwards en plugins/sdd/scripts/sdd.py, copiada tambien en
+    plugins/architecture/scripts/architecture.py y plugins/release/scripts/
+    release.py: los plugins no comparten codigo. Un arreglo en una se replica
+    en las otras.
     """
     for directory in (start, *start.parents):
         try:
@@ -1027,9 +1029,10 @@ APPROVE_TEXT = re.compile(r"discovery\.py['\"]?\s+approve\b")
 # Analisis de comandos: ejecutar la orden de aprobar frente a mencionarla.
 #
 # Copia adaptada de plugins/sdd/scripts/sdd_bash.py (invokes_approve y sus
-# ayudantes), copiada a su vez en plugins/architecture/scripts/architecture.py:
-# los plugins no comparten codigo. Un arreglo en una copia se replica en las
-# otras, y los selftests usan listas de casos equivalentes.
+# ayudantes), copiada a su vez en plugins/architecture/scripts/architecture.py
+# y, desde esta, en plugins/release/scripts/release.py: los plugins no
+# comparten codigo. Un arreglo en una copia se replica en las otras, y los
+# selftests usan listas de casos equivalentes.
 # --------------------------------------------------------------------------
 
 _WRAPPERS = {"sudo", "env", "command", "nohup", "time", "nice", "builtin", "exec"}

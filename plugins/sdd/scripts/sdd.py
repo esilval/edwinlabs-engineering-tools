@@ -15,7 +15,11 @@ Subcomandos:
   audit               Hook PostToolUse sobre Bash: detecta lo que guard no vio.
   approve [fase]      Marca spec|plan|tasks como aprobado si esta listo.
   next-req            Imprime el siguiente ID de requisito libre (R00N).
-  trace [--json] [--check]   Matriz requisito -> tarea -> prueba.
+  trace [--json] [--check] [--feature NNN|NNN-slug]
+                      Matriz requisito -> tarea -> prueba de la feature
+                      activa, o de la que nombra --feature, sin cambiar la
+                      activa. Sale con 1 si esa feature no existe o
+                      su numero es ambiguo.
   quality             Hook PostToolUse: formateador y linter del archivo.
   arch-context [--json]
                       Con architecture/: componentes de la candidata de la
@@ -1156,11 +1160,44 @@ def cmd_next_req(_args):
 
 # --------------------------------------------------------------------------
 
+def named_features(root, name):
+    """Los directorios de specs/ que nombra name ('008' o '008-slug'). Mas de
+    uno solo si dos features comparten numero."""
+    name = name.strip().rstrip("/").split("/")[-1]
+    exact = [p for p in feature_dirs(root) if p.name == name]
+    return exact or [p for p in feature_dirs(root) if p.name.split("-", 1)[0] == name]
+
+
 def cmd_trace(args):
     sdd_trace = _trace()
 
     root = project_root()
-    feature = resolve_feature(root)
+    args = list(args)
+    given = [a for a in args if a == "--feature" or a.startswith("--feature=")]
+    if given:
+        # Feature 010, R018: trazar otra feature sin tocar .sdd/current.
+        i = args.index(given[0])
+        if args[i] == "--feature":
+            name = args[i + 1] if i + 1 < len(args) else ""
+            del args[i:i + 2]
+        else:
+            name = args.pop(i).split("=", 1)[1]
+        if not name or name.startswith("--"):
+            print("error: --feature necesita un número o un nombre de feature "
+                  "(008 o 008-slug).", file=sys.stderr)
+            return 1
+        found = named_features(root, name)
+        if not found:
+            print(f"La feature {name} no existe en specs/.", file=sys.stderr)
+            return 1
+        if len(found) > 1:
+            print(f"La feature {name} es ambigua: "
+                  f"{', '.join(p.name for p in found)}. Usa el nombre completo.",
+                  file=sys.stderr)
+            return 1
+        feature = found[0]
+    else:
+        feature = resolve_feature(root)
     if feature is None:
         print("No hay una feature activa. Ejecuta /sdd:specify primero.",
               file=sys.stderr)

@@ -322,6 +322,7 @@ los plugins del marketplace:
 | `*-QUALITY-*` | atributos de calidad (plugin `architecture`) | en uso |
 | `*-COMPONENT-*` | componentes y candidatas que alojan (plugin `architecture`) | en uso |
 | `*-STANDARD-*` | estándares comprobables (plugin `architecture`) | en uso |
+| `*-RELEASE-*` | versiones de `releases/`: sus features, número, huecos y aprobación (plugin `release`) | en uso |
 
 **Política de compatibilidad del schema `sdd.trace/v1`:** añadir códigos nuevos
 es aditivo y no rompe a un consumidor que filtre por `severity`. Renombrar o

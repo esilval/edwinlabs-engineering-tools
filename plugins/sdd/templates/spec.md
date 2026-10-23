@@ -5,6 +5,7 @@
 | ID     | `{{ID}}`     |
 | Fecha  | {{DATE}}     |
 | Estado | Draft        |
+| Tipo   | funcionalidad |
 | Issue  | —            |
 
 > Este documento describe **qué** y **por qué**, nunca **cómo**.

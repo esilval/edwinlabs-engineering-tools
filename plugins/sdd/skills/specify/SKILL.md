@@ -50,6 +50,13 @@ Descripción de la feature: `$ARGUMENTS`
    cualquier hueco que quede como spec incompleta. Si una sección no aplica,
    escribe «No aplica.». Borra los requisitos de ejemplo que no uses.
 
+6. **Tipo.** La fila `Tipo` de la cabecera nace en `funcionalidad`. Si la
+   feature solo corrige comportamiento existente, sin añadir funcionalidad,
+   cámbiala a `corrección`. Pregúntaselo al usuario si no está claro. El
+   plugin `release` la usa para proponer el número de versión: una versión
+   solo de correcciones sube el parche. Cualquier otro valor es un error al
+   preparar la versión.
+
 ## La regla que más se rompe
 
 `spec.md` **no contiene decisiones de implementación**. Si escribes «usar Redis
