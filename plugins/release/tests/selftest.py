@@ -785,6 +785,140 @@ def test_F010_R015_sin_producto_ni_arquitectura():
            "solo los huecos y el aviso de borrador", f"{codigos}")
 
 
+# ----------------------------------------------------------------- T008
+
+def redacta(path):
+    """Completa los huecos en cursiva del borrador, como haria /release:new."""
+    texto = path.read_text(encoding="utf-8")
+    path.write_text(re.sub(r"^_.*_$", "Texto redactado.", texto, flags=re.M), encoding="utf-8")
+
+
+def borrador_listo(nombre):
+    """Proyecto con 008 y 009 terminadas y releases/v0.1.0.md completada."""
+    p = con_dos_features(nombre)
+    run(p, "new", "008", "009")
+    path = p / "releases" / "v0.1.0.md"
+    redacta(path)
+    return p, path
+
+
+def test_F010_R010_no_se_aprueba_incompleta():
+    print("\nF010 · R010: approve se niega con huecos o con errores, sin cambiar nada")
+    p = con_dos_features("r010")
+    run(p, "new", "008", "009")
+    path = p / "releases" / "v0.1.0.md"
+    antes = path.read_bytes()
+    r = run(p, "approve", "v0.1.0")
+    expect(r.returncode == 1 and "E-RELEASE-TEMPLATE" in r.stderr and path.read_bytes() == antes,
+           "con huecos: se niega, nombra el código y no cambia el archivo", r.stdout + r.stderr)
+
+    redacta(path)
+    plan = p / "specs" / "008-exportar-ventas" / "plan.md"
+    plan.write_text(plan.read_text(encoding="utf-8").replace("D1: algo.", "D1: otra cosa."),
+                    encoding="utf-8")
+    antes = path.read_bytes()
+    r = run(p, "approve", "--skill")
+    expect(r.returncode == 0 and "No se puede aprobar" in r.stdout
+           and "E-RELEASE-FEATURE-NOT-APPROVED" in r.stdout and path.read_bytes() == antes,
+           "con un error de las features: --skill sale con 0, lo explica y no cambia nada",
+           r.stdout + r.stderr)
+    expect("Draft" in release.releases(p)[0]["text"].split("## ", 1)[0],
+           "la versión sigue en borrador")
+
+
+def test_F010_R011_aprobacion():
+    print("\nF010 · R011: approve sella la versión y muestra el git tag")
+    p, path = borrador_listo("r011")
+    subprocess.run(["git", "init", "-q", str(p)], capture_output=True, timeout=30)
+    (p / "releases" / "nota.md").write_text("no es una versión", encoding="utf-8")
+    r = run(p, "approve")
+    texto = path.read_text(encoding="utf-8")
+    sello = re.search(r"\| Estado   \| Approved · ([0-9a-f]{12}) \|", texto)
+    expect(r.returncode == 0 and sello and sello.group(1) == release.content_digest(texto),
+           "sin argumento aprueba la única en borrador, con la huella de su contenido",
+           r.stdout + r.stderr)
+    expect('git tag -a v0.1.0 -m "Versión 0.1.0: features 008, 009"' in r.stdout
+           and "git push origin v0.1.0" in r.stdout, "muestra los comandos de git", r.stdout)
+    etiquetas = subprocess.run(["git", "-C", str(p), "tag"], capture_output=True, text=True,
+                               timeout=30).stdout
+    expect(etiquetas.strip() == "", "y no los ejecuta", etiquetas)
+    comprobacion = seccion(texto, "Comprobación")
+    expect("0 error(es) y 0 aviso(s)" in comprobacion and "Pendiente" not in comprobacion,
+           "la Comprobación sellada es la del momento de aprobar", comprobacion)
+    expect(release.releases(p)[0]["state"] == "approved" and not hallazgos(p),
+           "check la da por aprobada, sin hallazgos")
+    r = run(p, "approve", "v0.1.0")
+    expect(r.returncode == 0 and "ya estaba aprobada" in r.stdout
+           and path.read_text(encoding="utf-8") == texto, "aprobar otra vez no cambia nada")
+
+    feature(p, "010-avisos")
+    run(p, "new", "010")
+    siguiente = (p / "releases" / "v0.2.0.md").read_text(encoding="utf-8")
+    expect("| Anterior | 0.1.0 |" in siguiente,
+           "la siguiente versión propone 0.2.0 y tiene la 0.1.0 como Anterior", siguiente[:300])
+    feature(p, "011-otra")
+    run(p, "new", "011", "--version", "0.3.0")
+    r = run(p, "approve")
+    expect(r.returncode == 1 and "v0.2.0, v0.3.0" in r.stderr,
+           "con varias en borrador, pide cuál", r.stdout + r.stderr)
+    expect(run(p, "approve", "v9.9.9").returncode == 1, "una versión que no existe: 1")
+    expect(run(p, "approve", "otra").returncode == 1, "un argumento que no es versión: 1")
+
+
+def test_F010_R012_cambio_tras_aprobar():
+    print("\nF010 · R012: una versión aprobada que cambia deja de contar como aprobada")
+    p, path = borrador_listo("r012")
+    run(p, "approve")
+    path.write_text(path.read_text(encoding="utf-8").replace("Texto redactado.", "Errata.", 1),
+                    encoding="utf-8")
+    msgs = de(p, "W-RELEASE-NOT-APPROVED")
+    expect(len(msgs) == 1 and "cambió después de aprobarse" in msgs[0]
+           and "sigue publicada" in msgs[0], "aviso: cambió tras aprobarse y sigue publicada",
+           f"{msgs}")
+    expect(release.releases(p)[0]["state"] == "stale", "ya no cuenta como aprobada")
+    otra = version(p, "0.0.9", "008")
+    msgs = de(p, "E-RELEASE-FEATURE-RELEASED", "0.0.9")
+    expect(len(msgs) == 1 and "v0.1.0" in msgs[0], "sus features siguen publicadas (R006)",
+           f"{msgs}")
+    expect(any("0.1.0" in m for m in de(p, "E-RELEASE-VERSION", "0.0.9")),
+           "y su número sigue contando (R008)")
+    otra.unlink()
+
+    r = run(p, "approve")
+    expect(r.returncode == 1 and "nómbrala: v0.1.0" in r.stderr,
+           "sin argumento no se elige una publicada que cambió: hay que nombrarla",
+           r.stdout + r.stderr)
+    r = run(p, "approve", "v0.1.0")
+    expect(r.returncode == 0 and release.releases(p)[0]["state"] == "approved"
+           and "Errata." in path.read_text(encoding="utf-8"),
+           "nombrada, se vuelve a aprobar con la errata", r.stdout + r.stderr)
+
+    feature(p, "012-despues")
+    version(p, "0.2.0", "012", aprobada=True)
+    path.write_text(path.read_text(encoding="utf-8").replace("Errata.", "Errata 2.", 1),
+                    encoding="utf-8")
+    r = run(p, "approve", "v0.1.0")
+    expect(r.returncode == 0 and release.releases(p)[0]["state"] == "approved",
+           "con la 0.2.0 ya publicada, la 0.1.0 se vuelve a aprobar: su número ya contaba",
+           r.stdout + r.stderr)
+    expect(not de(p, "E-RELEASE-VERSION"), "y ninguna de las dos da error de número")
+
+    texto = path.read_text(encoding="utf-8").replace("| Features | 008, 009 |",
+                                                     "| Features | 008, 009, 010 |")
+    feature(p, "010-a-medias", aprobar=("spec",))
+    path.write_text(texto, encoding="utf-8")
+    r = run(p, "approve", "v0.1.0")
+    expect(r.returncode == 1 and "010-a-medias" in r.stderr
+           and path.read_text(encoding="utf-8") == texto,
+           "una feature añadida tras aprobar se comprueba entera: se niega y no sella",
+           r.stdout + r.stderr)
+    path.write_text(texto.replace("| Features | 008, 009, 010 |", "| Features | 008, 009 |")
+                    .replace("Errata 2.", "_Redacta otra vez._"), encoding="utf-8")
+    r = run(p, "approve", "v0.1.0")
+    expect(r.returncode == 1 and "E-RELEASE-TEMPLATE" in r.stderr,
+           "y con huecos tampoco se vuelve a sellar", r.stdout + r.stderr)
+
+
 def cobertura_de_codigos():
     # main() la ejecuta despues de todas las pruebas: compara los codigos
     # declarados con los que las pruebas vieron emitirse.

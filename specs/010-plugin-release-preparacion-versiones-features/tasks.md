@@ -127,7 +127,7 @@ features de prueba escritas en el formato de `sdd`. Las de `sdd`, en
 
 ### T008 — `release.py approve` y cambios tras aprobar
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R010, R011, R012
 - **Depende de:** T007
 - **Archivos:** `plugins/release/scripts/release.py`, `plugins/release/tests/selftest.py`

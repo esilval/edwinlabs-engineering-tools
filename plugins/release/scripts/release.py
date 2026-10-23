@@ -17,6 +17,12 @@ Subcomandos:
                       fijado, la comprobacion del momento y los huecos de las
                       notas para usuarios y los cambios tecnicos. Si el
                       archivo ya existe, no lo toca.
+  approve [vX.Y.Z] [--skill]
+                      Aprueba la version si la comprobacion no da errores ni
+                      quedan huecos: reescribe su Comprobacion, la sella con
+                      'Approved · <huella>' y muestra el git tag que ejecuta
+                      el usuario. Solo lo lanza el usuario, con
+                      /release:approve.
   check [vX.Y.Z] [--json] [--check]
                       Comprueba la version indicada, o todas las de
                       releases/. --json emite release.check/v1; --check sale
@@ -219,7 +225,9 @@ def check_version(release, all_releases):
             out.append(_finding("E-RELEASE-VERSION",
                                 f"{rel}: la versión {header} ya existe en {other['rel']}.",
                                 rel))
-    last = last_published(all_releases, exclude=release)
+    # Una version ya publicada que se vuelve a sellar tiene su numero contado
+    # (D6): no tiene que ser mayor que las que se publicaron despues.
+    last = None if published(release) else last_published(all_releases, exclude=release)
     if last and current <= last:
         out.append(_finding("E-RELEASE-VERSION",
                             f"{rel}: la versión {header} no es mayor que la última "
@@ -403,15 +411,18 @@ def check_template(release):
                      f"«{first}». Los completa /release:new.", release["rel"])]
 
 
-def check_release(root, release, all_releases):
+def check_release(root, release, all_releases, full=False):
+    """Hallazgos de una version. Una publicada solo se mira por si cambio
+    tras aprobarse (D7); full=True la comprueba entera, como un borrador,
+    que es lo que hace approve antes de sellar."""
     rel = release["rel"]
-    if release["state"] == "stale":
+    if release["state"] == "stale" and not full:
         return [_finding("W-RELEASE-NOT-APPROVED",
                          f"{rel} cambió después de aprobarse: ya no cuenta como aprobada, "
                          "pero sigue publicada (sus features y su número siguen contando). "
                          "El usuario la revisa y la aprueba de nuevo con /release:approve.",
                          rel)]
-    if release["state"] == "approved":
+    if release["state"] == "approved" and not full:
         return []
     out = [_finding("W-RELEASE-NOT-APPROVED",
                     f"{rel} no está aprobada. La aprueba el usuario con "
@@ -680,8 +691,103 @@ def cmd_new(args):
     return 0
 
 
+# --------------------------------------------------------------------------
+# approve (D8, R010-R012). Solo la lanza el usuario, con /release:approve;
+# los hooks impiden que el modelo la escriba.
+# --------------------------------------------------------------------------
+
+def set_status(text, value):
+    """Devuelve (texto_nuevo, cambiado?). Copia de set_status de
+    plugins/architecture/scripts/architecture.py, que copia la de
+    plugins/discovery/scripts/discovery.py; la de plugins/sdd/scripts/
+    sdd_trace.py es la misma."""
+    end = specs._header_end(text)
+    head, n = STATUS_ROW.subn(lambda m: m.group(1) + value + m.group(3), text[:end], count=1)
+    return head + text[end:], bool(n)
+
+
+def approval_findings(root, release, all_releases):
+    """Lo que impide aprobar (D8): la comprobacion entera, tambien al volver a
+    sellar una version publicada que cambio, porque el cambio puede tocar sus
+    features o su numero. El aviso de que esta sin aprobar no cuenta: es lo
+    que approve resuelve."""
+    return [f for f in check_release(root, release, all_releases, full=True)
+            if f["code"] != "W-RELEASE-NOT-APPROVED"]
+
+
+def approve(root, version=None):
+    """(ok, lineas_de_mensaje). No toca nada si se niega (R010)."""
+    all_releases = releases(root)
+    if version:
+        targets = [r for r in all_releases if r["version"] == version]
+        if not targets:
+            return False, [f"No existe {RELEASES_DIR}/v{version}.md."]
+    else:
+        # D8: la unica en borrador. Una publicada que cambio se nombra.
+        targets = [r for r in all_releases if r["state"] == "draft"]
+        if not targets:
+            changed = [f"v{r['version']}" for r in all_releases if r["state"] == "stale"]
+            return False, ["No hay ninguna versión en borrador en releases/. Se crea con "
+                           "/release:new." + (f" Para volver a aprobar una que cambió tras "
+                                              f"aprobarse, nómbrala: {', '.join(changed)}."
+                                              if changed else "")]
+        if len(targets) > 1:
+            return False, ["Hay varias versiones en borrador: "
+                           + ", ".join(f"v{r['version']}" for r in targets)
+                           + f". Indica cuál: /release:approve v{targets[0]['version']}."]
+    release = targets[0]
+    rel = release["rel"]
+    if release["state"] == "approved":
+        return True, [f"{rel} ya estaba aprobada."]
+    findings = approval_findings(root, release, all_releases)
+    errors = [f for f in findings if f["severity"] == "error"]
+    if errors:
+        return False, ([f"No se puede aprobar {rel}: la comprobación da errores."]
+                       + [f"  [{f['code']}] {f['message']}" for f in errors])
+
+    # La evidencia sellada es la comprobacion del momento de aprobar.
+    text = replace_section(release["text"], "Comprobación",
+                           check_section({"findings": findings}))
+    stamp = f"Approved · {content_digest(text)}"
+    text, changed = set_status(text, stamp)
+    if not changed:
+        return False, [f"{rel} no tiene la fila '| Estado | ... |' en la cabecera. "
+                       "Añádela y vuelve a aprobar."]
+    (Path(root) / rel).write_text(text, encoding="utf-8")
+    tag = f"v{release['version']}"
+    features = ", ".join(release["features"])
+    return True, [f"{rel} aprobada ({stamp}).",
+                  "",
+                  "El plugin no etiqueta ni publica. Para etiquetar la versión, ejecuta tú:",
+                  f'  git tag -a {tag} -m "Versión {release["version"]}: features {features}"',
+                  f"  git push origin {tag}"]
+
+
+def cmd_approve(args):
+    """
+    Con --skill (lo usa /release:approve) todo va a stdout y sale siempre con
+    0: el resultado lo lee el modelo como texto, no como codigo de salida.
+    """
+    rest = [a for a in args if a != "--skill"]
+    version = version_arg(rest[0]) if len(rest) == 1 else None
+    try:
+        if len(rest) > 1 or (rest and not version):
+            ok, lines = False, [f"Argumento desconocido {' '.join(rest)}. "
+                                "Uso: release.py approve [vX.Y.Z]"]
+        else:
+            ok, lines = approve(project_root(), version)
+    except Exception as exc:  # noqa: BLE001
+        if "--skill" not in args:
+            raise
+        ok, lines = False, [f"No se pudo aprobar: error inesperado ({exc})."]
+    stream = sys.stdout if (ok or "--skill" in args) else sys.stderr
+    print("\n".join(lines), file=stream)
+    return 0 if (ok or "--skill" in args) else 1
+
+
 COMMANDS = {
     "new": cmd_new,
+    "approve": cmd_approve,
     "check": cmd_check,
 }
 
