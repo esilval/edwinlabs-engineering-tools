@@ -114,7 +114,7 @@ features de prueba escritas en el formato de `sdd`. Las de `sdd`, en
 
 ### T007 — `release.py new` y la plantilla
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R009, R010, R015
 - **Depende de:** T005, T006
 - **Archivos:** `plugins/release/scripts/release.py`, `plugins/release/templates/release.md`, `plugins/release/tests/selftest.py`

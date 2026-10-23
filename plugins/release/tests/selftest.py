@@ -642,6 +642,149 @@ def test_F010_R008_numero_invalido():
            "la versión publicada no se juzga por su número")
 
 
+# ----------------------------------------------------------------- T007
+
+def con_dos_features(nombre, origen="B01 · G1 · D1§1"):
+    p = proyecto(nombre)
+    feature(p, "008-exportar-ventas", spec=spec_md("Exportar ventas", origen=origen),
+            plan=plan_md(adrs=("ADR-0001",), contratos="- `GET /ventas`: CSV.",
+                         modelo="- Venta: fecha, importe."))
+    feature(p, "009-arreglo", spec=spec_md("Arreglo del total", tipo="corrección",
+                                           reqs=(("R001", "MUST"), ("R002", "OBSOLETO"))))
+    return p
+
+
+def seccion(texto, titulo):
+    return texto.split(f"## {titulo}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def test_F010_R001_borrador():
+    print("\nF010 · R001: new escribe el borrador con las features elegidas")
+    p = con_dos_features("r001")
+    r = run(p, "new", "008", "009-arreglo")
+    path = p / "releases" / "v0.1.0.md"
+    expect(r.returncode == 0 and path.is_file(), "new 008 009 escribe releases/v0.1.0.md",
+           r.stdout + r.stderr)
+    texto = path.read_text(encoding="utf-8") if path.is_file() else ""
+    expect("| Estado   | Draft |" in texto and "| Versión  | 0.1.0 |" in texto
+           and "| Anterior | — |" in texto and "| Features | 008, 009 |" in texto,
+           "cabecera: borrador, número, anterior y features por su número", texto[:400])
+    contenido = seccion(texto, "Contenido")
+    expect("### 008 — Exportar ventas" in contenido and "### 009 — Arreglo del total" in contenido
+           and "- **Requisitos:** R001, R002" in contenido
+           and "- **Tipo:** corrección" in contenido
+           and "- **Origen:** B01 · G1 · D1§1" in contenido,
+           "el contenido trae cada feature con su tipo, origen y requisitos", contenido)
+    expect("- **Requisitos:** R001\n" in contenido.split("### 009", 1)[1],
+           "los requisitos obsoletos no son vigentes")
+    comprobacion = seccion(texto, "Comprobación")
+    expect("0 error(es) y 0 aviso(s)" in comprobacion and "Pendiente:" in comprobacion
+           and "- `" not in comprobacion,
+           "con las features terminadas, la comprobación del momento queda sin errores, "
+           "y los huecos por redactar aparte", comprobacion)
+    expect("OK: sin errores." in r.stdout and "Pendiente: 4 hueco(s)" in r.stdout,
+           "y se muestra al crear", r.stdout)
+    expect(not release.holes(texto.replace("_Redacta", "Redacta").replace("._", ".")
+                             .replace("_Resume", "Resume")),
+           "los huecos son solo las líneas en cursiva de notas y cambios")
+    expect(len(de(p, "E-RELEASE-TEMPLATE")) == 1, "check los da por huecos (R010)")
+
+    antes = texto
+    r = run(p, "new", "008")
+    expect(r.returncode == 0 and "ya existe, con las features 008, 009" in r.stdout
+           and "--version" in r.stdout and path.read_text(encoding="utf-8") == antes,
+           "un archivo que ya existe no se toca", r.stdout + r.stderr)
+
+    r = run(p, "new", "009", "--version", "1.0.0")
+    expect(r.returncode == 0 and (p / "releases" / "v1.0.0.md").is_file(),
+           "--version fija el número", r.stdout + r.stderr)
+    r = run(p, "new", "009", "--version=v2.0.0")
+    expect(r.returncode == 0 and (p / "releases" / "v2.0.0.md").is_file(),
+           "--version=v2.0.0 también vale")
+    antes = sorted(x.name for x in (p / "releases").iterdir())
+    r = run(p, "new", "009", "--version", "1.0")
+    expect(r.returncode == 1 and "1.0" in r.stderr
+           and sorted(x.name for x in (p / "releases").iterdir()) == antes,
+           "un número mal formado sale con 1 y no crea nada", r.stdout + r.stderr)
+
+    q = con_dos_features("r001-sin")
+    r = run(q, "new")
+    expect(r.returncode == 1 and "No hay features" in r.stderr
+           and not (q / "releases").exists(),
+           "sin features sale con 1, dice cómo elegirlas y no crea nada", r.stdout + r.stderr)
+    expect(run(q, "new", "--borrar").returncode == 2, "un argumento desconocido sale con 2")
+
+    feature(q, "010-plantilla", spec=spec_md("Con {{NOTES}} en el _título_"))
+    r = run(q, "new", "010", "--version", "0.0.9")
+    texto = (q / "releases" / "v0.0.9.md").read_text(encoding="utf-8")
+    expect("### 010 — Con {{NOTES}} en el _título_" in seccion(texto, "Contenido"),
+           "un título con {{NOTES}} no se sustituye", seccion(texto, "Contenido"))
+    completo = re.sub(r"^_.*_$", "Texto redactado.", texto, flags=re.M)
+    expect(not release.holes(completo),
+           "ni cuenta como hueco al copiarse en encabezados y Contenido",
+           f"{release.holes(completo)}")
+    (q / "releases" / "v0.0.9.md").unlink()
+    vacio = BASE / "sin-plantilla" / "release"
+    (vacio / "scripts").mkdir(parents=True)
+    shutil.copy(SCRIPT, vacio / "scripts")
+    shutil.copy(PLUGIN / "scripts" / "release_specs.py", vacio / "scripts")
+    r = subprocess.run([sys.executable, str(vacio / "scripts" / "release.py"), "new", "008"],
+                       capture_output=True, text=True, cwd=str(q), timeout=60,
+                       env=dict(os.environ, CLAUDE_PROJECT_DIR=str(q),
+                                CLAUDE_PLUGIN_ROOT=str(vacio)))
+    expect(r.returncode == 1 and "templates/release.md" in r.stderr
+           and not list((q / "releases").glob("*.md")),
+           "sin la plantilla sale con 1 y no escribe nada", r.stdout + r.stderr)
+
+    version(q, "0.3.2", "042", aprobada=True)
+    r = run(q, "new", "008")
+    texto = (q / "releases" / "v0.4.0.md").read_text(encoding="utf-8")
+    expect(r.returncode == 0 and "| Anterior | 0.3.2 |" in texto,
+           "propone 0.4.0 y anota la anterior publicada", r.stdout + r.stderr)
+
+
+def test_F010_R009_notas_y_cambios():
+    print("\nF010 · R009: notas para usuarios y cambios técnicos por completar")
+    p = con_dos_features("r009")
+    run(p, "new", "008", "009")
+    texto = (p / "releases" / "v0.1.0.md").read_text(encoding="utf-8")
+    notas = seccion(texto, "Notas para usuarios")
+    hueco = notas.split("### 008", 1)[1].split("### 009", 1)[0]
+    expect("B01" in hueco and "G1" in hueco and release.holes(hueco),
+           "el hueco de las notas de la 008 cita su candidata B01 y su objetivo G1", hueco)
+    cambios = seccion(texto, "Cambios técnicos")
+    de_008 = cambios.split("### 009", 1)[0]
+    expect("- **Requisitos:** R001, R002" in de_008
+           and "- **Decisiones de arquitectura:** ADR-0001" in de_008
+           and "- **Contratos:** sí" in de_008 and "- **Modelo de datos:** sí" in de_008
+           and release.holes(de_008),
+           "los cambios técnicos traen requisitos, ADR-0001, contratos, datos y un hueco", de_008)
+    de_009 = cambios.split("### 009", 1)[1]
+    expect("- **Requisitos retirados:** R002" in de_009 and "- **Contratos:** no" in de_009
+           and "**Decisiones de arquitectura:** ninguna" in de_009,
+           "la 009: requisito retirado, sin contratos ni decisiones", de_009)
+
+    completo = re.sub(r"^_.*_$", "Texto redactado.", texto, flags=re.M)
+    (p / "releases" / "v0.1.0.md").write_text(completo, encoding="utf-8")
+    expect(not de(p, "E-RELEASE-TEMPLATE"), "completadas las notas y los cambios, sin huecos")
+
+
+def test_F010_R015_sin_producto_ni_arquitectura():
+    print("\nF010 · R015: sin product/ ni architecture/")
+    p = con_dos_features("r015", origen=None)
+    r = run(p, "new", "008")
+    texto = (p / "releases" / "v0.1.0.md").read_text(encoding="utf-8")
+    notas = seccion(texto, "Notas para usuarios")
+    expect(r.returncode == 0 and "- **Origen:** —" in texto
+           and "candidata" not in notas and "objetivo" not in notas and release.holes(notas),
+           "sin Origen, el hueco de las notas no cita candidatas ni objetivos", notas)
+    expect(not (p / "product").exists() and not (p / "architecture").exists(),
+           "el proyecto no tiene product/ ni architecture/")
+    codigos = {f["code"] for f in hallazgos(p)}
+    expect(codigos == {"E-RELEASE-TEMPLATE", "W-RELEASE-NOT-APPROVED"},
+           "solo los huecos y el aviso de borrador", f"{codigos}")
+
+
 def cobertura_de_codigos():
     # main() la ejecuta despues de todas las pruebas: compara los codigos
     # declarados con los que las pruebas vieron emitirse.

@@ -11,6 +11,12 @@ codigo de otros plugins: es una etapa independiente, unida a las demas por
 archivos.
 
 Subcomandos:
+  new <features...> [--version X.Y.Z]
+                      Escribe releases/vX.Y.Z.md en borrador con las features
+                      elegidas (008 o 008-slug), el numero propuesto o el
+                      fijado, la comprobacion del momento y los huecos de las
+                      notas para usuarios y los cambios tecnicos. Si el
+                      archivo ya existe, no lo toca.
   check [vX.Y.Z] [--json] [--check]
                       Comprueba la version indicada, o todas las de
                       releases/. --json emite release.check/v1; --check sale
@@ -19,6 +25,7 @@ Subcomandos:
                       en SDD_SCRIPT, junto al plugin o en la cache de plugins.
 """
 
+import datetime
 import hashlib
 import json
 import os
@@ -359,6 +366,43 @@ def check_trace(root, f, rel):
     return out
 
 
+# --------------------------------------------------------------------------
+# Huecos de plantilla (R010): texto en cursiva sin sustituir
+# --------------------------------------------------------------------------
+
+PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_*])_[^_\n]+_(?![A-Za-z0-9_*])")
+TEMPLATE_VAR = re.compile(r"\{\{[A-Z_]+\}\}")
+GENERATED = {"contenido", "comprobacion"}
+
+
+def holes(text):
+    """Huecos que siguen sin rellenar. No cuentan las notas en blockquote, el
+    codigo en linea, los encabezados ni las secciones Contenido y
+    Comprobacion, que escribe el script con datos de specs/ (un titulo de
+    spec con _x_ no es un hueco)."""
+    out, generated = [], False
+    for line in (text or "").splitlines():
+        m = re.match(r"^##\s+(.*)$", line)
+        if m:
+            generated = specs.norm(m.group(1)).strip() in GENERATED
+        if generated or line.lstrip().startswith((">", "#")):
+            continue
+        plain = re.sub(r"`[^`]*`", " ", line)
+        out += [h.group(0) for h in PLACEHOLDER.finditer(plain)]
+        out += TEMPLATE_VAR.findall(plain)
+    return out
+
+
+def check_template(release):
+    found = holes(release["text"])
+    if not found:
+        return []
+    first = found[0] if len(found[0]) <= 70 else found[0][:69] + "…"
+    return [_finding("E-RELEASE-TEMPLATE",
+                     f"{release['rel']} conserva {len(found)} hueco(s) sin completar, como "
+                     f"«{first}». Los completa /release:new.", release["rel"])]
+
+
 def check_release(root, release, all_releases):
     rel = release["rel"]
     if release["state"] == "stale":
@@ -376,7 +420,7 @@ def check_release(root, release, all_releases):
         out.append(_finding("E-RELEASE-NO-FEATURES",
                             f"{rel} no incluye ninguna feature: elígelas con "
                             "/release:new.", rel))
-    out += check_version(release, all_releases)
+    out += check_template(release) + check_version(release, all_releases)
     others = [r for r in all_releases if r is not release and published(r)]
     for name in release["features"]:
         out += check_feature(root, release, name, others)
@@ -453,7 +497,191 @@ def cmd_check(args):
     return 1 if ("--check" in flags and not data["ok"]) else 0
 
 
+# --------------------------------------------------------------------------
+# new (D2, D8): el borrador de una version
+# --------------------------------------------------------------------------
+
+CAND_REF = re.compile(r"(?<![A-Za-z0-9])B\d{2,}(?![0-9])")
+GOAL_REF = re.compile(r"(?<![A-Za-z0-9])G\d+(?![0-9])")
+
+
+def template_text():
+    """La plantilla del artefacto, o None si no se encuentra."""
+    for base in (plugin_root(), Path(__file__).resolve().parent.parent):
+        text = specs.read_text(base / "templates" / "release.md")
+        if text:
+            return text
+    return None
+
+
+def replace_section(text, title, body):
+    """Sustituye el cuerpo de '## title' hasta el siguiente encabezado de
+    nivel 2, conservando las notas en blockquote del principio."""
+    pattern = re.compile(rf"(^## {re.escape(title)}[^\n]*\n)(.*?)(?=^## |\Z)", re.M | re.S)
+
+    def sub(m):
+        notes = re.match(r"\s*((?:>[^\n]*\n)+)", m.group(2))
+        keep = ("\n" + notes.group(1)) if notes else ""
+        return m.group(1) + keep + "\n" + body.strip() + "\n\n"
+    return pattern.sub(sub, text, count=1)
+
+
+# Lo que la seccion Comprobacion no cuenta como resultado de las features: los
+# huecos que el propio borrador trae para redactar (van en una linea aparte) y
+# el aviso de que la version esta sin aprobar, que es su estado al escribirla.
+NOT_FEATURE_CHECK = {"E-RELEASE-TEMPLATE", "W-RELEASE-NOT-APPROVED"}
+
+
+def feature_check(data):
+    """(hallazgos de la comprobacion, hallazgos de huecos) de analyze."""
+    shown = [f for f in data["findings"] if f["code"] not in NOT_FEATURE_CHECK]
+    pending = [f for f in data["findings"] if f["code"] == "E-RELEASE-TEMPLATE"]
+    return shown, pending
+
+
+def check_section(data):
+    """Cuerpo de la seccion Comprobacion: el resultado de check sobre las
+    features y el numero, y aparte lo que queda por redactar."""
+    shown, pending = feature_check(data)
+    errors = sum(1 for f in shown if f["severity"] == "error")
+    today = datetime.date.today().isoformat()
+    lines = [f"Resultado de `release.py check` el {today}: {errors} error(es) y "
+             f"{len(shown) - errors} aviso(s)."]
+    if shown:
+        lines.append("")
+        lines += [f"- `{f['code']}`: {f['message']}" for f in shown]
+    if pending:
+        lines += ["", "Pendiente: completar las notas para usuarios y los cambios técnicos "
+                      "(`E-RELEASE-TEMPLATE` hasta que no quede ningún hueco)."]
+    return "\n".join(lines)
+
+
+def current_requirements(f):
+    return [r["id"] for r in f["requirements"] if r["priority"] != "OBSOLETE"]
+
+
+def content_block(f):
+    reqs = current_requirements(f)
+    return (f"### {f['id']} — {f['title']}\n\n"
+            f"- **Tipo:** {f['type'] or f['type_raw']}\n"
+            f"- **Origen:** {f['origin'] or '—'}\n"
+            f"- **Requisitos:** {', '.join(reqs) or '—'}")
+
+
+def notes_block(f):
+    cands = CAND_REF.findall(f["origin"] or "")
+    goals = GOAL_REF.findall(f["origin"] or "")
+    cite = ""
+    if cands or goals:
+        parts = ([f"la candidata {', '.join(cands)}"] if cands else []) + (
+            [f"el objetivo {', '.join(goals)}"] if goals else [])
+        cite = f", a partir de {' y '.join(parts)} del producto"
+    return (f"### {f['id']} — {f['title']}\n\n"
+            f"_Redacta qué cambia para el usuario con esta feature{cite}._")
+
+
+def changes_block(f):
+    plan = f"specs/{f['slug']}/plan.md"
+    retired = [r["id"] for r in f["requirements"] if r["priority"] == "OBSOLETE"]
+    lines = [f"### {f['id']} — {f['title']}", "",
+             f"- **Requisitos:** {', '.join(current_requirements(f)) or '—'}"]
+    if retired:
+        lines.append(f"- **Requisitos retirados:** {', '.join(retired)}")
+    lines += [f"- **Decisiones de arquitectura:** {', '.join(f['adrs']) or 'ninguna'}",
+              f"- **Contratos:** {'sí, en «Contratos» de ' + plan if f['contracts'] else 'no'}",
+              f"- **Modelo de datos:** "
+              f"{'sí, en «Modelo de datos» de ' + plan if f['data_model'] else 'no'}",
+              "",
+              "_Resume para el equipo técnico qué cambia con esta feature, a partir de "
+              "estos datos._"]
+    return "\n".join(lines)
+
+
+def draft(root, number, names):
+    """Texto del borrador (D2), sin la seccion Comprobacion rellena."""
+    resolved = [(n, specs.resolve(root, n)) for n in names]
+    features = [specs.feature(found[0]) for _n, found in resolved if len(found) == 1]
+    header = ", ".join(specs.number(found[0]) if len(found) == 1 else n
+                       for n, found in resolved)
+    last = last_published(releases(root))
+    values = {
+        "VERSION": number,
+        "DATE": datetime.date.today().isoformat(),
+        "PREVIOUS": show(last) if last else "—",
+        "FEATURES": header,
+        "CONTENT": "\n\n".join(content_block(f) for f in features) or "Ninguna.",
+        "CHECK": "Pendiente.",
+        "NOTES": "\n\n".join(notes_block(f) for f in features) or "Ninguna.",
+        "CHANGES": "\n\n".join(changes_block(f) for f in features) or "Ninguno.",
+    }
+    # En una sola pasada: un titulo de spec con {{NOTES}} no se sustituye.
+    return re.sub(r"\{\{([A-Z_]+)\}\}", lambda m: values.get(m.group(1), m.group(0)),
+                  template_text())
+
+
+def cmd_new(args):
+    """
+    0 si escribe el borrador o ya existia; 1 sin features o con un numero mal
+    formado (Contratos del plan).
+    """
+    args, number = list(args), None
+    for i, a in enumerate(args):
+        if a == "--version" or a.startswith("--version="):
+            number = a.split("=", 1)[1] if "=" in a else (
+                args[i + 1] if i + 1 < len(args) else "")
+            del args[i:i + (1 if "=" in a else 2)]
+            break
+    unknown = [a for a in args if a.startswith("-")]
+    if unknown:
+        print(f"error: argumento desconocido {' '.join(unknown)}. "
+              "Uso: release.py new <features...> [--version X.Y.Z]", file=sys.stderr)
+        return 2
+    if not args:
+        print("No hay features que incluir: indica cuáles, por su número o su nombre "
+              "en specs/ (release.py new 008 009). No se ha creado nada.", file=sys.stderr)
+        return 1
+    if number is not None:
+        number = number.strip().lstrip("v")
+        if parse_version(number) is None:
+            print(f"error: la versión «{number}» no es MAYOR.MENOR.PARCHE (enteros sin "
+                  "ceros a la izquierda). No se ha creado nada.", file=sys.stderr)
+            return 1
+    root = project_root()
+    number = number or proposed_version(root, args)
+    rel = f"{RELEASES_DIR}/v{number}.md"
+    path = root / rel
+    if path.exists():
+        existing = feature_list(specs.header_row(specs.read_text(path), "Features"))
+        print(f"{rel} ya existe, con las features {', '.join(existing) or 'ninguna'}: no se "
+              "toca. Compruébala con /release:check, o fija otro número con --version.")
+        return 0
+    if template_text() is None:
+        print("error: no se encuentra templates/release.md del plugin release. "
+              "No se ha creado nada.", file=sys.stderr)
+        return 1
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(draft(root, number, args), encoding="utf-8")
+    try:
+        data = analyze(root, number)
+    except Exception:
+        path.unlink()  # sin la comprobacion, el borrador no se deja a medias
+        raise
+    path.write_text(replace_section(path.read_text(encoding="utf-8"), "Comprobación",
+                                    check_section(data)), encoding="utf-8")
+    shown, pending = feature_check(data)
+    print(f"{rel} escrito en borrador, versión {number}.")
+    print(report(dict(data, findings=shown, ok=not any(f["severity"] == "error" for f in shown),
+                      counts=dict(data["counts"],
+                                  errors=sum(f["severity"] == "error" for f in shown)))))
+    if pending:
+        print(f"\n  Pendiente: {len(holes(path.read_text(encoding='utf-8')))} hueco(s) en las "
+              "notas para usuarios y los cambios técnicos (E-RELEASE-TEMPLATE hasta "
+              "completarlos con /release:new).")
+    return 0
+
+
 COMMANDS = {
+    "new": cmd_new,
     "check": cmd_check,
 }
 
@@ -471,6 +699,7 @@ FINDINGS = {
     "E-RELEASE-FEATURE-ADR": "El plan cita una decisión de arquitectura no aprobada",
     "E-RELEASE-VERSION": ("Número de versión mal formado, no mayor que la última "
                           "publicada, repetido o distinto del archivo"),
+    "E-RELEASE-TEMPLATE": "Quedan huecos de plantilla sin completar",
     "W-RELEASE-NOT-APPROVED": "Versión sin aprobar o cambiada después de aprobarse",
     "W-RELEASE-NO-TRACE": "La trazabilidad de una feature no se pudo obtener",
 }
