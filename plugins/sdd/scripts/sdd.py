@@ -99,8 +99,9 @@ def find_upwards(start, markers):
     no sale del repositorio. Un directorio que no se puede leer cuenta como
     vacio.
 
-    Hay una copia en plugins/discovery/scripts/discovery.py: los plugins no
-    comparten codigo.
+    Hay copias en plugins/discovery/scripts/discovery.py, plugins/architecture/
+    scripts/architecture.py y plugins/release/scripts/release.py: los plugins
+    no comparten codigo. Un arreglo en una se replica en las otras.
     """
     for directory in (start, *start.parents):
         try:

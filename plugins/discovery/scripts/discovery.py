@@ -177,7 +177,9 @@ def is_approved(text):
 
 
 def set_status(text, value):
-    """Devuelve (texto_nuevo, cambiado?)."""
+    """Devuelve (texto_nuevo, cambiado?). La misma que la de
+    plugins/sdd/scripts/sdd_trace.py, copiada en plugins/architecture/scripts/
+    architecture.py y, desde esta, en plugins/release/scripts/release.py."""
     end = _header_end(text)
     head, n = STATUS_ROW.subn(lambda m: m.group(1) + value + m.group(3),
                               text[:end], count=1)
