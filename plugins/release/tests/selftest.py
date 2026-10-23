@@ -562,6 +562,86 @@ def test_F010_R016_sin_trazabilidad():
         expect(release.sdd_script() == SDD, "en el repositorio, el sdd hermano")
 
 
+# ----------------------------------------------------------------- T006
+
+def test_F010_R007_numero_propuesto():
+    print("\nF010 · R007: el número propuesto según el contenido")
+    f = lambda tipo="funcionalidad", prio="MUST": {  # noqa: E731
+        "type": tipo, "requirements": [{"id": "R001", "priority": prio}]}
+    casos = (
+        (None, [f()], (0, 1, 0), "sin versión previa, 0.1.0"),
+        (None, [f("corrección", "OBSOLETE")], (0, 1, 0), "sin versión previa, siempre 0.1.0"),
+        ((0, 3, 2), [f("corrección"), f()], (0, 4, 0), "0.3.2 con funcionalidad: 0.4.0"),
+        ((1, 4, 0), [f(prio="OBSOLETE")], (2, 0, 0), "1.4.0 con un requisito retirado: 2.0.0"),
+        ((0, 3, 2), [f("corrección", "OBSOLETE")], (0, 4, 0),
+         "0.3.2 con un requisito retirado: 0.4.0 (serie 0.x)"),
+        ((0, 4, 0), [f("corrección"), f("corrección")], (0, 4, 1),
+         "0.4.0 con dos correcciones: 0.4.1"),
+        ((0, 4, 0), [f(None)], (0, 5, 0), "un Tipo no válido cuenta como funcionalidad"),
+        ((0, 4, 0), [], (0, 5, 0), "sin features válidas no se propone un parche"),
+    )
+    for last, feats, esperado, nombre in casos:
+        obtenido = release.propose(last, feats)
+        expect(obtenido == esperado, nombre, f"{obtenido}")
+
+    p = proyecto("r007")
+    feature(p, "008-exportar")
+    feature(p, "009-arreglo", spec=spec_md(tipo="corrección"))
+    feature(p, "010-sin-tipo", spec=spec_md(tipo=None))
+    expect(release.proposed_version(p, ["008"]) == "0.1.0", "sin releases/: 0.1.0")
+    version(p, "0.3.2", "008", aprobada=True)
+    version(p, "0.4.0", "042")  # borrador: no cuenta
+    expect(release.proposed_version(p, ["009"]) == "0.3.3",
+           "tras la 0.3.2 publicada, una corrección: 0.3.3; el borrador no cuenta")
+    expect(release.proposed_version(p, ["009", "010"]) == "0.4.0",
+           "una spec sin Tipo cuenta como funcionalidad: 0.4.0")
+    feature(p, "011-retira", spec=spec_md(
+        tipo="corrección", reqs=(("R001", "MUST"), ("R002", "OBSOLETO"))))
+    expect(release.proposed_version(p, ["011"]) == "0.4.0", "retirar en 0.x sube la menor")
+    v = p / "releases" / "v0.3.2.md"
+    v.write_text(v.read_text(encoding="utf-8").replace("Algo.", "Errata."), encoding="utf-8")
+    expect(release.proposed_version(p, ["009"]) == "0.3.3",
+           "una versión publicada que cambió tras aprobarse sigue contando (D6)")
+
+
+def test_F010_R008_numero_invalido():
+    print("\nF010 · R008: un número no válido es un error")
+    p = proyecto("r008")
+    feature(p, "008-exportar")
+    feature(p, "009-avisos")
+    version(p, "0.4.0", "008", aprobada=True)
+
+    version(p, "0.3.9", "009")
+    msgs = de(p, "E-RELEASE-VERSION", "0.3.9")
+    expect(len(msgs) == 1 and "0.3.9" in msgs[0] and "0.4.0" in msgs[0],
+           "0.3.9 tras la 0.4.0: error con los dos números", f"{msgs}")
+    (p / "releases" / "v0.3.9.md").unlink()
+
+    version(p, "0.5.0", "009").write_text(release_md("0.4.0", "009"), encoding="utf-8")
+    msgs = de(p, "E-RELEASE-VERSION", "0.5.0")
+    expect(any("ya existe" in m and "v0.4.0.md" in m for m in msgs),
+           "repetido: la 0.4.0 ya existe", f"{msgs}")
+    expect(any("v0.5.0" in m and "0.4.0" in m and "coincidir" in m for m in msgs),
+           "distinto del archivo: la cabecera dice 0.4.0 y el archivo es v0.5.0", f"{msgs}")
+    (p / "releases" / "v0.5.0.md").unlink()
+
+    for mal in ("0.5", "0.05.0", "v0.5.0", "x"):
+        path = version(p, "0.5.0", "009")
+        path.write_text(release_md(mal, "009"), encoding="utf-8")
+        msgs = de(p, "E-RELEASE-VERSION", "0.5.0")
+        expect(len(msgs) == 1 and f"«{mal}»" in msgs[0], f"mal formado: «{mal}»", f"{msgs}")
+    (p / "releases" / "v0.5.0.md").unlink()
+    (p / "releases" / "v0.05.0.md").write_text(release_md("0.5.0", "009"), encoding="utf-8")
+    msgs = de(p, "E-RELEASE-VERSION", "0.05.0")
+    expect(len(msgs) == 1 and "v0.05.0" in msgs[0] and "MAYOR.MENOR.PARCHE" in msgs[0],
+           "un archivo con ceros a la izquierda está mal formado", f"{msgs}")
+    (p / "releases" / "v0.05.0.md").unlink()
+    version(p, "0.5.0", "009")
+    expect(not de(p, "E-RELEASE-VERSION", "0.5.0"), "0.5.0 tras la 0.4.0 es válido")
+    expect(not de(p, "E-RELEASE-VERSION", "0.4.0"),
+           "la versión publicada no se juzga por su número")
+
+
 def cobertura_de_codigos():
     # main() la ejecuta despues de todas las pruebas: compara los codigos
     # declarados con los que las pruebas vieron emitirse.

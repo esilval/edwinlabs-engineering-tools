@@ -138,6 +138,89 @@ def published(release):
 
 
 # --------------------------------------------------------------------------
+# Numero de version (D6): MAYOR.MENOR.PARCHE, enteros sin ceros a la izquierda
+# --------------------------------------------------------------------------
+
+SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
+
+
+def parse_version(text):
+    """'0.4.0' -> (0, 4, 0); None si no es MAYOR.MENOR.PARCHE."""
+    m = SEMVER.fullmatch((text or "").strip())
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def show(version):
+    return ".".join(str(x) for x in version)
+
+
+def last_published(all_releases, exclude=None):
+    """La mayor version publicada (D6), sin contar exclude; None si no hay."""
+    found = [parse_version(r["version"]) for r in all_releases
+             if published(r) and r is not exclude]
+    found = [v for v in found if v]
+    return max(found) if found else None
+
+
+def propose(last, features):
+    """Numero propuesto (R007) tras last, para features de release_specs:
+    sin version previa, 0.1.0; con un requisito OBSOLETO, la mayor (en 0.x,
+    la menor); con alguna funcionalidad, la menor; solo correcciones, el
+    parche."""
+    if last is None:
+        return (0, 1, 0)
+    major, minor, patch = last
+    retired = any(r["priority"] == "OBSOLETE" for f in features for r in f["requirements"])
+    if retired:
+        return (0, minor + 1, 0) if major == 0 else (major + 1, 0, 0)
+    # Prudente: un Tipo no valido (E-RELEASE-FEATURE-TYPE) cuenta como
+    # funcionalidad, y sin ninguna feature valida tampoco se propone un parche.
+    if not features or any(f["type"] != "corrección" for f in features):
+        return (major, minor + 1, 0)
+    return (major, minor, patch + 1)
+
+
+def proposed_version(root, names):
+    """Numero propuesto para una version con las features names, tras la
+    ultima publicada de releases/. Las features que no existen no cuentan:
+    las informa check."""
+    found = [specs.resolve(root, n) for n in names]
+    features = [specs.feature(f[0]) for f in found if len(f) == 1]
+    return show(propose(last_published(releases(root)), features))
+
+
+def check_version(release, all_releases):
+    """E-RELEASE-VERSION (R008) de una version en borrador."""
+    rel, out = release["rel"], []
+    header, name = release["header_version"], release["version"]
+    current = parse_version(header)
+    if current is None:
+        return [_finding("E-RELEASE-VERSION",
+                         f"{rel}: la versión «{header}» no es MAYOR.MENOR.PARCHE "
+                         "(enteros sin ceros a la izquierda).", rel)]
+    if parse_version(name) is None:
+        return [_finding("E-RELEASE-VERSION",
+                         f"{rel}: el archivo v{name} no es MAYOR.MENOR.PARCHE "
+                         "(enteros sin ceros a la izquierda).", rel)]
+    if current != parse_version(name):
+        out.append(_finding("E-RELEASE-VERSION",
+                            f"{rel}: la cabecera dice {header} y el archivo es v{name}: "
+                            "tienen que coincidir.", rel))
+    for other in all_releases:
+        if other is not release and current in (parse_version(other["version"]),
+                                                parse_version(other["header_version"])):
+            out.append(_finding("E-RELEASE-VERSION",
+                                f"{rel}: la versión {header} ya existe en {other['rel']}.",
+                                rel))
+    last = last_published(all_releases, exclude=release)
+    if last and current <= last:
+        out.append(_finding("E-RELEASE-VERSION",
+                            f"{rel}: la versión {header} no es mayor que la última "
+                            f"publicada, {show(last)}.", rel))
+    return out
+
+
+# --------------------------------------------------------------------------
 # Comprobacion (D7)
 # --------------------------------------------------------------------------
 
@@ -293,6 +376,7 @@ def check_release(root, release, all_releases):
         out.append(_finding("E-RELEASE-NO-FEATURES",
                             f"{rel} no incluye ninguna feature: elígelas con "
                             "/release:new.", rel))
+    out += check_version(release, all_releases)
     others = [r for r in all_releases if r is not release and published(r)]
     for name in release["features"]:
         out += check_feature(root, release, name, others)
@@ -385,6 +469,8 @@ FINDINGS = {
     "E-RELEASE-FEATURE-TYPE": "El Tipo de la spec no es funcionalidad ni corrección",
     "E-RELEASE-FEATURE-TRACE": "La trazabilidad de la feature tiene errores",
     "E-RELEASE-FEATURE-ADR": "El plan cita una decisión de arquitectura no aprobada",
+    "E-RELEASE-VERSION": ("Número de versión mal formado, no mayor que la última "
+                          "publicada, repetido o distinto del archivo"),
     "W-RELEASE-NOT-APPROVED": "Versión sin aprobar o cambiada después de aprobarse",
     "W-RELEASE-NO-TRACE": "La trazabilidad de una feature no se pudo obtener",
 }

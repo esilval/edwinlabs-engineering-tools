@@ -102,7 +102,7 @@ features de prueba escritas en el formato de `sdd`. Las de `sdd`, en
 
 ### T006 — El número de versión
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R007, R008
 - **Depende de:** T004
 - **Archivos:** `plugins/release/scripts/release.py`, `plugins/release/tests/selftest.py`
