@@ -36,6 +36,36 @@ BASE = Path(tempfile.mkdtemp(prefix="release-selftest-"))
 PROBADOS = set()
 
 
+def sdd_falso(nombre, findings=(), salida=None, codigo=0):
+    """Un sdd.py falso para SDD_SCRIPT: anota con que argumentos y proyecto
+    lo llaman, y responde sdd.trace/v1 con findings (o salida tal cual)."""
+    d = BASE / "sdd-falsos" / nombre
+    d.mkdir(parents=True, exist_ok=True)
+    datos = salida if salida is not None else json.dumps(
+        {"schema": "sdd.trace/v1", "feature": "x", "ok": not findings,
+         "findings": list(findings)})
+    script = d / "sdd.py"
+    script.write_text(
+        "import json, os, sys\n"
+        f"with open({str(d / 'llamadas.txt')!r}, 'a') as f:\n"
+        "    f.write(json.dumps([sys.argv[1:], os.environ.get('CLAUDE_PROJECT_DIR')]) + '\\n')\n"
+        f"sys.stdout.write({datos!r})\n"
+        f"sys.exit({codigo})\n", encoding="utf-8")
+    return script
+
+
+def llamadas(script):
+    path = script.parent / "llamadas.txt"
+    if not path.is_file():
+        return []
+    return [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines()]
+
+
+# Por defecto, una trazabilidad limpia: las features de prueba no tienen
+# pruebas propias, y el sdd.py real daria errores que no son de la prueba.
+os.environ["SDD_SCRIPT"] = str(sdd_falso("limpio"))
+
+
 def expect(ok, nombre, detalle=""):
     extra = f" :: {detalle}" if detalle and not ok else ""
     print(f"  {'ok  ' if ok else 'FALLA'} {nombre}{extra}")
@@ -284,6 +314,16 @@ def test_F010_R002_contrato_con_sdd():
     expect(release_specs.feature(d)["phases"]["spec"] == "stale" and "[!] spec.md" in estado,
            "una spec editada tras aprobarse está cambiada para los dos", estado)
 
+    # D4: el trace --feature real del repositorio se lee sin aviso.
+    repo = PLUGIN.parent.parent
+    with con_sdd(None):
+        datos, motivo = release.trace(repo, release_specs.feature_dirs(repo)[0].name)
+        avisos = [x for x in release.check_trace(repo, {"slug": "009"}, "x")
+                  if x["code"] == "W-RELEASE-NO-TRACE"]
+    expect(datos is not None and motivo is None and datos["schema"] == "sdd.trace/v1",
+           "release lee el sdd.trace/v1 real del repositorio", f"{motivo}")
+    expect(not avisos, "trace --feature 009 real, sin aviso", f"{avisos}")
+
 
 # ----------------------------------------------------------------- T004
 
@@ -395,6 +435,131 @@ def test_F010_R014_borrador_avisa():
     feature(p, "008-exportar")
     version(p, "0.1.0")
     expect(len(de(p, "W-RELEASE-NOT-APPROVED")) == 1, "aviso de versión sin aprobar")
+
+
+# ----------------------------------------------------------------- T005
+
+def con_sdd(script):
+    """Contexto que cambia SDD_SCRIPT (None la quita) y la restaura."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def ctx():
+        antes = os.environ.get("SDD_SCRIPT")
+        if script is None:
+            os.environ.pop("SDD_SCRIPT", None)
+        else:
+            os.environ["SDD_SCRIPT"] = str(script)
+        try:
+            yield
+        finally:
+            if antes is None:
+                os.environ.pop("SDD_SCRIPT", None)
+            else:
+                os.environ["SDD_SCRIPT"] = antes
+    return ctx()
+
+
+def test_F010_R004_trazabilidad_con_errores():
+    print("\nF010 · R004: una feature con errores de trazabilidad no entra")
+    p = proyecto("r004")
+    feature(p, "008-exportar")
+    version(p, "0.1.0", "008")
+    falso = sdd_falso("r004", [
+        {"code": "W-TEST-UNSCOPED", "severity": "warning", "message": "aviso"},
+        {"code": "E-REQ-NO-TEST", "severity": "error", "message": "R001 sin prueba."},
+        {"code": "E-DONE-NO-TEST", "severity": "error", "message": "T001 sin prueba."}])
+    with con_sdd(falso):
+        msgs = de(p, "E-RELEASE-FEATURE-TRACE")
+    expect(len(msgs) == 1 and "008-exportar" in msgs[0] and "2 error(es)" in msgs[0]
+           and "E-REQ-NO-TEST" in msgs[0], "nombra la feature y el primer código", f"{msgs}")
+    expect([c[0] for c in llamadas(falso)] == [["trace", "--feature", "008-exportar", "--json"]]
+           and llamadas(falso)[0][1] == str(p),
+           "llama a trace --feature con la feature y el proyecto", f"{llamadas(falso)}")
+    with con_sdd(sdd_falso("r004-avisos", [
+            {"code": "W-PLAN-NO-DIAGRAMS", "severity": "warning", "message": "aviso"}])):
+        expect(not de(p, "E-RELEASE-FEATURE-TRACE") and not de(p, "W-RELEASE-NO-TRACE"),
+               "los avisos de la trazabilidad no impiden la versión")
+    with con_sdd(sdd_falso("r004-proc", [
+            {"code": "E-REQ-NO-TEST", "severity": "error", "message": "R001 sin prueba."}])):
+        r = run(p, "check", "--check")
+    expect(r.returncode == 1 and "E-RELEASE-FEATURE-TRACE" in r.stdout,
+           "también desde la línea de órdenes", r.stdout + r.stderr)
+
+
+def test_F010_R005_adr_no_aprobado():
+    print("\nF010 · R005: un plan que cita una decisión no aprobada no entra")
+    p = proyecto("r005")
+    feature(p, "008-exportar", plan=plan_md(adrs=("ADR-0004",)))
+    version(p, "0.1.0", "008")
+    with con_sdd(sdd_falso("r005", [
+            {"code": "E-PLAN-ADR-NOT-APPROVED", "severity": "error",
+             "message": "plan.md cita ADR-0004, que no está aprobada (Proposed)."}])):
+        adr = de(p, "E-RELEASE-FEATURE-ADR")
+        traza = de(p, "E-RELEASE-FEATURE-TRACE")
+    expect(len(adr) == 1 and "008-exportar" in adr[0] and "ADR-0004" in adr[0],
+           "nombra la feature y la decisión", f"{adr}")
+    expect(not traza, "la decisión no se cuenta además como error de trazabilidad", f"{traza}")
+
+
+def test_F010_R016_sin_trazabilidad():
+    print("\nF010 · R016: sin trazabilidad, aviso y el resto de comprobaciones")
+    p = proyecto("r016")
+    feature(p, "008-exportar", tasks=tasks_md(estados=("x", "~")))
+    version(p, "0.1.0", "008")
+    aislado = BASE / "aislado" / "release"
+    (aislado / "scripts").mkdir(parents=True)
+    with con_sdd(None):
+        r = run(p, "check", "--json", env_extra={"CLAUDE_PLUGIN_ROOT": str(aislado)})
+    data = json.loads(r.stdout) if r.returncode == 0 else {"findings": []}
+    codigos = [f["code"] for f in data["findings"]]
+    PROBADOS.update(codigos)
+    avisos = [f["message"] for f in data["findings"] if f["code"] == "W-RELEASE-NO-TRACE"]
+    expect(len(avisos) == 1 and "008-exportar" in avisos[0] and "sdd.py" in avisos[0],
+           "sin sdd.py: aviso que nombra la feature", r.stdout + r.stderr)
+    expect("E-RELEASE-FEATURE-OPEN-TASKS" in codigos,
+           "y el resto de comprobaciones se aplica", f"{codigos}")
+    for nombre, falso in (("sale con 1", sdd_falso("r016-falla", codigo=1)),
+                          ("salida ilegible", sdd_falso("r016-basura", salida="no es json")),
+                          ("otro schema", sdd_falso("r016-otro", salida='{"findings": []}'))):
+        with con_sdd(falso):
+            expect(len(de(p, "W-RELEASE-NO-TRACE")) == 1, f"{nombre}: aviso")
+    lento = sdd_falso("r016-lento")
+    lento.write_text("import time\ntime.sleep(5)\n", encoding="utf-8")
+    limite, release.TRACE_TIMEOUT = release.TRACE_TIMEOUT, 0.5
+    try:
+        with con_sdd(lento):
+            msgs = de(p, "W-RELEASE-NO-TRACE")
+    finally:
+        release.TRACE_TIMEOUT = limite
+    expect(len(msgs) == 1 and "TimeoutExpired" in msgs[0],
+           "pasado el tiempo máximo: aviso", f"{msgs}")
+
+    cache = BASE / "cache"
+    (cache / "release" / "abc" / "scripts").mkdir(parents=True)
+    viejo = sdd_falso("cache-viejo")
+    for version_dir, origen in (("111", viejo), ("222", sdd_falso("cache-nuevo"))):
+        d = cache / "sdd" / version_dir / "scripts"
+        d.mkdir(parents=True)
+        shutil.copy(origen, d / "sdd.py")
+    os.utime(cache / "sdd" / "111" / "scripts" / "sdd.py", (1, 1))
+    antes = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    os.environ["CLAUDE_PLUGIN_ROOT"] = str(cache / "release" / "abc")
+    try:
+        with con_sdd(None):
+            elegido = release.sdd_script()
+        with con_sdd(BASE / "no-existe.py"):
+            sin_variable = release.sdd_script()
+    finally:
+        if antes is None:
+            os.environ.pop("CLAUDE_PLUGIN_ROOT", None)
+        else:
+            os.environ["CLAUDE_PLUGIN_ROOT"] = antes
+    expect(elegido == cache / "sdd" / "222" / "scripts" / "sdd.py",
+           "en la caché del marketplace elige la versión más reciente", f"{elegido}")
+    expect(sin_variable == elegido, "un SDD_SCRIPT que no existe se salta")
+    with con_sdd(None):
+        expect(release.sdd_script() == SDD, "en el repositorio, el sdd hermano")
 
 
 def cobertura_de_codigos():

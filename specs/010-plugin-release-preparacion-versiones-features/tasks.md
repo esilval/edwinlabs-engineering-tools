@@ -88,7 +88,7 @@ features de prueba escritas en el formato de `sdd`. Las de `sdd`, en
 
 ### T005 — Trazabilidad desde `release`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R004, R005, R016
 - **Depende de:** T002, T004
 - **Archivos:** `plugins/release/scripts/release.py`, `plugins/release/tests/selftest.py`

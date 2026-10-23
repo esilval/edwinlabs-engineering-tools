@@ -14,13 +14,16 @@ Subcomandos:
   check [vX.Y.Z] [--json] [--check]
                       Comprueba la version indicada, o todas las de
                       releases/. --json emite release.check/v1; --check sale
-                      con 1 si hay errores (para CI).
+                      con 1 si hay errores (para CI). La trazabilidad de
+                      cada feature la da sdd.py trace --feature, que se busca
+                      en SDD_SCRIPT, junto al plugin o en la cache de plugins.
 """
 
 import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -184,6 +187,92 @@ def check_feature(root, release, name, others):
         out.append(_finding("E-RELEASE-FEATURE-TYPE",
                             f"La feature {f['slug']} tiene Tipo «{f['type_raw']}»: "
                             "solo vale funcionalidad o corrección.", rel))
+    return out + check_trace(root, f, rel)
+
+
+# --------------------------------------------------------------------------
+# Trazabilidad de sdd (D4): sdd.py trace --feature NNN --json, como comando
+# externo; se lee su contrato publico sdd.trace/v1, no su codigo.
+# --------------------------------------------------------------------------
+
+TRACE_TIMEOUT = 60
+ADR_CODES = {"E-PLAN-ADR-UNKNOWN", "E-PLAN-ADR-NOT-APPROVED"}
+
+
+def plugin_root():
+    return Path(os.environ.get("CLAUDE_PLUGIN_ROOT")
+                or Path(__file__).resolve().parent.parent)
+
+
+def sdd_script():
+    """El sdd.py que se usa para trazar, o None. Orden de D4: SDD_SCRIPT; el
+    plugin hermano (repositorio o enlace de desarrollo); la cache de plugins
+    del marketplace, la version mas reciente. Los directorios de la cache se
+    nombran por huella, no por numero: la mas reciente es la de sdd.py
+    modificado por ultima vez, que es la ultima instalada."""
+    env = os.environ.get("SDD_SCRIPT")
+    if env and Path(env).is_file():
+        return Path(env)
+    here = plugin_root()
+    sibling = here.parent / "sdd" / "scripts" / "sdd.py"
+    if sibling.is_file():
+        return sibling
+    try:
+        cached = [p for p in (here.parent.parent / "sdd").glob("*/scripts/sdd.py")
+                  if p.is_file()]
+    except OSError:
+        cached = []
+    return max(cached, key=lambda p: p.stat().st_mtime) if cached else None
+
+
+def trace(root, slug):
+    """(sdd.trace/v1, None) de la feature, o (None, motivo) si no se pudo."""
+    script = sdd_script()
+    if script is None:
+        return None, "no se encuentra sdd.py (instala sdd o fija SDD_SCRIPT)"
+    # CLAUDE_PLUGIN_ROOT es el de sdd, no el de release: sdd.py lee de ahi
+    # sus plantillas para reconocer los huecos.
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(root),
+               CLAUDE_PLUGIN_ROOT=str(script.parent.parent))
+    try:
+        r = subprocess.run([sys.executable, str(script), "trace", "--feature", slug, "--json"],
+                           capture_output=True, text=True, cwd=str(root), env=env,
+                           timeout=TRACE_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"sdd.py trace no se pudo ejecutar ({exc.__class__.__name__})"
+    if r.returncode != 0:
+        why = (r.stderr.strip().splitlines() or [f"salió con {r.returncode}"])[-1]
+        return None, f"sdd.py trace falló: {why}"
+    try:
+        data = json.loads(r.stdout)
+        if data.get("schema") != "sdd.trace/v1" or not isinstance(data.get("findings"), list):
+            raise ValueError
+    except (ValueError, AttributeError):
+        return None, "la salida de sdd.py trace no es sdd.trace/v1"
+    return data, None
+
+
+def check_trace(root, f, rel):
+    """E-RELEASE-FEATURE-ADR (R005), E-RELEASE-FEATURE-TRACE (R004) o
+    W-RELEASE-NO-TRACE (R016)."""
+    data, why = trace(root, f["slug"])
+    if data is None:
+        return [_finding("W-RELEASE-NO-TRACE",
+                         f"No se pudo obtener la trazabilidad de la feature {f['slug']}: "
+                         f"{why}. No se comprueban su trazabilidad ni sus decisiones de "
+                         "arquitectura; el resto de comprobaciones sí.", rel)]
+    errors = [x for x in data["findings"]
+              if isinstance(x, dict) and x.get("severity") == "error"]
+    out = [_finding("E-RELEASE-FEATURE-ADR",
+                    f"La feature {f['slug']}: {x.get('message', x['code'])}", rel)
+           for x in errors if x.get("code") in ADR_CODES]
+    rest = [x for x in errors if x.get("code") not in ADR_CODES]
+    if rest:
+        out.append(_finding("E-RELEASE-FEATURE-TRACE",
+                            f"La trazabilidad de la feature {f['slug']} da {len(rest)} "
+                            f"error(es), el primero [{rest[0].get('code')}] "
+                            f"{rest[0].get('message', '')}. Se corrige en sdd (/sdd:trace).",
+                            rel))
     return out
 
 
@@ -294,7 +383,10 @@ FINDINGS = {
                                        "tras aprobarse"),
     "E-RELEASE-FEATURE-OPEN-TASKS": "La feature tiene tareas sin cerrar",
     "E-RELEASE-FEATURE-TYPE": "El Tipo de la spec no es funcionalidad ni corrección",
+    "E-RELEASE-FEATURE-TRACE": "La trazabilidad de la feature tiene errores",
+    "E-RELEASE-FEATURE-ADR": "El plan cita una decisión de arquitectura no aprobada",
     "W-RELEASE-NOT-APPROVED": "Versión sin aprobar o cambiada después de aprobarse",
+    "W-RELEASE-NO-TRACE": "La trazabilidad de una feature no se pudo obtener",
 }
 
 
