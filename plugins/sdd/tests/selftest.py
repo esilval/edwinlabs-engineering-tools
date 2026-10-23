@@ -2444,6 +2444,35 @@ def test_F009_R008_pide_citar_la_decision(base):
            "la skill del plan pide citar la decision en cada llamada, con un ejemplo")
 
 
+def test_F010_R017_tipo(base):
+    print("\nF010 · R017: la spec nace con la fila Tipo")
+    p = base / "f010-tipo"
+    p.mkdir()
+    r = run("new", ["exportar ventas"], cwd=p)
+    feature = json.loads(r.stdout)["feature"] if r.returncode == 0 else None
+    expect(feature is not None, "new crea la feature", r.stdout + r.stderr)
+    if feature:
+        spec = (p / "specs" / feature / "spec.md").read_text(encoding="utf-8")
+        cabecera = spec.split("\n## ", 1)[0]
+        expect(re.search(r"^\| Estado \|[^\n]*\n\| Tipo   \| funcionalidad \|$", cabecera, re.M),
+               "Tipo en funcionalidad, tras Estado", cabecera)
+        if str(PLUGIN / "scripts") not in sys.path:
+            sys.path.insert(0, str(PLUGIN / "scripts"))
+        import sdd_trace
+        huecos = [linea for _, linea in sdd_trace.find_placeholders(cabecera, "spec.md")]
+        expect(not any("Tipo" in h for h in huecos), "la fila Tipo no es un hueco", f"{huecos}")
+
+    p = con_producto(base / "f010-tipo-candidata")
+    run("new", ["B02"], cwd=p)
+    spec = (p / "specs" / "001-exportar-movimientos" / "spec.md").read_text(encoding="utf-8")
+    cabecera = spec.split("\n## ", 1)[0]
+    expect("| Tipo   | funcionalidad |\n| Issue  | —            |\n| Origen | B02 · G2 · D1§4 |\n"
+           in cabecera, "el traspaso desde la candidata conserva Tipo junto a Origen", cabecera)
+    skill = (PLUGIN / "skills" / "specify" / "SKILL.md").read_text(encoding="utf-8")
+    expect("`corrección`" in skill and "`Tipo`" in skill,
+           "la skill dice cuándo cambiarla a corrección")
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -2508,6 +2537,7 @@ def main():
         test_F009_R006_sin_diagramas_avisa(base)
         test_F009_R007_trace_sin_arquitectura(base)
         test_F009_R008_pide_citar_la_decision(base)
+        test_F010_R017_tipo(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

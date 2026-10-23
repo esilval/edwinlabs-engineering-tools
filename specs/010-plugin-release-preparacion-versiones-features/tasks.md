@@ -28,7 +28,7 @@ features de prueba escritas en el formato de `sdd`. Las de `sdd`, en
 
 ### T001 — `sdd`: fila `Tipo` en la spec `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R017
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/templates/spec.md`, `plugins/sdd/skills/specify/SKILL.md`, `plugins/sdd/tests/selftest.py`
