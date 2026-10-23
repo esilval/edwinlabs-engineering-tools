@@ -9,6 +9,7 @@ claude plugin marketplace add esilval/edwinlabs-engineering-tools
 claude plugin install discovery --scope user
 claude plugin install architecture --scope user
 claude plugin install sdd --scope user
+claude plugin install release --scope user
 ```
 
 Cada plugin funciona por su cuenta: instala solo los que vayas a usar.
@@ -23,8 +24,8 @@ Los plugins forman una serie que cubre el ciclo de vida de un producto, una
 etapa por plugin:
 
 ```
-discovery  →  architecture  →  sdd  →  release · operate (pendientes)
-producto      decisiones        features
+discovery  →  architecture  →  sdd  →  release  →  operate (pendiente)
+producto      decisiones        features  versiones
 ```
 
 | Plugin | Qué hace | Deja en el proyecto |
@@ -32,6 +33,7 @@ producto      decisiones        features
 | [`discovery`](plugins/discovery) | De documento de producto a backlog de features: brief (objetivos, restricciones), candidatas y trazabilidad documento → objetivo → candidata, aprobados por el usuario. | `product/` |
 | [`architecture`](plugins/architecture) | De producto aprobado a arquitectura: atributos de calidad medibles, componentes con las candidatas que alojan, decisiones (ADR) y estándares comprobables, aprobados por el usuario. Solo para productos nuevos. | `architecture/` |
 | [`sdd`](plugins/sdd) | Desarrollo orientado a especificaciones: spec → plan → tareas → implementación, con una compuerta que impide escribir código sin especificación aprobada y trazabilidad requisito → tarea → prueba. | `specs/`, `.sdd/` |
+| [`release`](plugins/release) | De features terminadas a versión preparada: comprueba que las features elegidas están aprobadas, cerradas y trazadas, propone el número SemVer y deja notas para usuarios y cambios técnicos, aprobados por el usuario. No despliega ni etiqueta. | `releases/` |
 
 Cómo encajan:
 
@@ -42,10 +44,13 @@ Cómo encajan:
   propone (`Proposed`) para que el usuario la decida con
   `/architecture:review`. `/sdd:trace` da error si un plan cita una decisión
   no aprobada.
+- `/release:new 008 009` prepara una versión con features terminadas: lee
+  `specs/`, ejecuta la trazabilidad de `sdd` sobre cada una y cita en las notas
+  las candidatas y objetivos de su fila `Origen`.
 - Ningún plugin importa código de otro: se unen solo por esos archivos. Lo que
   uno lee del formato de otro lo lleva copiado y documentado, y una prueba de
   contrato lo contrasta con el plugin real en CI.
-- En los tres, aprobar es del usuario: las skills que aprueban solo las lanza
+- En todos, aprobar es del usuario: las skills que aprueban solo las lanza
   él, y unos hooks impiden que el modelo escriba o ejecute una aprobación.
 
 Un flujo completo, en un producto nuevo:
@@ -61,6 +66,8 @@ Un flujo completo, en un producto nuevo:
 /sdd:plan                             # sobre la arquitectura aprobada
 /sdd:tasks
 /sdd:implement
+/release:new 001 002                  # versión con las features terminadas
+/release:approve                      # y el git tag lo ejecutas tú
 ```
 
 En un repositorio que ya existe, `sdd` funciona solo, sin los demás.

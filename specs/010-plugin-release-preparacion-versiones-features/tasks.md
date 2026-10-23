@@ -158,7 +158,7 @@ features de prueba escritas en el formato de `sdd`. Las de `sdd`, en
 
 ### T010 — Skills, documentación y cierre
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R009, R011, R014
 - **Depende de:** T009
 - **Archivos:** `plugins/release/skills/new/SKILL.md`, `plugins/release/skills/check/SKILL.md`, `plugins/release/skills/approve/SKILL.md`, `plugins/release/README.md`, `README.md`, `plugins/sdd/README.md`, `plugins/sdd/docs/standards-roadmap.md`

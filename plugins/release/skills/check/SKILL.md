@@ -1,6 +1,7 @@
 ---
 name: check
 description: Comprueba las versiones de releases/ - features sin aprobar, con tareas abiertas, con errores de trazabilidad o ya publicadas, número de versión inválido, huecos sin completar y cambios tras aprobar.
+argument-hint: "[vX.Y.Z]"
 ---
 
 # Check — comprobación de las versiones

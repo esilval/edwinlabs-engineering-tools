@@ -831,7 +831,7 @@ def test_F010_R011_aprobacion():
     p, path = borrador_listo("r011")
     subprocess.run(["git", "init", "-q", str(p)], capture_output=True, timeout=30)
     (p / "releases" / "nota.md").write_text("no es una versión", encoding="utf-8")
-    r = run(p, "approve")
+    r = run(p, "approve", "", "--skill")
     texto = path.read_text(encoding="utf-8")
     sello = re.search(r"\| Estado   \| Approved · ([0-9a-f]{12}) \|", texto)
     expect(r.returncode == 0 and sello and sello.group(1) == release.content_digest(texto),

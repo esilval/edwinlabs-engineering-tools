@@ -61,6 +61,12 @@ specs/
 └── config.json      opcional
 ```
 
+La cabecera de `spec.md` lleva la fila `| Tipo | funcionalidad |`. Si la
+feature solo corrige comportamiento existente, el usuario la cambia a
+`corrección` (`/sdd:specify` lo pregunta si no está claro). `sdd` no comprueba
+el valor: lo lee el plugin `release` para proponer el número de versión, y da
+error si no es ninguno de los dos.
+
 ## Desde discovery
 
 Si el proyecto pasó por el plugin `discovery`, cada candidata del backlog
@@ -311,7 +317,14 @@ falta. Es lo que convierte los `R001` en algo con consecuencias.
 sdd.py trace           # reporte legible, siempre sale con 0
 sdd.py trace --json    # contrato estable para CI (schema sdd.trace/v1)
 sdd.py trace --check   # sale con 1 si hay algún error
+sdd.py trace --feature 008 --json   # otra feature, sin cambiar la activa
 ```
+
+`--feature` acepta el número (`008`) o el directorio (`008-slug`) y se combina
+con `--json` y `--check`: el resultado es el mismo que con esa feature activa,
+y `.sdd/current` no cambia. Si no existe, o si dos features comparten el
+número, sale con 1 y la nombra. Lo usa el plugin `release` para trazar cada
+feature de una versión.
 
 La evidencia de prueba se detecta por el ID del requisito **con el prefijo de
 la feature** dentro del archivo de test, en el nombre de la función o en un

@@ -771,7 +771,8 @@ def cmd_approve(args):
     Con --skill (lo usa /release:approve) todo va a stdout y sale siempre con
     0: el resultado lo lee el modelo como texto, no como codigo de salida.
     """
-    rest = [a for a in args if a != "--skill"]
+    # /release:approve pasa "$ARGUMENTS" entre comillas: vacio si no hay.
+    rest = [a for a in args if a != "--skill" and a.strip()]
     version = version_arg(rest[0]) if len(rest) == 1 else None
     try:
         if len(rest) > 1 or (rest and not version):
