@@ -1,0 +1,8 @@
+{
+  "name": "operate",
+  "displayName": "Operate",
+  "description": "De versión publicada a operación: preparación de cada versión (puesta en marcha, señales con umbral y vuelta atrás) e incidentes con postmortems cuyas acciones vuelven a sdd como correcciones, con aprobación del usuario. No despliega ni ejecuta nada.",
+  "author": { "name": "Edwin Silva" },
+  "license": "MIT",
+  "keywords": ["operations", "runbook", "incidents", "postmortem", "spec-driven"]
+}

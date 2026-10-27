@@ -28,7 +28,7 @@ Las del traspaso, en `plugins/sdd/tests/selftest.py`.
 
 ### T001 — Esqueleto de `operate`, lectura de los otros plugins y prefijos
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R011, R015
 - **Depende de:** —
 - **Archivos:** `plugins/operate/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `plugins/operate/scripts/operate_sources.py`, `plugins/operate/skills/check/SKILL.md`, `plugins/operate/tests/selftest.py`, `plugins/sdd/docs/standards-roadmap.md`
