@@ -8,6 +8,10 @@ codigo. El LLM no deberia tener que "acordarse" de nada de esto.
 
 Subcomandos:
   new <descripcion>   Crea specs/NNN-slug/ y lo marca como feature activa.
+                      Con un ID de candidata (B03) y product/backlog.md, desde
+                      la candidata de discovery; con un ID de accion (I001-A2)
+                      y operations/incidents.md, una correccion desde la
+                      accion de un postmortem aprobado de operate.
   current             Imprime el slug de la feature activa (vacio si no hay).
   status              Reporte legible del estado del proyecto.
   context             Linea breve para inyectar en SessionStart.
@@ -494,6 +498,89 @@ def origin_value(handoff):
     return " · ".join(x or "—" for x in parts)
 
 
+# --------------------------------------------------------------------------
+# Traspaso desde operate (feature 011, D7): una correccion desde la accion de
+# un postmortem aprobado.
+# --------------------------------------------------------------------------
+
+def _operate():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import sdd_operate
+    return sdd_operate
+
+
+UNKNOWN_VERSION = {"", "desconocida", "desconocido", "—", "-"}
+
+
+def prepare_action_handoff(root, aid):
+    """
+    Lee la accion aid (I001-A2) del postmortem de operate. Devuelve
+    (handoff, None) o (None, motivo) si no se puede crear la feature:
+    incidente inexistente, postmortem sin aprobar o cambiado, accion
+    inexistente o que ya tiene feature (R014). No escribe nada.
+    """
+    op = _operate()
+    aid = aid.upper()
+    iid = aid.split("-", 1)[0]
+    inc = op.incident(root, iid)
+    if inc is None:
+        return None, (f"No se crea la feature: el incidente {iid} no existe en "
+                      "operations/incidents/.")
+    if inc["state"] != "approved":
+        motivo = ("cambió después de aprobarse: el usuario lo revisa y lo aprueba de nuevo "
+                  "con /operate:approve" if inc["state"] == "stale"
+                  else "no está aprobado: lo aprueba el usuario con /operate:approve")
+        return None, (f"No se crea la feature desde {aid}: el postmortem de {iid} "
+                      f"({inc['rel']}) {motivo}.")
+    act = op.action(inc["text"], aid)
+    if act is None:
+        return None, (f"No se crea la feature: {aid} no existe en el postmortem de {iid} "
+                      f"({inc['rel']}).")
+    taken = features_by_origin(root)
+    if aid in taken:
+        return None, (f"No se crea la feature: {aid} ya tiene una, {taken[aid]} "
+                      f"(fila Origen de specs/{taken[aid]}/spec.md).")
+    version = inc["version"].strip("`*_ ")
+    if op.product.norm(version) in UNKNOWN_VERSION:
+        version = "—"
+    return {"action": act, "incident": inc, "version": version}, None
+
+
+def set_header_row(text, name, value, after="Estado"):
+    """La fila '| name | value |' de la cabecera, cambiada o añadida tras after."""
+    end = _trace()._header_end(text)
+    head, rest = text[:end], text[end:]
+    row = re.compile(rf"^(\|\s*{name}\s*\|\s*)([^|\n]*?)(\s*\|)", re.M)
+    if row.search(head):
+        return row.sub(lambda m: m.group(1) + value + m.group(3), head, count=1) + rest
+    anchor = re.compile(rf"^\|\s*{after}\s*\|[^\n]*\n", re.M)
+    return anchor.sub(lambda m: m.group(0) + f"| {name} | {value} |\n", head, count=1) + rest
+
+
+def fill_from_action(text, handoff):
+    """Problema, Contexto, Tipo corrección y la fila Origen, desde la accion (D7)."""
+    op = _operate()
+    act, inc, version = handoff["action"], handoff["incident"], handoff["version"]
+    missing = "No consta en el incidente."
+    problem = [op.section(inc["text"], "qué pasó") or missing, "",
+               f"**Impacto:** {op.section(inc['text'], 'impacto') or missing}", "",
+               f"**Acción {act['id']} del postmortem:** {act['title']}"
+               + (f". {act['what']}" if act["what"] else "")]
+    text = _replace_section(text, "Problema", "\n".join(problem))
+    context = [f"Feature de corrección creada desde la acción {act['id']} del postmortem "
+               f"aprobado del incidente {inc['id']} (`{inc['rel']}`), sobre la versión "
+               f"{version}.", "", "Causas, según el postmortem:", "",
+               op.section(inc["text"], "causas") or missing]
+    text = _replace_section(text, "Contexto", "\n".join(context))
+    text = set_header_row(text, "Tipo", "corrección")
+    row = f"| Origen | {act['id']} · {version} |\n"
+    issue = re.compile(r"^\|\s*Issue\s*\|[^\n]*\n", re.M)
+    if issue.search(text):
+        return issue.sub(lambda m: m.group(0) + row, text, count=1)
+    return re.sub(r"^(\|\s*Estado\s*\|[^\n]*\n)", lambda m: m.group(1) + row, text,
+                  count=1, flags=re.M)
+
+
 def _replace_section(text, title, body):
     """Sustituye el cuerpo de '## title' hasta el siguiente encabezado de nivel 2."""
     pattern = re.compile(rf"(^## {re.escape(title)}[^\n]*\n)(.*?)(?=^## |\Z)", re.M | re.S)
@@ -549,7 +636,18 @@ def cmd_new(args):
     # Traspaso desde discovery (D1): solo con un ID de candidata y un backlog.
     # Cualquier otra descripcion sigue el camino de siempre.
     handoff = None
-    if (CANDIDATE_ARG.match(description)
+    # Traspaso desde operate (feature 011, D7): solo con un ID de accion y el
+    # registro de incidentes (R018).
+    action_handoff = None
+    op = _operate()
+    if op.ACTION_ARG.match(description) and op.has_registry(root):
+        action_handoff, refusal = prepare_action_handoff(root, description)
+        if refusal:
+            print(refusal.rstrip(), file=sys.stderr)
+            return 1
+        act = action_handoff["action"]
+        description = act["title"] or act["id"]
+    elif (CANDIDATE_ARG.match(description)
             and (root / "product" / "backlog.md").is_file()):
         handoff, refusal = prepare_handoff(root, description)
         if refusal:
@@ -575,6 +673,8 @@ def cmd_new(args):
     spec_text = render_template("spec.md", mapping, plugin_root)
     if handoff:
         spec_text = fill_from_candidate(spec_text, handoff)
+    if action_handoff:
+        spec_text = fill_from_action(spec_text, action_handoff)
     (feature / "spec.md").write_text(spec_text, encoding="utf-8")
 
     sdd = root / ".sdd"
@@ -589,6 +689,11 @@ def cmd_new(args):
     }
     if handoff:
         out.update(handoff_json(handoff))
+    if action_handoff:
+        inc = action_handoff["incident"]
+        out.update({"origin": {"action": action_handoff["action"]["id"],
+                               "incident": inc["id"], "version": action_handoff["version"]},
+                    "context": {"incident": inc["rel"]}})
     print(json.dumps(out, indent=2))
     return 0
 

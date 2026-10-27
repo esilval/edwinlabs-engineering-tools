@@ -131,7 +131,7 @@ Las del traspaso, en `plugins/sdd/tests/selftest.py`.
 
 ### T008 — El traspaso a `sdd` desde una acción
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R013, R014, R018
 - **Depende de:** T006
 - **Archivos:** `plugins/sdd/scripts/sdd.py`, `plugins/sdd/scripts/sdd_operate.py`, `plugins/sdd/skills/specify/SKILL.md`, `plugins/sdd/tests/selftest.py`
