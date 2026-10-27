@@ -73,7 +73,7 @@ Las del traspaso, en `plugins/sdd/tests/selftest.py`.
 
 ### T004 — `prepare` y la plantilla de preparación `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002, R017
 - **Depende de:** T001
 - **Archivos:** `plugins/operate/scripts/operate.py`, `plugins/operate/templates/preparation.md`, `plugins/operate/tests/selftest.py`

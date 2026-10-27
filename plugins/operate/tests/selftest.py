@@ -663,6 +663,108 @@ def test_F011_R015_accion_sin_feature():
            "el postmortem aprobado no da errores")
 
 
+# ----------------------------------------------------------------- T004
+
+def feature_a_mano(p, slug, titulo, origen=None, plan=""):
+    """specs/<slug>/ con spec y plan en el formato de sdd."""
+    d = p / "specs" / slug
+    d.mkdir(parents=True)
+    fila = f"| Origen | {origen} |\n" if origen else ""
+    (d / "spec.md").write_text(f"# Spec: {titulo}\n\n| Campo  | Valor |\n| ------ | ----- |\n"
+                               f"| Estado | Draft |\n{fila}\n## Problema\n\nAlgo.\n",
+                               encoding="utf-8")
+    (d / "plan.md").write_text("# Plan: x\n\n| Campo  | Valor |\n| ------ | ----- |\n"
+                               f"| Estado | Draft |\n\n## Decisiones\n\n{plan or 'Ninguna.'}\n",
+                               encoding="utf-8")
+    return d
+
+
+def con_version(nombre, aprobada=True, **origenes):
+    """Proyecto con 008 y 009 y la versión 0.4.0 que las incluye."""
+    p = proyecto(nombre)
+    feature_a_mano(p, "008-resumen-diario", "Resumen diario", origenes.get("o008"),
+                   origenes.get("p008", ""))
+    feature_a_mano(p, "009-exportar", "Exportar movimientos", origenes.get("o009"))
+    version(p, "0.4.0", "008, 009", aprobada=aprobada)
+    return p
+
+
+def prepara(p, numero="0.4.0"):
+    r = run(p, "prepare", f"v{numero}")
+    path = p / "operations" / f"v{numero}.md"
+    return r, (path.read_text(encoding="utf-8") if path.is_file() else "")
+
+
+def seccion(texto, titulo):
+    return texto.split(f"## {titulo}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def test_F011_R001_borrador_de_preparacion():
+    print("\nF011 · R001: prepare escribe la preparación de una versión publicada")
+    p = con_version("r001")
+    r, texto = prepara(p)
+    expect(r.returncode == 0 and "| Estado   | Draft |" in texto,
+           "prepare v0.4.0 escribe operations/v0.4.0.md en borrador", r.stdout + r.stderr)
+    huella = operate_sources.release(p, "0.4.0")["digest"]
+    expect(f"| Versión  | 0.4.0 · {huella} |" in texto and "| Features | 008, 009 |" in texto,
+           "la cabecera guarda la versión con su huella y las features", texto[:400])
+    expect("- 008 — Resumen diario" in seccion(texto, "Features")
+           and "- 009 — Exportar movimientos" in seccion(texto, "Features"),
+           "nombra 008 y 009 con su título", seccion(texto, "Features"))
+    expect(all(f"## {s}" in texto for s in ("Puesta en marcha", "Señales", "Vuelta atrás"))
+           and operate.holes(seccion(texto, "Puesta en marcha"))
+           and operate.holes(seccion(texto, "Vuelta atrás")),
+           "con puesta en marcha, señales y vuelta atrás por completar")
+    expect(len(de(p, "E-PREP-TEMPLATE", "0.4.0")) == 1, "check da sus huecos por error")
+    antes = (p / "operations" / "v0.4.0.md").read_bytes()
+    r, _ = prepara(p)
+    expect(r.returncode == 0 and "ya existe" in r.stdout
+           and (p / "operations" / "v0.4.0.md").read_bytes() == antes,
+           "pedirla otra vez no la cambia y lo dice", r.stdout)
+    expect(run(p, "prepare").returncode == 2, "sin versión sale con 2")
+    expect(run(p, "check", "v0.4.0", "--json").returncode == 0
+           and run(p, "check", "v9.9.9").returncode == 2,
+           "check de una preparación que existe, y de una que no (2)")
+
+
+def test_F011_R002_version_no_publicada():
+    print("\nF011 · R002: solo se prepara una versión publicada")
+    p = con_version("r002", aprobada=False)
+    r, texto = prepara(p)
+    expect(r.returncode == 1 and "no está publicada" in r.stderr and not texto
+           and not (p / "operations").exists(),
+           "la 0.4.0 en borrador: no se crea nada y se dice", r.stdout + r.stderr)
+    r, texto = prepara(p, "9.9.9")
+    expect(r.returncode == 1 and "9.9.9" in r.stderr and not texto,
+           "la 9.9.9 no existe: no se crea nada y se nombra", r.stdout + r.stderr)
+    (p / "operations").mkdir()
+    (p / "operations" / "v0.4.0.md").write_text("# x\n\n| Campo | Valor |\n| - | - |\n"
+                                                "| Estado | Draft |\n", encoding="utf-8")
+    msgs = de(p, "E-PREP-RELEASE")
+    expect(len(msgs) == 1 and "0.4.0" in msgs[0] and "no está publicada" in msgs[0],
+           "una preparación de una versión sin publicar da error en check", f"{msgs}")
+
+
+def test_F011_R017_preparacion_sin_arquitectura():
+    print("\nF011 · R017: sin architecture/, preparación sin señales propuestas")
+    p = con_version("r017-prep", o008="B01 · G1 · D1§1")
+    r, texto = prepara(p)
+    senales = seccion(texto, "Señales")
+    expect(r.returncode == 0 and len(re.findall(r"^### SG", senales, re.M)) == 1
+           and "- **Atributo:** —" in senales and operate.holes(senales),
+           "una sola señal con huecos y sin atributo", senales)
+    expect({f["code"] for f in hallazgos(p)} == {"E-PREP-TEMPLATE"},
+           "sin hallazgos de arquitectura: solo los huecos", f"{hallazgos(p)}")
+    path = p / "operations" / "v0.4.0.md"
+    path.write_text(re.sub(r"^- \*\*(.+?):\*\* _.*_$", r"- **\1:** 5 por minuto", texto,
+                           flags=re.M).replace("_Los pasos", "Los pasos").replace("funciona._",
+                                                                               "funciona."),
+                    encoding="utf-8")
+    msgs = de(p, "E-PREP-TEMPLATE")
+    expect(len(msgs) == 1 and "1 hueco(s)" in msgs[0] and "nombre de la señal" in msgs[0],
+           "el nombre de la señal sin poner también es un hueco", f"{msgs}")
+
+
 def cobertura_de_codigos():
     # main() la ejecuta despues de todas las pruebas: compara los codigos
     # declarados con los que las pruebas vieron emitirse.

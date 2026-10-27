@@ -11,6 +11,10 @@ specs/ (sdd), y solo escribe en operations/. No importa codigo de otros
 plugins: lo que lee de ellos lo copia, documentado, operate_sources.py.
 
 Subcomandos:
+  prepare vX.Y.Z      Escribe operations/vX.Y.Z.md, la preparacion de una
+                      version publicada de releases/, con sus features y los
+                      huecos de puesta en marcha, senales y vuelta atras. Si
+                      ya existe, no la toca.
   incident "<titulo>"  Registra el siguiente incidente (I001, I002…) en
                       operations/incidents.md, que solo crece, y escribe
                       operations/incidents/INNN-slug.md con sus huecos.
@@ -119,16 +123,19 @@ PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_*])_[^_\n]+_(?![A-Za-z0-9_*])")
 TEMPLATE_VAR = re.compile(r"\{\{[A-Z_]+\}\}")
 
 
-def holes(text, generated=()):
+def holes(text, generated=(), subheadings=False):
     """Huecos que siguen sin rellenar. No cuentan las notas en blockquote, el
-    codigo en linea, los encabezados ni las secciones generated, que escribe
-    el script."""
+    codigo en linea, las secciones generated, que escribe el script, ni los
+    encabezados; con subheadings, si cuentan los ### (el nombre de una senal
+    de la preparacion)."""
     out, skip = [], False
     for line in (text or "").splitlines():
         m = re.match(r"^##\s+(.*)$", line)
         if m:
             skip = src.norm(m.group(1)).strip() in generated
-        if skip or line.lstrip().startswith((">", "#")):
+        if skip or line.lstrip().startswith(">"):
+            continue
+        if line.lstrip().startswith("#") and not (subheadings and line.startswith("### ")):
             continue
         plain = re.sub(r"`[^`]*`", " ", line)
         out += [h.group(0) for h in PLACEHOLDER.finditer(plain)]
@@ -270,6 +277,120 @@ def incidents(root):
 
 
 # --------------------------------------------------------------------------
+# Preparaciones (D2, D6): operations/vX.Y.Z.md de una version publicada
+# --------------------------------------------------------------------------
+
+PREPARATION_FILE = re.compile(r"^v(\d+\.\d+\.\d+)\.md$")
+# Seccion que escribe el script: sus lineas no son huecos.
+PREP_GENERATED = ("features",)
+
+SIGNAL_HOLE = """### SG1 — _nombre de la señal_
+
+- **Atributo:** —
+- **Escenario:** _qué se observa_
+- **Umbral:** _a partir de qué cifra preocupa_
+- **Cómo se mide:** _con qué herramienta o consulta_"""
+
+
+def preparations(root):
+    """[{version, rel, text, state}] de operations/vX.Y.Z.md, por nombre."""
+    try:
+        paths = sorted(p for p in (Path(root) / OPS_DIR).iterdir()
+                       if p.is_file() and PREPARATION_FILE.match(p.name))
+    except OSError:
+        return []
+    out = []
+    for path in paths:
+        text = src.read_text(path) or ""
+        out.append({"version": PREPARATION_FILE.match(path.name).group(1),
+                    "rel": f"{OPS_DIR}/{path.name}", "text": text,
+                    "state": src.artifact_state(text)})
+    return out
+
+
+def feature_lines(root, names):
+    """'- 008 — titulo' por cada feature de la version; tal cual si no se
+    resuelve en specs/."""
+    lines = []
+    for name in names:
+        found = src.resolve(root, name)
+        if len(found) == 1:
+            f = src.feature(found[0])
+            lines.append(f"- {found[0].name.split('-', 1)[0]} — {f['title']}")
+        else:
+            lines.append(f"- {name}")
+    return "\n".join(lines) or "Ninguna."
+
+
+def signals(root, release):
+    """Seccion de senales del borrador (D4)."""
+    return SIGNAL_HOLE
+
+
+def release_refusal(version, rel):
+    """Motivo por el que no se prepara la version, o None (R002)."""
+    if rel is None:
+        return (f"No existe {src.RELEASES_DIR}/v{version}.md: solo se prepara una "
+                "versión publicada.")
+    if not src.published(rel):
+        return (f"La versión {version} no está publicada ({rel['rel']} está en borrador): "
+                "la publica el usuario con /release:approve.")
+    return None
+
+
+def cmd_prepare(args):
+    """0 si la escribe o ya existia; 1 si la version no existe o no esta
+    publicada (Contratos); 2 sin una version."""
+    version = version_arg(args[0]) if len(args) == 1 else None
+    if version is None:
+        print("error: indica la versión. Uso: operate.py prepare vX.Y.Z", file=sys.stderr)
+        return 2
+    root = project_root()
+    rel = src.release(root, version)
+    refusal = release_refusal(version, rel)
+    if refusal:
+        print(refusal + " No se ha creado nada.", file=sys.stderr)
+        return 1
+    target = f"{OPS_DIR}/v{version}.md"
+    path = root / target
+    if path.exists():
+        print(f"{target} ya existe: no se toca. Compruébala con /operate:check.")
+        return 0
+    template = template_text("preparation.md")
+    if template is None:
+        print("error: no se encuentra templates/preparation.md del plugin operate. "
+              "No se ha creado nada.", file=sys.stderr)
+        return 1
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(fill(template, {
+        "VERSION": version, "RELEASE_DIGEST": rel["digest"],
+        "DATE": datetime.date.today().isoformat(),
+        "FEATURES": ", ".join(rel["features"]) or "—",
+        "FEATURE_LIST": feature_lines(root, rel["features"]),
+        "SIGNALS": signals(root, rel),
+    }), encoding="utf-8")
+    print(f"{target} escrito en borrador, para la versión publicada {version}.")
+    return 0
+
+
+def check_preparation(root, prep):
+    """Hallazgos de una preparacion en borrador (R002, R009)."""
+    rel = prep["rel"]
+    if prep["state"] != "draft":
+        return []
+    out = []
+    refusal = release_refusal(prep["version"], src.release(root, prep["version"]))
+    if refusal:
+        out.append(_finding("E-PREP-RELEASE", f"{rel}: {refusal}", rel))
+    found = holes(prep["text"], PREP_GENERATED, subheadings=True)
+    if found:
+        out.append(_finding("E-PREP-TEMPLATE",
+                            f"{rel} conserva {len(found)} hueco(s) sin completar, como "
+                            f"«{first_hole(found)}». Los completa /operate:prepare.", rel))
+    return out
+
+
+# --------------------------------------------------------------------------
 # Comprobacion (D5)
 # --------------------------------------------------------------------------
 
@@ -357,15 +478,18 @@ def analyze(root, target=None):
     I001), con el schema operate.check/v1: {schema, ok, counts, findings:
     [{code, severity, message, artifact}]}.
     """
+    all_preps = [p for p in preparations(root) if target in (None, p["version"])]
     all_incidents = [i for i in incidents(root) if target in (None, i["id"])]
     findings = []
+    for prep in all_preps:
+        findings += check_preparation(root, prep)
     for inc in all_incidents:
         findings += check_incident(root, inc)
     errors = sum(1 for f in findings if f["severity"] == "error")
     return {
         "schema": SCHEMA,
         "ok": errors == 0,
-        "counts": {"preparations": 0, "incidents": len(all_incidents),
+        "counts": {"preparations": len(all_preps), "incidents": len(all_incidents),
                    "errors": errors, "warnings": len(findings) - errors},
         "findings": findings,
     }
@@ -410,6 +534,10 @@ def cmd_check(args):
         print(f"error: no existe el incidente {target} en {OPS_DIR}/{INCIDENTS_DIR}/.",
               file=sys.stderr)
         return 2
+    prep = root / OPS_DIR / f"v{target}.md"
+    if target and not target.startswith("I") and not prep.is_file():
+        print(f"error: no existe la preparación {OPS_DIR}/v{target}.md.", file=sys.stderr)
+        return 2
     data = analyze(root, target)
     if "--json" in flags:
         json.dump(data, sys.stdout, indent=2, ensure_ascii=False)
@@ -420,6 +548,7 @@ def cmd_check(args):
 
 
 COMMANDS = {
+    "prepare": cmd_prepare,
     "incident": cmd_incident,
     "next-action": cmd_next_action,
     "check": cmd_check,
@@ -429,6 +558,9 @@ COMMANDS = {
 # contrato publico (prefijos *-PREP-* e *-INCIDENT-* reservados en el
 # registro comun).
 FINDINGS = {
+    "E-PREP-RELEASE": ("La preparación es de una versión que no existe o no está "
+                       "publicada"),
+    "E-PREP-TEMPLATE": "Huecos sin completar en la preparación",
     "E-INCIDENT-RELEASE": "El incidente cita una versión afectada que no existe",
     "E-INCIDENT-TEMPLATE": "Huecos sin completar en el incidente o su postmortem",
     "E-INCIDENT-ACTION-ID": "Una acción sin ID, con el de otro incidente o repetido",
