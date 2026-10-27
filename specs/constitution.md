@@ -2,7 +2,7 @@
 
 | Campo | Valor      |
 | ----- | ---------- |
-| Fecha | 2026-10-22 |
+| Fecha | 2026-10-27 |
 
 > Reglas que ninguna spec, plan o tarea puede violar. Si una regla aquí impide
 > algo que hace falta, se cambia la regla explícitamente, no se ignora.
@@ -62,9 +62,9 @@
 - Añadir una dependencia externa a un script de plugin requiere aprobación
   explícita del usuario.
 - Los códigos de hallazgo y los schemas JSON (`sdd.trace/v1`,
-  `architecture.check/v1`, `release.check/v1`) son contrato
-  público: renombrar o eliminar un código, o cambiar la forma de un campo,
-  exige subir la versión del schema. Añadir códigos es aditivo.
+  `architecture.check/v1`, `release.check/v1`, `operate.check/v1`) son
+  contrato público: renombrar o eliminar un código, o cambiar la forma de un
+  campo, exige subir la versión del schema. Añadir códigos es aditivo.
 - Cada plugin reserva sus prefijos de hallazgo en un registro común antes de
   usarlos (hoy, `docs/standards-roadmap.md` de `sdd`, sección 7).
 - Cambiar el formato de un artefacto que lee otro plugin es un cambio de
@@ -85,8 +85,8 @@ que alguien se acuerde, y eso hay que saberlo.
 | Sintaxis compatible con Python 3.8 | mecánica | `scripts/validate.py --strict` compila todo `.py` en CI con 3.8 | cumple |
 | Estructura de marketplace, plugins, skills, agentes y hooks | mecánica | `scripts/validate.py --strict` en CI | cumple |
 | Hooks con `timeout` | mecánica | `validate.py --strict` (el aviso falla en modo estricto) | cumple |
-| Selftest de cada plugin en CI | mecánica | `.github/workflows/validate.yml` recorre `plugins/*/tests/selftest.py`. Pendiente de automatizar: que `validate.py` exija `tests/selftest.py` en cada plugin | 4 de 4 plugins |
-| Todo código de hallazgo alcanzable | mecánica | el selftest compara los declarados con los probados | cumple en los 4 plugins |
+| Selftest de cada plugin en CI | mecánica | `.github/workflows/validate.yml` recorre `plugins/*/tests/selftest.py`. Pendiente de automatizar: que `validate.py` exija `tests/selftest.py` en cada plugin | 5 de 5 plugins |
+| Todo código de hallazgo alcanzable | mecánica | el selftest compara los declarados con los probados | cumple en los 5 plugins |
 | Solo biblioteca estándar | mecánica | pendiente de automatizar: comprobar los `import` en `validate.py` | cumple |
 | Hooks en forma exec | mecánica | pendiente de automatizar en `validate.py` | cumple |
 | Ningún hook devuelve `allow` | mecánica (parcial) | el selftest de cada plugin lo comprueba para su compuerta; el resto, revisión del diff | cumple |
@@ -95,7 +95,7 @@ que alguien se acuerde, y eso hay que saberlo.
 | Aprobaciones solo por el usuario | revisable | revisión del diff; `disable-model-invocation` en las skills que aprueban | — |
 | Códigos y schemas como contrato | revisable | revisión del diff | — |
 | Plugins unidos solo por archivos | revisable | revisión del diff | — |
-| Código copiado entre plugins, referenciado y contrastado | revisable (parcial) | revisión del diff; pruebas de contrato contra `discovery` en los selftests de `sdd` y `architecture`, y contra `sdd` en el de `release` | cumple |
+| Código copiado entre plugins, referenciado y contrastado | revisable (parcial) | revisión del diff; pruebas de contrato contra `discovery` en los selftests de `sdd` y `architecture`, contra `sdd` en el de `release`, contra `release`, `architecture`, `discovery` y `sdd` en el de `operate`, y contra `operate` en el de `sdd` | cumple |
 | Idioma y formato de commits | juicio | criterio humano | — |
 | Estilo del código | juicio | criterio humano; sin herramienta | — |
 
