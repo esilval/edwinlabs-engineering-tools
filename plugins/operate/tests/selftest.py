@@ -765,6 +765,91 @@ def test_F011_R017_preparacion_sin_arquitectura():
            "el nombre de la señal sin poner también es un hueco", f"{msgs}")
 
 
+# ----------------------------------------------------------------- T005
+
+def senales_de(p):
+    _, texto = prepara(p)
+    return operate.prep_signals(texto), seccion(texto, "Señales")
+
+
+def test_F011_R003_senales_de_la_arquitectura():
+    print("\nF011 · R003: una señal propuesta por atributo de calidad relacionado")
+    p = con_version("r003", o008="B01 · G1 · D1§1", p008="- D1: apoyado en ADR-0002.")
+    con_arquitectura(p)
+    senales, texto = senales_de(p)
+    expect([(s["id"], s["fields"].get("atributo")) for s in senales]
+           == [("SG1", "Q1"), ("SG2", "Q2")],
+           "Q1 por el objetivo G1 de 008, Q2 por ADR-0002 de su plan, y Q3 no",
+           f"{senales}")
+    expect(senales[0]["name"] == "Resumen al cerrar"
+           and "menos de 2 segundos" in senales[0]["fields"].get("escenario", "")
+           and operate.holes(senales[0]["fields"].get("umbral", "")),
+           "cada señal trae el escenario del atributo y el umbral por completar", texto)
+
+    q = con_version("r003-propuesta", o008="B02 · G9", p008="- D1: apoyado en ADR-0003.")
+    con_arquitectura(q)
+    senales, texto = senales_de(q)
+    expect([s["fields"].get("atributo") for s in senales] == ["—"]
+           and "Ningún atributo" in texto,
+           "una ADR propuesta (Q3) no cuenta: señal con huecos y la nota que lo dice", texto)
+
+    q = con_version("r003-sin-aprobar", o008="B01 · G1")
+    con_arquitectura(q, aprobada=False)
+    senales, texto = senales_de(q)
+    expect(len(senales) == 1 and "no está aprobada" in texto,
+           "con la arquitectura sin aprobar, sin propuesta y la nota que lo dice", texto)
+    q = con_version("r003-sin-arquitectura", o008="B01 · G1")
+    _, texto = senales_de(q)
+    expect("no tiene architecture/" in texto, "sin architecture/, la nota lo dice", texto)
+
+
+def preparacion_completa(p, umbral="p95 > 2 s durante 5 minutos", disparador="SG1"):
+    """Prepara 0.4.0 y rellena sus huecos; devuelve la ruta."""
+    prepara(p)
+    path = p / "operations" / "v0.4.0.md"
+    texto = path.read_text(encoding="utf-8")
+    texto = texto.replace("_nombre de la señal_", "Latencia del resumen")
+    texto = re.sub(r"^- \*\*Umbral:\*\* .*$", f"- **Umbral:** {umbral}", texto, flags=re.M)
+    texto = re.sub(r"^- \*\*Disparador:\*\* .*$", f"- **Disparador:** {disparador}", texto,
+                   flags=re.M)
+    texto = re.sub(r"^(- \*\*.+?:\*\*) _.*_$", r"\1 hecho.", texto, flags=re.M)
+    texto = re.sub(r"^_.*_$", "Pasos redactados.", texto, flags=re.M)
+    path.write_text(texto, encoding="utf-8")
+    return path
+
+
+def test_F011_R004_umbral_sin_cifra():
+    print("\nF011 · R004: una señal sin umbral con cifra")
+    p = con_version("r004")
+    path = preparacion_completa(p, umbral="que vaya rápido")
+    msgs = de(p, "E-PREP-SIGNAL-THRESHOLD")
+    expect(len(msgs) == 1 and "SG1 — Latencia del resumen" in msgs[0]
+           and "que vaya rápido" in msgs[0], "error que nombra la señal", f"{msgs}")
+    texto = path.read_text(encoding="utf-8")
+    path.write_text(texto.replace("## Vuelta atrás", "### Errores de exportación\n\n"
+                                  "- **Umbral:** pocos\n\n## Vuelta atrás"), encoding="utf-8")
+    msgs = de(p, "E-PREP-SIGNAL-THRESHOLD")
+    expect(len(msgs) == 2 and "la señal Errores de exportación" in msgs[1],
+           "una señal escrita a mano sin ID SG también se comprueba", f"{msgs}")
+    path.write_text(texto.replace("que vaya rápido", "más de 2 s en el p95"), encoding="utf-8")
+    expect(not [f for f in hallazgos(p) if f["severity"] == "error"],
+           "con cifra, la preparación completa no da errores", f"{hallazgos(p)}")
+
+
+def test_F011_R005_sin_disparador():
+    print("\nF011 · R005: la vuelta atrás tiene que decir qué la dispara")
+    p = con_version("r005")
+    path = preparacion_completa(p, disparador="—")
+    msgs = de(p, "E-PREP-ROLLBACK-TRIGGER")
+    expect(len(msgs) == 1 and "Disparador" in msgs[0], "sin disparador, error", f"{msgs}")
+    texto = path.read_text(encoding="utf-8")
+    path.write_text(texto.replace("- **Disparador:** —\n", ""), encoding="utf-8")
+    expect(len(de(p, "E-PREP-ROLLBACK-TRIGGER")) == 1, "sin el campo, también")
+    path.write_text(texto.replace("- **Disparador:** —", "- **Disparador:** SG1 o errores 5xx"),
+                    encoding="utf-8")
+    expect(not de(p, "E-PREP-ROLLBACK-TRIGGER"), "con una señal o condición, sin error")
+
+
 def cobertura_de_codigos():
     # main() la ejecuta despues de todas las pruebas: compara los codigos
     # declarados con los que las pruebas vieron emitirse.

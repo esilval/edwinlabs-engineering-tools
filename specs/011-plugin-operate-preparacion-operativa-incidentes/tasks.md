@@ -86,7 +86,7 @@ Las del traspaso, en `plugins/sdd/tests/selftest.py`.
 
 ### T005 — Señales desde la arquitectura, umbral y disparador
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R004, R005
 - **Depende de:** T004
 - **Archivos:** `plugins/operate/scripts/operate.py`, `plugins/operate/tests/selftest.py`

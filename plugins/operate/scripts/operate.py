@@ -322,9 +322,46 @@ def feature_lines(root, names):
     return "\n".join(lines) or "Ninguna."
 
 
+def related_attributes(root, names):
+    """Atributos de calidad relacionados con las features names (D4): su
+    Motivo cita un objetivo del Origen de alguna feature, o lo cita el Motivo
+    de un ADR aprobado que cita su plan. En el orden de quality.md."""
+    goals, cited = set(), set()
+    for name in names:
+        found = src.resolve(root, name)
+        if len(found) == 1:
+            f = src.feature(found[0])
+            goals.update(f["goals"])
+            cited.update(f["adrs"])
+    via_adr = set()
+    for a in src.adrs(root):
+        if a["id"] in cited and a["state"] == "approved":
+            via_adr.update("Q" + n for n in src.QUALITY_REF.findall(a["motive"]))
+    return [q for q in src.quality(root)
+            if q["id"] in via_adr
+            or goals & {"G" + n for n in src.GOAL_REF.findall(q["motive"])}]
+
+
 def signals(root, release):
-    """Seccion de senales del borrador (D4)."""
-    return SIGNAL_HOLE
+    """Seccion de senales del borrador (D4): una SG<n> por atributo
+    relacionado; si no hay ninguno, una senal con huecos y una nota que dice
+    por que."""
+    if not src.architecture_exists(root):
+        why = "El proyecto no tiene architecture/"
+    elif src.architecture_problems(root):
+        why = "La arquitectura no está aprobada"
+    else:
+        related = related_attributes(root, release["features"])
+        if related:
+            return "\n\n".join(
+                f"### SG{n} — {q['title']}\n\n- **Atributo:** {q['id']}\n"
+                f"- **Escenario:** {q['scenario'] or '_qué se observa_'}\n"
+                "- **Umbral:** _a partir de qué cifra preocupa_\n"
+                "- **Cómo se mide:** _con qué herramienta o consulta_"
+                for n, q in enumerate(related, 1))
+        why = "Ningún atributo de calidad de la arquitectura se relaciona con estas features"
+    return (f"> {why}: no se proponen señales desde sus atributos de calidad. Añade "
+            "las que\n> haga falta vigilar.\n\n" + SIGNAL_HOLE)
 
 
 def release_refusal(version, rel):
@@ -373,8 +410,64 @@ def cmd_prepare(args):
     return 0
 
 
+# Toda subseccion ### de Senales es una senal; el ID SG<n> es opcional, para
+# que una escrita a mano sin el tambien se compruebe.
+SIGNAL_HEAD = re.compile(r"^###\s+(?:(SG\d+)\b\s*[—–:-]?\s*)?(.*?)\s*$")
+FIELD = re.compile(r"^\s*[-*]\s*\*\*\s*(.+?)\s*:?\s*\*\*\s*(.*)$")
+
+
+def prep_signals(text):
+    """[{id, name, fields}] de las subsecciones ### SG<n> de Señales."""
+    out = []
+    for line in src.section(text, "señales").splitlines():
+        m = SIGNAL_HEAD.match(line)
+        if m:
+            out.append({"id": m.group(1) or "", "name": m.group(2), "fields": {}})
+            continue
+        f = FIELD.match(line)
+        if f and out:
+            out[-1]["fields"][src.norm(f.group(1))] = f.group(2).strip()
+    return out
+
+
+def section_fields(text, title):
+    """{campo: valor} de las lineas '- **Campo:** valor' de una seccion."""
+    out = {}
+    for line in src.section(text, title).splitlines():
+        f = FIELD.match(line)
+        if f:
+            out[src.norm(f.group(1))] = f.group(2).strip()
+    return out
+
+
+def check_signals(prep):
+    """E-PREP-SIGNAL-THRESHOLD (R004): una senal sin umbral con cifra. Un
+    umbral que sigue siendo hueco ya lo cuenta E-PREP-TEMPLATE."""
+    out = []
+    for s in prep_signals(prep["text"]):
+        value = s["fields"].get("umbral", "")
+        if holes(value):
+            continue
+        if not re.search(r"\d", value):
+            name = " — ".join(x for x in (s["id"], s["name"]) if x)
+            out.append(_finding("E-PREP-SIGNAL-THRESHOLD",
+                                f"{prep['rel']}: la señal {name} no tiene un umbral con "
+                                f"cifra («{value or 'sin umbral'}»).", prep["rel"]))
+    return out
+
+
+def check_rollback(prep):
+    """E-PREP-ROLLBACK-TRIGGER (R005): la vuelta atras sin disparador."""
+    value = section_fields(prep["text"], "vuelta atras").get("disparador", "")
+    if holes(value) or value.strip("`*_—- "):
+        return []
+    return [_finding("E-PREP-ROLLBACK-TRIGGER",
+                     f"{prep['rel']}: la vuelta atrás no dice qué señal o condición la "
+                     "dispara (campo Disparador).", prep["rel"])]
+
+
 def check_preparation(root, prep):
-    """Hallazgos de una preparacion en borrador (R002, R009)."""
+    """Hallazgos de una preparacion en borrador (R002, R004, R005, R009)."""
     rel = prep["rel"]
     if prep["state"] != "draft":
         return []
@@ -387,7 +480,7 @@ def check_preparation(root, prep):
         out.append(_finding("E-PREP-TEMPLATE",
                             f"{rel} conserva {len(found)} hueco(s) sin completar, como "
                             f"«{first_hole(found)}». Los completa /operate:prepare.", rel))
-    return out
+    return out + check_signals(prep) + check_rollback(prep)
 
 
 # --------------------------------------------------------------------------
@@ -560,6 +653,8 @@ COMMANDS = {
 FINDINGS = {
     "E-PREP-RELEASE": ("La preparación es de una versión que no existe o no está "
                        "publicada"),
+    "E-PREP-SIGNAL-THRESHOLD": "Una señal sin umbral con cifra",
+    "E-PREP-ROLLBACK-TRIGGER": "La vuelta atrás no dice qué la dispara",
     "E-PREP-TEMPLATE": "Huecos sin completar en la preparación",
     "E-INCIDENT-RELEASE": "El incidente cita una versión afectada que no existe",
     "E-INCIDENT-TEMPLATE": "Huecos sin completar en el incidente o su postmortem",
