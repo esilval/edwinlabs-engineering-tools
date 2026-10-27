@@ -61,7 +61,7 @@ Las del traspaso, en `plugins/sdd/tests/selftest.py`.
 
 ### T003 — Acciones del postmortem
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008, R015
 - **Depende de:** T002
 - **Archivos:** `plugins/operate/scripts/operate.py`, `plugins/operate/tests/selftest.py`

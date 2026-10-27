@@ -529,7 +529,8 @@ def test_F011_R006_registro_de_incidentes():
     i4, f4 = incidente(p, "Cobro | doble\nen caja")
     registro = (p / "operations" / "incidents.md").read_text(encoding="utf-8")
     expect(f"| {i4} | " in registro and "Cobro / doble en caja |" in registro
-           and f4.read_text(encoding="utf-8").startswith(f"# Incidente {i4} — Cobro | doble en caja\n"),
+           and f4.read_text(encoding="utf-8").startswith(
+               f"# Incidente {i4} — Cobro | doble en caja\n"),
            "un título con | o con salto de línea no rompe el registro", registro)
     expect(len(de(p, "E-INCIDENT-TEMPLATE")) == 3
            and len(de(p, "W-INCIDENT-NOT-APPROVED")) == 3,
@@ -588,6 +589,78 @@ def test_F011_R017_sin_los_demas():
     completa_incidente(f1, "desconocida")
     expect(not [f for f in hallazgos(p) if f["severity"] == "error"],
            "con la versión desconocida, sin errores")
+
+
+# ----------------------------------------------------------------- T003
+
+def acciones_de(path, *bloques):
+    """Sustituye la sección Acciones del incidente por los bloques dados."""
+    texto = path.read_text(encoding="utf-8")
+    cabeza, _, _ = texto.partition("## Acciones")
+    path.write_text(cabeza + "## Acciones\n\n" + "\n\n".join(bloques) + "\n", encoding="utf-8")
+
+
+def accion(aid, titulo="Revisar la caché"):
+    return f"### {aid} — {titulo}\n\n- **Qué:** {titulo.lower()}."
+
+
+def test_F011_R008_acciones():
+    print("\nF011 · R008: cada acción con un ID estable dentro de su incidente")
+    p = proyecto("r008")
+    _, f1 = incidente(p)
+    completa_incidente(f1, "desconocida")
+    r = run(p, "next-action", "I001")
+    expect(r.returncode == 0 and r.stdout.strip() == "I001-A1", "la primera es I001-A1",
+           r.stdout + r.stderr)
+    acciones_de(f1, accion("I001-A1"), accion("I001-A2", "Alarma de latencia"))
+    expect(run(p, "next-action", "i001").stdout.strip() == "I001-A3", "después, I001-A3")
+    acciones_de(f1, accion("I001-A2", "Alarma de latencia, editada"))
+    expect(run(p, "next-action", "I001").stdout.strip() == "I001-A3"
+           and operate.actions(f1.read_text(encoding="utf-8"))
+           == [("I001-A2", "Alarma de latencia, editada")],
+           "editar una y borrar otra no renumera: I001-A2 sigue y la siguiente es I001-A3")
+    expect(not de(p, "E-INCIDENT-ACTION-ID"), "IDs bien formados, sin error")
+    acciones_de(f1, "### I001-A1: Revisar la caché\n\n- **Qué:** algo.",
+                "### i001-a2—Alarma\n\n- **Qué:** algo.")
+    expect(operate.actions(f1.read_text(encoding="utf-8"))
+           == [("I001-A1", "Revisar la caché"), ("I001-A2", "Alarma")]
+           and not de(p, "E-INCIDENT-ACTION-ID"),
+           "el ID se lee con «:», con «—» pegado y en minúsculas")
+    for bloque, nombre, trozo in (
+            (accion("I001-A2") + "\n\n" + accion("I001-A2"), "repetida", "I001-A2 está repetida"),
+            (accion("I002-A1"), "de otro incidente", "I002-A1 es de otro incidente"),
+            ("### Revisar la caché\n\n- **Qué:** algo.", "sin ID", "«Revisar la caché»")):
+        acciones_de(f1, bloque)
+        msgs = de(p, "E-INCIDENT-ACTION-ID")
+        expect(len(msgs) == 1 and trozo in msgs[0] and msgs[0].startswith("I001:"),
+               f"una acción {nombre} da error", f"{msgs}")
+    r = run(p, "next-action", "I009")
+    expect(r.returncode == 1 and "I009" in r.stderr, "un incidente que no existe sale con 1",
+           r.stdout + r.stderr)
+    expect(run(p, "next-action").returncode == 1, "sin incidente sale con 1")
+
+
+def test_F011_R015_accion_sin_feature():
+    print("\nF011 · R015: las acciones de un postmortem aprobado sin feature se avisan")
+    p = proyecto("r015")
+    _, f1 = incidente(p)
+    completa_incidente(f1, "desconocida",
+                       [("I001-A1", "Revisar la caché"), ("I001-A2", "Alarma de latencia")])
+    expect(not de(p, "W-INCIDENT-ACTION-NO-FEATURE"),
+           "sin aprobar el postmortem, no se avisa de las acciones")
+    sella(f1)
+    d = p / "specs" / "001-revisar-cache"
+    d.mkdir(parents=True)
+    (d / "spec.md").write_text("# Spec: Revisar la caché\n\n| Campo  | Valor |\n"
+                               "| ------ | ----- |\n| Estado | Draft |\n"
+                               "| Origen | I001-A1 · — |\n\n## Problema\n\nAlgo.\n",
+                               encoding="utf-8")
+    msgs = de(p, "W-INCIDENT-ACTION-NO-FEATURE")
+    expect(len(msgs) == 1 and "I001-A2" in msgs[0] and "I001-A1" not in msgs[0]
+           and "/sdd:specify I001-A2" in msgs[0],
+           "aviso para I001-A2, y ninguno para I001-A1, que tiene feature", f"{msgs}")
+    expect(not [f for f in hallazgos(p) if f["severity"] == "error"],
+           "el postmortem aprobado no da errores")
 
 
 def cobertura_de_codigos():

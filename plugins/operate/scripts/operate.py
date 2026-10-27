@@ -14,6 +14,9 @@ Subcomandos:
   incident "<titulo>"  Registra el siguiente incidente (I001, I002…) en
                       operations/incidents.md, que solo crece, y escribe
                       operations/incidents/INNN-slug.md con sus huecos.
+  next-action I001     Siguiente accion libre del postmortem de I001
+                      (I001-A3): el maximo de las suyas, mas 1. Las acciones
+                      no se renumeran nunca.
   check [vX.Y.Z|I001] [--json] [--check]
                       Comprueba esa preparacion o ese incidente, o todo
                       operations/. --json emite operate.check/v1; --check
@@ -213,6 +216,47 @@ def cmd_incident(args):
     return 0
 
 
+# Acciones del postmortem (D2, D6): '### I001-A1 — titulo' en ## Acciones.
+ACTION_ID = re.compile(r"^(I\d{3,})-A(\d+)$")
+
+
+def actions(text):
+    """[(id, titulo)] de los encabezados ### de la seccion Acciones, en orden.
+    Un encabezado sin ID de accion devuelve ('', encabezado)."""
+    out = []
+    for line in src.section(text, "acciones").splitlines():
+        m = re.match(r"^###\s+(.*?)\s*$", line)
+        if not m:
+            continue
+        # El ID se corta en su ultimo digito: '### I001-A1: titulo' y
+        # '### I001-A1—titulo' tambien lo traen.
+        head = re.match(r"^([Ii]\d{3,}-[Aa]\d+)(?![0-9])\s*[—–:-]?\s*(.*)$", m.group(1))
+        if head:
+            out.append((head.group(1).upper(), head.group(2)))
+        else:
+            out.append(("", m.group(1)))
+    return out
+
+
+def next_action(text, iid):
+    """Siguiente accion libre del incidente iid: el maximo de las suyas, mas 1."""
+    used = [int(ACTION_ID.match(a).group(2)) for a, _t in actions(text)
+            if a and ACTION_ID.match(a).group(1) == iid]
+    return f"{iid}-A{(max(used) if used else 0) + 1}"
+
+
+def cmd_next_action(args):
+    """0 y I001-A<n>; 1 si el incidente no existe (Contratos)."""
+    iid = (args[0] if len(args) == 1 else "").strip().upper()
+    path = incident_files(project_root()).get(iid) if INCIDENT_ID.match(iid) else None
+    if path is None:
+        print(f"error: no existe el incidente {iid or '(ninguno)'} en "
+              f"{OPS_DIR}/{INCIDENTS_DIR}/. Uso: operate.py next-action I001", file=sys.stderr)
+        return 1
+    print(next_action(src.read_text(path) or "", iid))
+    return 0
+
+
 def incidents(root):
     """[{id, rel, text, state, version, fields}] de operations/incidents/."""
     out = []
@@ -260,6 +304,8 @@ def check_incident_version(root, inc):
 
 def check_incident(root, inc):
     rel = inc["rel"]
+    if inc["state"] == "approved":
+        return check_action_features(root, inc)
     if inc["state"] != "draft":
         return []
     out = [_finding("W-INCIDENT-NOT-APPROVED",
@@ -270,7 +316,36 @@ def check_incident(root, inc):
         out.append(_finding("E-INCIDENT-TEMPLATE",
                             f"{rel} conserva {len(found)} hueco(s) sin completar, como "
                             f"«{first_hole(found)}».", rel))
-    return out + check_incident_version(root, inc)
+    return out + check_incident_version(root, inc) + check_action_ids(inc)
+
+
+def check_action_ids(inc):
+    """E-INCIDENT-ACTION-ID (R008): una accion sin ID, con el de otro
+    incidente o repetido."""
+    out, seen = [], set()
+    for aid, title in actions(inc["text"]):
+        if not aid:
+            problem = (f"la acción «{title}» no tiene ID: dale el de "
+                       f"`operate.py next-action {inc['id']}`")
+        elif ACTION_ID.match(aid).group(1) != inc["id"]:
+            problem = f"la acción {aid} es de otro incidente; las suyas son {inc['id']}-A<n>"
+        elif aid in seen:
+            problem = f"la acción {aid} está repetida"
+        else:
+            seen.add(aid)
+            continue
+        out.append(_finding("E-INCIDENT-ACTION-ID", f"{inc['id']}: {problem}.", inc["rel"]))
+    return out
+
+
+def check_action_features(root, inc):
+    """W-INCIDENT-ACTION-NO-FEATURE (R015): de un postmortem aprobado, las
+    acciones que ninguna spec cita como primer elemento de su Origen."""
+    taken = src.features_by_origin(root)
+    return [_finding("W-INCIDENT-ACTION-NO-FEATURE",
+                     f"La acción {aid} del postmortem de {inc['id']} no tiene feature: se "
+                     f"crea con /sdd:specify {aid}.", inc["rel"])
+            for aid, _t in actions(inc["text"]) if aid and aid not in taken]
 
 
 SCHEMA = "operate.check/v1"
@@ -346,6 +421,7 @@ def cmd_check(args):
 
 COMMANDS = {
     "incident": cmd_incident,
+    "next-action": cmd_next_action,
     "check": cmd_check,
 }
 
@@ -355,6 +431,8 @@ COMMANDS = {
 FINDINGS = {
     "E-INCIDENT-RELEASE": "El incidente cita una versión afectada que no existe",
     "E-INCIDENT-TEMPLATE": "Huecos sin completar en el incidente o su postmortem",
+    "E-INCIDENT-ACTION-ID": "Una acción sin ID, con el de otro incidente o repetido",
+    "W-INCIDENT-ACTION-NO-FEATURE": "Una acción de un postmortem aprobado sin feature",
     "W-INCIDENT-NOT-APPROVED": "Postmortem sin aprobar o cambiado después de aprobarse",
 }
 
