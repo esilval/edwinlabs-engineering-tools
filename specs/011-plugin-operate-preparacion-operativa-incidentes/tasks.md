@@ -99,7 +99,7 @@ Las del traspaso, en `plugins/sdd/tests/selftest.py`.
 
 ### T006 — `approve` y cambios tras aprobar
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R009, R010, R011
 - **Depende de:** T003, T005
 - **Archivos:** `plugins/operate/scripts/operate.py`, `plugins/operate/tests/selftest.py`

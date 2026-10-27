@@ -753,8 +753,9 @@ def test_F011_R017_preparacion_sin_arquitectura():
     expect(r.returncode == 0 and len(re.findall(r"^### SG", senales, re.M)) == 1
            and "- **Atributo:** —" in senales and operate.holes(senales),
            "una sola señal con huecos y sin atributo", senales)
-    expect({f["code"] for f in hallazgos(p)} == {"E-PREP-TEMPLATE"},
-           "sin hallazgos de arquitectura: solo los huecos", f"{hallazgos(p)}")
+    expect({f["code"] for f in hallazgos(p)} == {"E-PREP-TEMPLATE", "W-PREP-NOT-APPROVED"},
+           "sin hallazgos de arquitectura: solo los huecos y el aviso de borrador",
+           f"{hallazgos(p)}")
     path = p / "operations" / "v0.4.0.md"
     path.write_text(re.sub(r"^- \*\*(.+?):\*\* _.*_$", r"- **\1:** 5 por minuto", texto,
                            flags=re.M).replace("_Los pasos", "Los pasos").replace("funciona._",
@@ -848,6 +849,119 @@ def test_F011_R005_sin_disparador():
     path.write_text(texto.replace("- **Disparador:** —", "- **Disparador:** SG1 o errores 5xx"),
                     encoding="utf-8")
     expect(not de(p, "E-PREP-ROLLBACK-TRIGGER"), "con una señal o condición, sin error")
+
+
+# ----------------------------------------------------------------- T006
+
+def postmortem_completo(p, acciones=(("I001-A1", "Revisar la caché"),)):
+    """Incidente I001 sobre la 0.4.0 publicada, con el postmortem completo."""
+    _, path = incidente(p)
+    return completa_incidente(path, "0.4.0", list(acciones))
+
+
+def estado(path):
+    return operate_sources.doc_status(path.read_text(encoding="utf-8"))
+
+
+def test_F011_R009_no_se_aprueba_incompleto():
+    print("\nF011 · R009: approve se niega con huecos o con errores, sin cambiar nada")
+    p = con_version("r009")
+    path = preparacion_completa(p, umbral="que vaya rápido")
+    antes = path.read_bytes()
+    r = run(p, "approve", "v0.4.0")
+    expect(r.returncode == 1 and "E-PREP-SIGNAL-THRESHOLD" in r.stderr
+           and path.read_bytes() == antes,
+           "una preparación con una señal sin umbral: se niega y no cambia", r.stdout + r.stderr)
+    _, inc = incidente(p)
+    completa_incidente(inc, "0.4.0")
+    texto = inc.read_text(encoding="utf-8")
+    texto = texto.split("## Causas", 1)[0] + "## Causas\n\n_Por qué pasó._\n\n## Acciones" \
+        + texto.split("## Acciones", 1)[1]
+    inc.write_text(texto, encoding="utf-8")
+    antes = inc.read_bytes()
+    r = run(p, "approve", "I001", "--skill")
+    expect(r.returncode == 0 and "No se puede aprobar" in r.stdout
+           and "E-INCIDENT-TEMPLATE" in r.stdout and inc.read_bytes() == antes,
+           "un postmortem con las causas sin completar: --skill lo explica, sale con 0 "
+           "y no cambia nada", r.stdout + r.stderr)
+    for args, nombre in ((("approve",), "sin objetivo"), (("approve", "I009"), "I009"),
+                         (("approve", "v9.9.9"), "9.9.9"), (("approve", "otra"), "otra")):
+        expect(run(p, *args).returncode == 1, f"approve {nombre}: se niega con 1")
+
+
+def test_F011_R010_aprobacion():
+    print("\nF011 · R010: approve sella la preparación y el postmortem")
+    p = con_version("r010")
+    path = preparacion_completa(p)
+    r = run(p, "approve", "v0.4.0")
+    texto = path.read_text(encoding="utf-8")
+    sello = re.search(r"\| Estado   \| Approved · ([0-9a-f]{12}) \|", texto)
+    expect(r.returncode == 0 and sello and sello.group(1) == operate_sources.content_digest(texto),
+           "la preparación queda aprobada con la huella de su contenido", r.stdout + r.stderr)
+    huella = operate_sources.release(p, "0.4.0")["digest"]
+    expect(f"| Versión  | 0.4.0 · {huella} |" in texto, "con la huella de su versión")
+    r = run(p, "approve", "v0.4.0")
+    expect(r.returncode == 0 and "ya estaba aprobada" in r.stdout
+           and path.read_text(encoding="utf-8") == texto, "aprobarla otra vez no cambia nada")
+
+    inc = postmortem_completo(p, (("I001-A1", "Revisar la caché"), ("I001-A2", "Alarma")))
+    r = run(p, "approve", "i001")
+    expect(r.returncode == 0 and estado(inc).startswith("Approved · ")
+           and "/sdd:specify I001-A1, /sdd:specify I001-A2" in r.stdout,
+           "el postmortem queda aprobado y se dice cómo crear las correcciones",
+           r.stdout + r.stderr)
+    expect(not [f for f in hallazgos(p) if f["code"].endswith("NOT-APPROVED")],
+           "check ya no avisa de que estén sin aprobar")
+    expect("ya estaba aprobado" in run(p, "approve", "I001").stdout, "y el postmortem, aprobado")
+
+    (p / "releases" / "v0.4.0.md").unlink()
+    antes = path.read_bytes()
+    r = run(p, "approve", "v0.4.0")
+    expect(r.returncode == 1 and "E-PREP-RELEASE" in r.stderr and path.read_bytes() == antes
+           and de(p, "W-PREP-RELEASE-CHANGED"),
+           "si su versión desaparece, check avisa y approve se niega", r.stdout + r.stderr)
+
+    q = con_version("r010-sin-fila")
+    sin_fila = preparacion_completa(q)
+    sin_fila.write_text(re.sub(r"^\| Versión  \|[^\n]*\n", "", sin_fila.read_text(encoding="utf-8"),
+                               flags=re.M), encoding="utf-8")
+    antes = sin_fila.read_bytes()
+    r = run(q, "approve", "v0.4.0")
+    expect(r.returncode == 1 and "| Versión |" in r.stderr and sin_fila.read_bytes() == antes,
+           "sin la fila Versión, se niega sin cambiar nada", r.stdout + r.stderr)
+
+
+def test_F011_R011_cambio_tras_aprobar():
+    print("\nF011 · R011: lo aprobado que cambia, o cuya versión cambia, se avisa")
+    p = con_version("r011")
+    path = preparacion_completa(p)
+    run(p, "approve", "v0.4.0")
+    inc = postmortem_completo(p)
+    run(p, "approve", "I001")
+    inc.write_text(inc.read_text(encoding="utf-8").replace("Texto redactado.",
+                                                           "Otra causa.", 1), encoding="utf-8")
+    msgs = de(p, "W-INCIDENT-NOT-APPROVED")
+    expect(len(msgs) == 1 and "I001 cambió después de aprobarse" in msgs[0],
+           "el postmortem editado tras aprobar avisa", f"{msgs}")
+    expect(not de(p, "W-INCIDENT-ACTION-NO-FEATURE"),
+           "cambiado, ya no cuenta como aprobado: no avisa de sus acciones")
+
+    rel = p / "releases" / "v0.4.0.md"
+    rel.write_text(rel.read_text(encoding="utf-8").replace("Algo.", "Errata."), encoding="utf-8")
+    msgs = de(p, "W-PREP-RELEASE-CHANGED")
+    expect(len(msgs) == 1 and "0.4.0" in msgs[0], "la versión cambió: aviso en la preparación",
+           f"{msgs}")
+    r = run(p, "approve", "v0.4.0")
+    huella = operate_sources.release(p, "0.4.0")["digest"]
+    expect(r.returncode == 0 and f"0.4.0 · {huella}" in path.read_text(encoding="utf-8")
+           and not de(p, "W-PREP-RELEASE-CHANGED"),
+           "aprobarla de nuevo guarda la huella nueva y el aviso desaparece", r.stdout + r.stderr)
+    path.write_text(path.read_text(encoding="utf-8").replace("Pasos redactados.",
+                                                             "Otros pasos.", 1),
+                    encoding="utf-8")
+    msgs = de(p, "W-PREP-NOT-APPROVED")
+    expect(len(msgs) == 1 and "cambió después de aprobarse" in msgs[0],
+           "la preparación editada tras aprobar avisa", f"{msgs}")
 
 
 def cobertura_de_codigos():

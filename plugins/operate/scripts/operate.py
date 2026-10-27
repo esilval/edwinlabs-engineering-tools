@@ -21,6 +21,11 @@ Subcomandos:
   next-action I001     Siguiente accion libre del postmortem de I001
                       (I001-A3): el maximo de las suyas, mas 1. Las acciones
                       no se renumeran nunca.
+  approve <vX.Y.Z|I001> [--skill]
+                      Aprueba la preparacion o el postmortem si no tienen
+                      errores ni huecos: los sella con 'Approved · <huella>' y,
+                      en una preparacion, guarda la huella de su version. Solo
+                      lo lanza el usuario, con /operate:approve.
   check [vX.Y.Z|I001] [--json] [--check]
                       Comprueba esa preparacion o ese incidente, o todo
                       operations/. --json emite operate.check/v1; --check
@@ -466,11 +471,38 @@ def check_rollback(prep):
                      "dispara (campo Disparador).", prep["rel"])]
 
 
+def recorded_release(text):
+    """La huella de la version guardada en la fila Versión ('0.4.0 · <huella>'),
+    o None."""
+    value = src.header_row(text, "Versión") or src.header_row(text, "Version") or ""
+    m = src.DIGEST.search(value)
+    return m.group(1) if m else None
+
+
 def check_preparation(root, prep):
-    """Hallazgos de una preparacion en borrador (R002, R004, R005, R009)."""
+    """Hallazgos de una preparacion. En borrador, la comprobacion entera; una
+    aprobada solo se mira por si cambio ella (R011) o su version."""
     rel = prep["rel"]
-    if prep["state"] != "draft":
-        return []
+    if prep["state"] == "approved":
+        current = src.release(root, prep["version"])
+        if current and current["digest"] == recorded_release(prep["text"]):
+            return []
+        return [_finding("W-PREP-RELEASE-CHANGED",
+                         f"{rel} se aprobó para la versión {prep['version']} con otra huella: "
+                         "la versión cambió (o ya no existe). Revisa la preparación frente a "
+                         "ella y apruébala de nuevo con /operate:approve.", rel)]
+    if prep["state"] == "stale":
+        return [_finding("W-PREP-NOT-APPROVED",
+                         f"{rel} cambió después de aprobarse: ya no cuenta como aprobada. El "
+                         "usuario la revisa y la aprueba de nuevo con /operate:approve.", rel)]
+    return [_finding("W-PREP-NOT-APPROVED",
+                     f"{rel} no está aprobada. La aprueba el usuario con /operate:approve.",
+                     rel)] + prep_errors(root, prep)
+
+
+def prep_errors(root, prep):
+    """Lo que impide aprobar una preparacion (R002, R004, R005, R009)."""
+    rel = prep["rel"]
     out = []
     refusal = release_refusal(prep["version"], src.release(root, prep["version"]))
     if refusal:
@@ -517,14 +549,26 @@ def check_incident_version(root, inc):
 
 
 def check_incident(root, inc):
+    """Hallazgos de un incidente. En borrador, la comprobacion entera; uno
+    aprobado, sus acciones sin feature (R015); uno cambiado, el aviso (R011)."""
     rel = inc["rel"]
     if inc["state"] == "approved":
         return check_action_features(root, inc)
-    if inc["state"] != "draft":
-        return []
-    out = [_finding("W-INCIDENT-NOT-APPROVED",
-                    f"El postmortem de {inc['id']} no está aprobado. Se completa con "
-                    "/operate:postmortem y lo aprueba el usuario con /operate:approve.", rel)]
+    if inc["state"] == "stale":
+        return [_finding("W-INCIDENT-NOT-APPROVED",
+                         f"El postmortem de {inc['id']} cambió después de aprobarse: ya no "
+                         "cuenta como aprobado. El usuario lo revisa y lo aprueba de nuevo "
+                         "con /operate:approve.", rel)]
+    return [_finding("W-INCIDENT-NOT-APPROVED",
+                     f"El postmortem de {inc['id']} no está aprobado. Se completa con "
+                     "/operate:postmortem y lo aprueba el usuario con /operate:approve.",
+                     rel)] + incident_errors(root, inc)
+
+
+def incident_errors(root, inc):
+    """Lo que impide aprobar un incidente y su postmortem (R007, R008, R009)."""
+    rel = inc["rel"]
+    out = []
     found = holes(inc["text"])
     if found:
         out.append(_finding("E-INCIDENT-TEMPLATE",
@@ -640,11 +684,110 @@ def cmd_check(args):
     return 1 if ("--check" in flags and not data["ok"]) else 0
 
 
+# --------------------------------------------------------------------------
+# approve (D8, R009-R011). Solo la lanza el usuario, con /operate:approve;
+# los hooks impiden que el modelo la escriba.
+# --------------------------------------------------------------------------
+
+def set_status(text, value):
+    """Devuelve (texto_nuevo, cambiado?). Copia de set_status de
+    plugins/release/scripts/release.py, que copia la de architecture.py, y
+    esta la de discovery.py."""
+    end = src._header_end(text)
+    head, n = src.STATUS_ROW.subn(lambda m: m.group(1) + value + m.group(3), text[:end],
+                                  count=1)
+    return head + text[end:], bool(n)
+
+
+def with_release_digest(text, version, digest):
+    """(texto, cambiado?): la fila Versión con la huella de la version del
+    momento de aprobar."""
+    end = src._header_end(text)
+    row = re.compile(r"^(\|\s*Versi[oó]n\s*\|\s*)([^|\n]*?)(\s*\|)", re.M)
+    head, n = row.subn(lambda m: m.group(1) + f"{version} · {digest}" + m.group(3),
+                       text[:end], count=1)
+    return head + text[end:], bool(n)
+
+
+def approve(root, target):
+    """(ok, lineas). Aprueba la preparacion vX.Y.Z o el postmortem I001; no
+    toca nada si se niega (R009)."""
+    if target is None:
+        return False, ["Indica qué aprobar: una preparación (v0.4.0) o un incidente (I001). "
+                       "Uso: /operate:approve v0.4.0"]
+    if target.startswith("I"):
+        art = next((i for i in incidents(root) if i["id"] == target), None)
+        if art is None:
+            return False, [f"No existe el incidente {target} en {OPS_DIR}/{INCIDENTS_DIR}/."]
+        what, errors = f"El postmortem de {target} ya estaba aprobado", incident_errors(root, art)
+    else:
+        art = next((p for p in preparations(root) if p["version"] == target), None)
+        if art is None:
+            return False, [f"No existe la preparación {OPS_DIR}/v{target}.md. Se crea con "
+                           "/operate:prepare."]
+        what = f"La preparación de la versión {target} ya estaba aprobada"
+        errors = prep_errors(root, art)
+    rel = art["rel"]
+    text = art["text"]
+    current = None if target.startswith("I") else src.release(root, target)
+    # Una preparacion aprobada cuya version cambio o desaparecio se vuelve a
+    # comprobar entera, como en check (W-PREP-RELEASE-CHANGED).
+    if art["state"] == "approved" and (
+            target.startswith("I")
+            or (current is not None and current["digest"] == recorded_release(text))):
+        return True, [f"{what} ({rel})."]
+    if errors:
+        return False, ([f"No se puede aprobar {rel}: la comprobación da errores."]
+                       + [f"  [{f['code']}] {f['message']}" for f in errors])
+    if current is not None:
+        # R011: se sella con la version del momento; si cambia, check lo avisa.
+        text, changed = with_release_digest(text, target, current["digest"])
+        if not changed:
+            return False, [f"{rel} no tiene la fila '| Versión | ... |' en la cabecera, donde "
+                           "se guarda la huella de la versión. Añádela y vuelve a aprobar."]
+    stamp = f"Approved · {src.content_digest(text)}"
+    text, changed = set_status(text, stamp)
+    if not changed:
+        return False, [f"{rel} no tiene la fila '| Estado | ... |' en la cabecera. "
+                       "Añádela y vuelve a aprobar."]
+    (Path(root) / rel).write_text(text, encoding="utf-8")
+    lines = [f"{rel} aprobado ({stamp})."]
+    if target.startswith("I"):
+        ids = [aid for aid, _t in actions(text) if aid]
+        if ids:
+            lines.append("Cada acción se convierte en una feature de corrección con "
+                         + ", ".join(f"/sdd:specify {a}" for a in ids) + ".")
+    return True, lines
+
+
+def cmd_approve(args):
+    """
+    Con --skill (lo usa /operate:approve) todo va a stdout y sale siempre con
+    0: el resultado lo lee el modelo como texto, no como codigo de salida.
+    """
+    rest = [a for a in args if a != "--skill" and a.strip()]
+    target = target_arg(rest[0]) if len(rest) == 1 else None
+    try:
+        if len(rest) > 1 or (rest and not target):
+            ok, lines = False, [f"Argumento desconocido {' '.join(rest)}. "
+                                "Uso: operate.py approve <vX.Y.Z|I001>"]
+        else:
+            ok, lines = approve(project_root(), target)
+    except Exception as exc:  # noqa: BLE001
+        if "--skill" not in args:
+            raise
+        ok, lines = False, [f"No se pudo aprobar: error inesperado ({exc})."]
+    stream = sys.stdout if (ok or "--skill" in args) else sys.stderr
+    print("\n".join(lines), file=stream)
+    return 0 if (ok or "--skill" in args) else 1
+
+
 COMMANDS = {
     "prepare": cmd_prepare,
     "incident": cmd_incident,
     "next-action": cmd_next_action,
     "check": cmd_check,
+    "approve": cmd_approve,
 }
 
 # Codigos de hallazgo declarados: el selftest exige probar cada uno. Son
@@ -656,6 +799,8 @@ FINDINGS = {
     "E-PREP-SIGNAL-THRESHOLD": "Una señal sin umbral con cifra",
     "E-PREP-ROLLBACK-TRIGGER": "La vuelta atrás no dice qué la dispara",
     "E-PREP-TEMPLATE": "Huecos sin completar en la preparación",
+    "W-PREP-NOT-APPROVED": "Preparación sin aprobar o cambiada después de aprobarse",
+    "W-PREP-RELEASE-CHANGED": "La versión cambió desde que se aprobó su preparación",
     "E-INCIDENT-RELEASE": "El incidente cita una versión afectada que no existe",
     "E-INCIDENT-TEMPLATE": "Huecos sin completar en el incidente o su postmortem",
     "E-INCIDENT-ACTION-ID": "Una acción sin ID, con el de otro incidente o repetido",
