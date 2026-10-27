@@ -44,7 +44,7 @@ Las del traspaso, en `plugins/sdd/tests/selftest.py`.
 
 ### T002 — Registro de incidentes y `check` `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R006, R007, R016, R017
 - **Depende de:** T001
 - **Archivos:** `plugins/operate/scripts/operate.py`, `plugins/operate/templates/incident.md`, `plugins/operate/tests/selftest.py`

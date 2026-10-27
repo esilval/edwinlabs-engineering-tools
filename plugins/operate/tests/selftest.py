@@ -23,7 +23,10 @@ from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PLUGIN / "scripts"))
+import operate  # noqa: E402
 import operate_sources  # noqa: E402
+
+SCRIPT = PLUGIN / "scripts" / "operate.py"
 
 # Los plugins reales del repositorio, solo para las pruebas de contrato.
 PLUGINS = PLUGIN.parent
@@ -34,6 +37,8 @@ RELEASE = PLUGINS / "release" / "scripts" / "release.py"
 
 fallos = []
 BASE = Path(tempfile.mkdtemp(prefix="operate-selftest-"))
+# Codigos que alguna prueba vio emitirse (ver cobertura_de_codigos).
+PROBADOS = set()
 
 
 def expect(ok, nombre, detalle=""):
@@ -49,6 +54,61 @@ def proyecto(nombre):
     p = BASE / nombre
     p.mkdir(parents=True)
     return p
+
+
+def run(cwd, *args, stdin=None, env_extra=None):
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(PLUGIN), CLAUDE_PROJECT_DIR=str(cwd))
+    env.update(env_extra or {})
+    return subprocess.run([sys.executable, str(SCRIPT), *args], input=stdin,
+                          capture_output=True, text=True, cwd=str(cwd), env=env, timeout=60)
+
+
+def hallazgos(root, objetivo=None):
+    """Hallazgos de check; cada codigo visto cuenta como probado."""
+    out = operate.analyze(root, objetivo)["findings"]
+    for f in out:
+        PROBADOS.add(f["code"])
+    return out
+
+
+def de(root, code, objetivo=None):
+    return [f["message"] for f in hallazgos(root, objetivo) if f["code"] == code]
+
+
+def version(p, numero, features="001", aprobada=True):
+    """releases/v<numero>.md en el formato de release, sellada si se pide."""
+    path = p / "releases" / f"v{numero}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"# Versión {numero}\n\n| Campo    | Valor |\n| -------- | ----- |\n"
+                    f"| Estado   | Draft |\n| Versión  | {numero} |\n| Fecha    | 2026-10-22 |\n"
+                    f"| Anterior | — |\n| Features | {features} |\n\n## Contenido\n\nAlgo.\n",
+                    encoding="utf-8")
+    if aprobada:
+        sella(path)
+    return path
+
+
+def incidente(p, titulo="Caída del resumen diario"):
+    """Registra un incidente con operate.py incident; devuelve (ID, Path)."""
+    r = run(p, "incident", titulo)
+    data = json.loads(r.stdout)
+    return data["incident"], p / data["file"]
+
+
+def completa_incidente(path, version="0.4.0", acciones=None):
+    """Rellena los huecos del incidente como lo harian /operate:incident y
+    /operate:postmortem, con las acciones dadas: [(ID, titulo)]."""
+    texto = path.read_text(encoding="utf-8")
+    texto = re.sub(r"\| Fecha            \| _[^|]*_ \|", "| Fecha            | 2026-10-25 |", texto)
+    texto = re.sub(r"\| Versión afectada \| _[^|]*_ \|",
+                   f"| Versión afectada | {version} |", texto)
+    texto = re.sub(r"\| Severidad        \| _[^|]*_ \|", "| Severidad        | alta |", texto)
+    bloques = "\n\n".join(f"### {aid} — {titulo}\n\n- **Qué:** {titulo.lower()}."
+                           for aid, titulo in (acciones or []))
+    texto = re.sub(r"^_Las acciones[^\n]*_$", bloques or "Ninguna.", texto, flags=re.M)
+    texto = re.sub(r"^_.*_$", "Texto redactado.", texto, flags=re.M)
+    path.write_text(texto, encoding="utf-8")
+    return path
 
 
 def run_plugin(script, cwd, *args, env_extra=None):
@@ -439,11 +499,112 @@ def test_F011_R003_contrato_con_los_demas():
            "una versión que no existe")
 
 
+# ----------------------------------------------------------------- T002
+
+def test_F011_R006_registro_de_incidentes():
+    print("\nF011 · R006: cada incidente con un ID que no se recicla")
+    p = proyecto("r006")
+    i1, f1 = incidente(p, "Caída del resumen diario")
+    i2, f2 = incidente(p, "Exportación lenta")
+    expect((i1, i2) == ("I001", "I002") and f1.name == "I001-caida-resumen-diario.md",
+           "I001 e I002, con su archivo", f"{i1} {i2} {f1.name}")
+    texto = f1.read_text(encoding="utf-8")
+    cabecera = texto.split("\n## ", 1)[0]
+    expect("| ID               | I001 |" in cabecera
+           and all(f"| {campo}" in cabecera for campo in ("Fecha ", "Versión afectada",
+                                                          "Severidad "))
+           and all(f"## {s}" in texto for s in ("Qué pasó", "Impacto", "Cronología",
+                                                 "Causas", "Acciones")),
+           "el incidente pide fecha, versión, severidad, qué pasó e impacto", texto[:600])
+    huecos = operate.holes(texto)
+    expect(len(huecos) == 8, "con sus huecos por completar", f"{huecos}")
+    f2.unlink()
+    i3, _ = incidente(p, "Otra caída")
+    expect(i3 == "I003", "con I002 borrado, el siguiente es I003", i3)
+    registro = (p / "operations" / "incidents.md").read_text(encoding="utf-8")
+    expect(all(f"| {i} |" in registro for i in ("I001", "I002", "I003")),
+           "el registro conserva la fila del borrado", registro)
+    r = run(p, "incident")
+    expect(r.returncode == 1 and "título" in r.stderr, "sin título sale con 1", r.stderr)
+    i4, f4 = incidente(p, "Cobro | doble\nen caja")
+    registro = (p / "operations" / "incidents.md").read_text(encoding="utf-8")
+    expect(f"| {i4} | " in registro and "Cobro / doble en caja |" in registro
+           and f4.read_text(encoding="utf-8").startswith(f"# Incidente {i4} — Cobro | doble en caja\n"),
+           "un título con | o con salto de línea no rompe el registro", registro)
+    expect(len(de(p, "E-INCIDENT-TEMPLATE")) == 3
+           and len(de(p, "W-INCIDENT-NOT-APPROVED")) == 3,
+           "mientras tenga huecos: error de plantilla y aviso de postmortem pendiente")
+
+
+def test_F011_R007_version_inexistente():
+    print("\nF011 · R007: la versión afectada tiene que existir")
+    p = proyecto("r007")
+    version(p, "0.4.0")
+    version(p, "0.5.0", aprobada=False)
+    _, f1 = incidente(p)
+    completa_incidente(f1, "0.9.0")
+    msgs = de(p, "E-INCIDENT-RELEASE")
+    expect(len(msgs) == 1 and "I001" in msgs[0] and "0.9.0" in msgs[0],
+           "0.9.0 no existe: error que nombra I001 y 0.9.0", f"{msgs}")
+    for valor in ("0.4.0", "v0.4.0", "0.5.0", "desconocida"):
+        completa_incidente(f1, valor)
+        texto = f1.read_text(encoding="utf-8")
+        f1.write_text(re.sub(r"\| Versión afectada \| [^|]* \|",
+                             f"| Versión afectada | {valor} |", texto), encoding="utf-8")
+        expect(not de(p, "E-INCIDENT-RELEASE"), f"«{valor}» vale")
+    expect(not de(p, "E-INCIDENT-TEMPLATE"), "completo, sin huecos")
+
+
+def test_F011_R016_check_en_ci():
+    print("\nF011 · R016: check da lo mismo en local y en CI")
+    p = proyecto("r016")
+    _, f1 = incidente(p)
+    completa_incidente(f1, "0.9.0")
+    r = run(p, "check", "--check")
+    expect(r.returncode == 1 and "E-INCIDENT-RELEASE" in r.stdout,
+           "--check sale con 1 y el informe trae el código", r.stdout + r.stderr)
+    r = run(p, "check", "I001", "--json", "--check")
+    data = json.loads(r.stdout) if r.stdout.strip() else {}
+    expect(r.returncode == 1 and data.get("schema") == "operate.check/v1"
+           and data.get("ok") is False
+           and "E-INCIDENT-RELEASE" in {f["code"] for f in data["findings"]}
+           and {"code", "severity", "message", "artifact"} <= set(data["findings"][0])
+           and data["findings"][0]["artifact"].startswith("operations/incidents/I001-"),
+           "--json emite operate.check/v1 con el código del error", r.stdout + r.stderr)
+    expect(run(p, "check", "i001", "--json").stdout == run(p, "check", "I001", "--json").stdout,
+           "la salida es estable")
+    expect(run(p, "check", "--chek").returncode == 2, "un argumento desconocido sale con 2")
+    expect(run(p, "check", "I009").returncode == 2, "un incidente que no existe sale con 2")
+    r = run(proyecto("r016-vacio"), "check", "--check")
+    expect(r.returncode == 0 and "0 incidente(s)" in r.stdout, "sin operations/, nada que fallar")
+
+
+def test_F011_R017_sin_los_demas():
+    print("\nF011 · R017: sin versiones ni arquitectura")
+    p = proyecto("r017")
+    iid, f1 = incidente(p)
+    expect(iid == "I001" and not (p / "releases").exists(),
+           "sin releases/, el incidente se registra")
+    completa_incidente(f1, "desconocida")
+    expect(not [f for f in hallazgos(p) if f["severity"] == "error"],
+           "con la versión desconocida, sin errores")
+
+
+def cobertura_de_codigos():
+    # main() la ejecuta despues de todas las pruebas: compara los codigos
+    # declarados con los que las pruebas vieron emitirse.
+    print("\ncobertura de codigos de hallazgo")
+    declarados = set(operate.FINDINGS)
+    expect(declarados <= PROBADOS, f"los {len(declarados)} codigos declarados se prueban",
+           f"sin probar: {sorted(declarados - PROBADOS)}")
+
+
 def main():
     tests = [f for n, f in globals().items() if n.startswith("test_") and callable(f)]
     try:
         for fn in tests:
             fn()
+        cobertura_de_codigos()
     finally:
         shutil.rmtree(BASE, ignore_errors=True)
 
