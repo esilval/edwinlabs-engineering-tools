@@ -10,6 +10,7 @@ claude plugin install discovery --scope user
 claude plugin install architecture --scope user
 claude plugin install sdd --scope user
 claude plugin install release --scope user
+claude plugin install operate --scope user
 ```
 
 Cada plugin funciona por su cuenta: instala solo los que vayas a usar.
@@ -24,8 +25,8 @@ Los plugins forman una serie que cubre el ciclo de vida de un producto, una
 etapa por plugin:
 
 ```
-discovery  →  architecture  →  sdd  →  release  →  operate (pendiente)
-producto      decisiones        features  versiones
+discovery  →  architecture  →  sdd  →  release  →  operate
+producto      decisiones        features  versiones  operación
 ```
 
 | Plugin | Qué hace | Deja en el proyecto |
@@ -34,6 +35,7 @@ producto      decisiones        features  versiones
 | [`architecture`](plugins/architecture) | De producto aprobado a arquitectura: atributos de calidad medibles, componentes con las candidatas que alojan, decisiones (ADR) y estándares comprobables, aprobados por el usuario. Solo para productos nuevos. | `architecture/` |
 | [`sdd`](plugins/sdd) | Desarrollo orientado a especificaciones: spec → plan → tareas → implementación, con una compuerta que impide escribir código sin especificación aprobada y trazabilidad requisito → tarea → prueba. | `specs/`, `.sdd/` |
 | [`release`](plugins/release) | De features terminadas a versión preparada: comprueba que las features elegidas están aprobadas, cerradas y trazadas, propone el número SemVer y deja notas para usuarios y cambios técnicos, aprobados por el usuario. No despliega ni etiqueta. | `releases/` |
+| [`operate`](plugins/operate) | De versión publicada a operación: preparación de cada versión (puesta en marcha, señales con umbral desde los atributos de calidad y vuelta atrás) e incidentes con postmortems cuyas acciones vuelven a `sdd` como correcciones, aprobados por el usuario. No despliega ni lee métricas. | `operations/` |
 
 Cómo encajan:
 
@@ -47,6 +49,10 @@ Cómo encajan:
 - `/release:new 008 009` prepara una versión con features terminadas: lee
   `specs/`, ejecuta la trazabilidad de `sdd` sobre cada una y cita en las notas
   las candidatas y objetivos de su fila `Origen`.
+- `/operate:prepare v0.4.0` prepara la puesta en marcha de una versión
+  publicada, con una señal por cada atributo de calidad de la arquitectura que
+  tocan sus features. Las acciones del postmortem de un incidente vuelven a
+  `sdd`: `/sdd:specify I001-A2` crea la feature de corrección.
 - Ningún plugin importa código de otro: se unen solo por esos archivos. Lo que
   uno lee del formato de otro lo lleva copiado y documentado, y una prueba de
   contrato lo contrasta con el plugin real en CI.
@@ -68,6 +74,12 @@ Un flujo completo, en un producto nuevo:
 /sdd:implement
 /release:new 001 002                  # versión con las features terminadas
 /release:approve                      # y el git tag lo ejecutas tú
+/operate:prepare v0.1.0               # puesta en marcha, señales y vuelta atrás
+/operate:approve v0.1.0
+/operate:incident Caída del resumen   # cuando algo falla en producción
+/operate:postmortem I001
+/operate:approve I001
+/sdd:specify I001-A1                  # cada acción, una corrección
 ```
 
 En un repositorio que ya existe, `sdd` funciona solo, sin los demás.

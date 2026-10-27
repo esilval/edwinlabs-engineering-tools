@@ -108,6 +108,33 @@ de candidatas y objetivos y el algoritmo de huella de la aprobación. Si
 `discovery` cambia ese formato o esa huella, la prueba de contrato del selftest
 de `sdd`, que aprueba un producto con el `discovery.py` real, falla en CI.
 
+## Desde operate
+
+Si el proyecto usa el plugin `operate`, cada acción del postmortem aprobado de
+un incidente se convierte en una feature de corrección con
+`/sdd:specify I001-A2`. El script (`sdd.py new I001-A2`) crea la spec con:
+
+- **Tipo:** `corrección`, que el plugin `release` usa para el número de versión.
+- **Problema:** qué pasó, el impacto y la acción.
+- **Contexto:** el incidente, la versión afectada y las causas del postmortem.
+- **Cabecera:** `| Origen | I001-A2 · 0.4.0 |`, con la acción y la versión
+  afectada (`—` si es desconocida).
+
+No se crea nada, con salida 1 y el motivo, si el postmortem no está aprobado o
+cambió después de aprobarse, si el incidente o la acción no existen, o si la
+acción ya tiene feature (alguna spec la lleva como primer elemento de su fila
+`Origen`).
+
+El traspaso solo se activa con `operations/incidents.md`, el registro de
+incidentes de `operate`. Sin él, `I001-A2` es una descripción de texto como
+cualquier otra.
+
+**Contrato con `operate`.** `scripts/sdd_operate.py` copia de `operate.py` la
+lectura de los incidentes y sus acciones; la huella es la misma de
+`sdd_product.py`. La prueba de contrato del selftest registra y aprueba un
+incidente con el `operate.py` real, crea la corrección y comprueba que
+`operate` deja de avisar de esa acción.
+
 ## Diagramas del plan
 
 `plan.md` tiene una sección `## Diagramas` en Mermaid, que GitHub y los editores

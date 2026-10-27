@@ -34,6 +34,13 @@
       "source": "./plugins/release",
       "category": "development",
       "keywords": ["release", "semver", "changelog", "spec-driven"]
+    },
+    {
+      "name": "operate",
+      "description": "De version publicada a operacion: preparacion de cada version (puesta en marcha, senales con umbral y vuelta atras) e incidentes con postmortems cuyas acciones vuelven a sdd como correcciones, con aprobacion del usuario. No despliega.",
+      "source": "./plugins/operate",
+      "category": "development",
+      "keywords": ["operations", "runbook", "incidents", "postmortem", "spec-driven"]
     }
   ]
 }

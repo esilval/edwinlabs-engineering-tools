@@ -323,6 +323,8 @@ los plugins del marketplace:
 | `*-COMPONENT-*` | componentes y candidatas que alojan (plugin `architecture`) | en uso |
 | `*-STANDARD-*` | estándares comprobables (plugin `architecture`) | en uso |
 | `*-RELEASE-*` | versiones de `releases/`: sus features, número, huecos y aprobación (plugin `release`) | en uso |
+| `*-PREP-*` | preparación operativa de una versión: su versión, señales, vuelta atrás, huecos y aprobación (plugin `operate`) | en uso |
+| `*-INCIDENT-*` | incidentes y sus postmortems: versión afectada, acciones, huecos y aprobación (plugin `operate`) | en uso |
 
 **Política de compatibilidad del schema `sdd.trace/v1`:** añadir códigos nuevos
 es aditivo y no rompe a un consumidor que filtre por `severity`. Renombrar o

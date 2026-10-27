@@ -192,8 +192,9 @@ def content_digest(text):
 
     plugins/sdd/scripts/sdd_product.py y plugins/architecture/scripts/
     architecture.py tienen una copia de esta huella para saber si el producto
-    esta aprobado: un cambio aqui se replica alli, y las pruebas de contrato de
-    sus selftests lo comprueban."""
+    esta aprobado, y plugins/release/scripts/release.py y plugins/operate/
+    scripts/operate_sources.py la misma para sus artefactos: un cambio aqui se
+    replica alli, y las pruebas de contrato de sus selftests lo comprueban."""
     end = _header_end(text)
     return text_digest(STATUS_ROW.sub("", text[:end], count=1) + text[end:])
 
@@ -1032,9 +1033,10 @@ APPROVE_TEXT = re.compile(r"discovery\.py['\"]?\s+approve\b")
 #
 # Copia adaptada de plugins/sdd/scripts/sdd_bash.py (invokes_approve y sus
 # ayudantes), copiada a su vez en plugins/architecture/scripts/architecture.py
-# y, desde esta, en plugins/release/scripts/release.py: los plugins no
-# comparten codigo. Un arreglo en una copia se replica en las otras, y los
-# selftests usan listas de casos equivalentes.
+# y, desde esta, en plugins/release/scripts/release.py y en
+# plugins/operate/scripts/operate.py: los plugins no comparten codigo. Un
+# arreglo en una copia se replica en las otras, y los selftests usan listas de
+# casos equivalentes.
 # --------------------------------------------------------------------------
 
 _WRAPPERS = {"sudo", "env", "command", "nohup", "time", "nice", "builtin", "exec"}

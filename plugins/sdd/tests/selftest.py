@@ -2512,6 +2512,213 @@ def test_F010_R018_trace_de_otra_feature(base):
     expect(actual.read_text() == "002-b\n", "y la activa sigue siendo la 002")
 
 
+# ------------------------------------------- feature 011: traspaso desde operate
+# Un incidente con su postmortem en el formato de operate (copia de su
+# plantilla): sdd lee esos archivos, no importa codigo de operate.
+
+OPERATE = PLUGIN.parent / "operate" / "scripts" / "operate.py"
+
+INCIDENTE = """# Incidente I001 — Caída del resumen diario
+
+| Campo            | Valor |
+| ---------------- | ----- |
+| Estado           | Draft |
+| ID               | I001 |
+| Fecha            | 2026-10-25 |
+| Versión afectada | 0.4.0 |
+| Severidad        | alta |
+
+## Qué pasó
+
+El resumen diario dejó de aparecer al cerrar la caja.
+
+## Impacto
+
+Los dueños no vieron el total del día durante dos horas.
+
+## Cronología
+
+10:00 detección; 12:00 recuperación.
+
+## Causas
+
+La caché de totales no se invalidaba al cambiar de día.
+
+## Acciones
+
+### I001-A1 — Invalidar la caché al cambiar de día
+
+- **Qué:** borrar la entrada del día anterior a medianoche.
+
+### I001-A2 — Alarma de latencia
+
+- **Qué:** avisar si el resumen tarda más de 2 segundos.
+"""
+
+
+def con_incidente(p, aprobado=True, registro=True, version="0.4.0"):
+    """Pone en p un operations/ de operate con el incidente I001."""
+    d = p / "operations" / "incidents"
+    d.mkdir(parents=True)
+    if registro:
+        (p / "operations" / "incidents.md").write_text(
+            "# Registro de incidentes\n\n| ID | Fecha | Título | Archivo |\n| - | - | - | - |\n"
+            "| I001 | 2026-10-25 | Caída del resumen | incidents/I001-caida.md |\n",
+            encoding="utf-8")
+    (d / "I001-caida.md").write_text(INCIDENTE.replace("| 0.4.0 |", f"| {version} |"),
+                                     encoding="utf-8")
+    if aprobado:
+        sella(d / "I001-caida.md")
+    return p
+
+
+def test_F011_R013_feature_desde_accion(base):
+    print("\nF011 · R013: /sdd:specify I001-A2 crea una corrección desde la acción")
+    p = base / "f011-r013"
+    p.mkdir()
+    con_incidente(p)
+    r = run("new", ["i001-a2"], cwd=p)
+    data = json.loads(r.stdout) if r.returncode == 0 else {}
+    expect(r.returncode == 0 and data.get("feature") == "001-alarma-latencia"
+           and data.get("origin") == {"action": "I001-A2", "incident": "I001",
+                                      "version": "0.4.0"},
+           "la feature toma el nombre de la acción y el JSON trae su origen", r.stdout + r.stderr)
+    if r.returncode != 0:
+        return
+    spec = (p / "specs" / "001-alarma-latencia" / "spec.md").read_text(encoding="utf-8")
+    cabecera = spec.split("\n## ", 1)[0]
+    expect("| Tipo   | corrección |" in cabecera
+           and "| Issue  | —            |\n| Origen | I001-A2 · 0.4.0 |\n" in cabecera,
+           "Tipo corrección y la fila Origen con la acción y la versión", cabecera)
+    problema = spec.split("## Problema\n", 1)[1].split("\n## ", 1)[0]
+    expect("El resumen diario dejó de aparecer" in problema and "dos horas" in problema
+           and "I001-A2" in problema and "más de 2 segundos" in problema,
+           "el problema cuenta el incidente, su impacto y la acción", problema)
+    contexto = spec.split("## Contexto\n", 1)[1].split("\n## ", 1)[0]
+    expect("I001" in contexto and "0.4.0" in contexto and "caché de totales" in contexto,
+           "el contexto cita el incidente, la versión y las causas", contexto)
+    expect((p / ".sdd" / "current").read_text().strip() == "001-alarma-latencia",
+           "y queda como feature activa")
+
+    q = base / "f011-r013-desconocida"
+    q.mkdir()
+    con_incidente(q, version="desconocida")
+    run("new", ["I001-A1"], cwd=q)
+    spec = next((q / "specs").iterdir()) / "spec.md"
+    expect("| Origen | I001-A1 · — |" in spec.read_text(encoding="utf-8"),
+           "con la versión desconocida, el segundo grupo es —")
+
+
+def test_F011_R014_traspaso_denegado(base):
+    print("\nF011 · R014: sin postmortem aprobado, acción inexistente o con feature, nada")
+    casos = []
+    p = base / "f011-r014-sin-aprobar"
+    p.mkdir()
+    con_incidente(p, aprobado=False)
+    casos.append((p, "I001-A2", ("no está aprobado", "/operate:approve")))
+    p = base / "f011-r014-cambiado"
+    p.mkdir()
+    con_incidente(p)
+    f = p / "operations" / "incidents" / "I001-caida.md"
+    f.write_text(f.read_text(encoding="utf-8").replace("dos horas", "tres horas"),
+                 encoding="utf-8")
+    casos.append((p, "I001-A2", ("cambió después de aprobarse",)))
+    p = base / "f011-r014-inexistente"
+    p.mkdir()
+    con_incidente(p)
+    casos.append((p, "I001-A9", ("I001-A9 no existe",)))
+    casos.append((p, "I009-A1", ("I009 no existe",)))
+    for p, arg, fragmentos in casos:
+        r = run("new", [arg], cwd=p)
+        expect(r.returncode == 1 and all(x in r.stderr for x in fragmentos)
+               and not (p / "specs").exists() and not (p / ".sdd").exists(),
+               f"{p.name} {arg}: sale con 1, lo dice y no crea nada", r.stdout + r.stderr)
+
+    p = base / "f011-r014-con-feature"
+    p.mkdir()
+    con_incidente(p)
+    run("new", ["I001-A2"], cwd=p)
+    antes = sorted(x.name for x in (p / "specs").iterdir())
+    r = run("new", ["I001-A2"], cwd=p)
+    expect(r.returncode == 1 and "001-alarma-latencia" in r.stderr
+           and sorted(x.name for x in (p / "specs").iterdir()) == antes,
+           "la acción que ya tiene feature: se nombra la feature y no se crea otra",
+           r.stdout + r.stderr)
+
+
+def test_F011_R018_sin_registro_igual(base):
+    print("\nF011 · R018: sin el registro de incidentes, I001-A2 es una descripción")
+    p = base / "f011-r018"
+    p.mkdir()
+    con_incidente(p, registro=False)
+    r = run("new", ["I001-A2"], cwd=p)
+    data = json.loads(r.stdout) if r.returncode == 0 else {}
+    spec = (p / data["spec"]).read_text(encoding="utf-8") if data else ""
+    expect(r.returncode == 0 and data.get("feature") == "001-i001-a2" and "origin" not in data
+           and "| Origen |" not in spec and "| Tipo   | funcionalidad |" in spec,
+           "se crea como cualquier descripción de texto, como antes", r.stdout + r.stderr)
+
+
+def test_F011_R013_contrato_con_operate(base):
+    print("\nF011 · R013: la lectura de sdd coincide con el operate real")
+    if not OPERATE.is_file():
+        print("  (sin plugins/operate en el repositorio: prueba de contrato omitida)")
+        return
+    p = base / "f011-contrato"
+    p.mkdir()
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(p),
+               CLAUDE_PLUGIN_ROOT=str(OPERATE.parent.parent))
+
+    def operate(*args):
+        return subprocess.run([sys.executable, str(OPERATE), *args], capture_output=True,
+                              text=True, cwd=str(p), env=env, timeout=60)
+
+    r = operate("incident", "Caída del resumen diario")
+    archivo = p / json.loads(r.stdout)["file"] if r.returncode == 0 else None
+    if not expect(archivo is not None, "operate registra el incidente", r.stdout + r.stderr):
+        return
+    cuerpo = INCIDENTE.split("\n## ", 1)[1]
+    cabecera = archivo.read_text(encoding="utf-8").split("\n## ", 1)[0]
+    cabecera = re.sub(r"\| Fecha            \| _[^|]*_ \|", "| Fecha            | 2026-10-25 |",
+                      cabecera)
+    cabecera = re.sub(r"\| Versión afectada \| _[^|]*_ \|",
+                      "| Versión afectada | desconocida |", cabecera)
+    cabecera = re.sub(r"\| Severidad        \| _[^|]*_ \|", "| Severidad        | alta |",
+                      cabecera)
+    archivo.write_text(cabecera + "\n## " + cuerpo, encoding="utf-8")
+    op = _operate_lee()
+    expect(op.incident(p, "I001")["state"] == "draft", "antes de aprobar, en borrador")
+    r = operate("approve", "I001")
+    expect(r.returncode == 0, "operate aprueba el postmortem", r.stdout + r.stderr)
+    inc = op.incident(p, "I001")
+    expect(inc["state"] == "approved" and op.has_registry(p),
+           "lo que operate aprueba, sdd lo da por aprobado, con su registro", f"{inc['state']}")
+    expect(op.action(inc["text"], "I001-A2")
+           == {"id": "I001-A2", "title": "Alarma de latencia",
+               "what": "avisar si el resumen tarda más de 2 segundos."},
+           "la acción se lee igual", f"{op.action(inc['text'], 'I001-A2')}")
+    siguiente = operate("next-action", "I001").stdout.strip()
+    expect(siguiente == "I001-A3", "next-action de operate sigue las acciones que lee sdd",
+           siguiente)
+    r = run("new", ["I001-A1"], cwd=p)
+    expect(r.returncode == 0, "sdd crea la corrección desde el incidente real", r.stderr)
+    avisos = [f["message"] for f in json.loads(operate("check", "--json").stdout)["findings"]
+              if f["code"] == "W-INCIDENT-ACTION-NO-FEATURE"]
+    expect(len(avisos) == 1 and "I001-A2" in avisos[0],
+           "operate ve que I001-A1 ya tiene feature y avisa solo de I001-A2", f"{avisos}")
+    archivo.write_text(archivo.read_text(encoding="utf-8").replace("dos horas", "tres horas"),
+                       encoding="utf-8")
+    expect(op.incident(p, "I001")["state"] == "stale",
+           "editado tras aprobar: cambiado para los dos plugins")
+
+
+def _operate_lee():
+    if str(PLUGIN / "scripts") not in sys.path:
+        sys.path.insert(0, str(PLUGIN / "scripts"))
+    import sdd_operate
+    return sdd_operate
+
+
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
     try:
@@ -2578,6 +2785,10 @@ def main():
         test_F009_R008_pide_citar_la_decision(base)
         test_F010_R017_tipo(base)
         test_F010_R018_trace_de_otra_feature(base)
+        test_F011_R013_feature_desde_accion(base)
+        test_F011_R014_traspaso_denegado(base)
+        test_F011_R018_sin_registro_igual(base)
+        test_F011_R013_contrato_con_operate(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

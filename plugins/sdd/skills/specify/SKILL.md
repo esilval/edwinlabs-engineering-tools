@@ -39,6 +39,16 @@ Descripción de la feature: `$ARGUMENTS`
    - Si trae `warnings`, enséñaselos al usuario al terminar: dependencias
      sin feature o secciones cuyo documento ya no está en `product/sources/`.
 
+   **Traspaso desde `operate`.** Si la descripción es el ID de una acción de
+   un postmortem (`I001-A2`) y existe `operations/incidents.md`, el script crea
+   una feature de corrección desde esa acción:
+   - Si sale con código 1, muestra el motivo tal cual y detente: el postmortem
+     no está aprobado o cambió, la acción no existe, o ya tiene feature.
+   - Si el JSON trae `origin`, la spec ya tiene `Tipo` en `corrección`, la fila
+     `Origen` (`I001-A2 · 0.4.0`), el Problema (qué pasó, el impacto y la
+     acción) y el Contexto (el incidente y sus causas). Lee el incidente que
+     indica `context` y parte de ahí. No toques las filas `Tipo` ni `Origen`.
+
 3. Lee `specs/constitution.md` si existe. Es una restricción, no una sugerencia.
 
 4. Explora el repositorio lo justo para entender el contexto: dónde vivirá el
