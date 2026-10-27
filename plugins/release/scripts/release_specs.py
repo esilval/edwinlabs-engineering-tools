@@ -6,9 +6,10 @@ por archivos. Los originales estan en plugins/sdd/scripts/sdd_trace.py (norm,
 section, STATUS_ROW, _header_end, doc_status, is_approved, TASK_STATE_LINE,
 content_digest, is_stale, los requisitos de parse_spec, el estado de
 parse_tasks y ADR_REF) y en plugins/sdd/scripts/sdd.py (FEATURE_RE,
-feature_dirs y phase_approval). Un cambio de formato en sdd se replica aqui;
-la prueba test_F010_R002_contrato_con_sdd del selftest de release lo contrasta
-con el sdd.py real.
+feature_dirs y phase_approval). plugins/operate/scripts/operate_sources.py
+copia de aqui features, resolve y la cabecera. Un cambio de formato en sdd se
+replica aqui; la prueba test_F010_R002_contrato_con_sdd del selftest de
+release lo contrasta con el sdd.py real.
 
 Solo lee: nunca escribe en specs/.
 """

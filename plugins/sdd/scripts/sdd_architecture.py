@@ -12,8 +12,10 @@ Los plugins no comparten codigo: lo que aqui se lee del formato de architecture
 (componentes, ADR y su estado, estandares, aprobacion del conjunto) es una
 copia de plugins/architecture/scripts/architecture.py. La huella es la de
 sdd_product.py, a su vez copia de la de discovery, igual que la de
-architecture. La prueba de contrato del selftest de sdd compara esta lectura
-con el architecture.py real cuando esta en el repositorio.
+architecture. plugins/operate/scripts/operate_sources.py lleva otra copia de
+la aprobacion del conjunto y de los ADR. La prueba de contrato del selftest de
+sdd compara esta lectura con el architecture.py real cuando esta en el
+repositorio.
 """
 
 import re

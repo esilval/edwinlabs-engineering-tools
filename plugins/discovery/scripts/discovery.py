@@ -192,8 +192,9 @@ def content_digest(text):
 
     plugins/sdd/scripts/sdd_product.py y plugins/architecture/scripts/
     architecture.py tienen una copia de esta huella para saber si el producto
-    esta aprobado: un cambio aqui se replica alli, y las pruebas de contrato de
-    sus selftests lo comprueban."""
+    esta aprobado, y plugins/release/scripts/release.py y plugins/operate/
+    scripts/operate_sources.py la misma para sus artefactos: un cambio aqui se
+    replica alli, y las pruebas de contrato de sus selftests lo comprueban."""
     end = _header_end(text)
     return text_digest(STATUS_ROW.sub("", text[:end], count=1) + text[end:])
 

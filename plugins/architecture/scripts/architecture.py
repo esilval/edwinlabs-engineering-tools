@@ -88,8 +88,10 @@ def find_upwards(start, markers):
 # --------------------------------------------------------------------------
 # Huella y Estado. Copia de discovery.py (norm, _squash, text_digest,
 # STATUS_ROW, _header_end, doc_status, approval_digest, content_digest), igual
-# que la de plugins/sdd/scripts/sdd_product.py. Un cambio en una se replica en
-# las otras; la prueba de contrato del selftest lo comprueba contra discovery.
+# que la de plugins/sdd/scripts/sdd_product.py. plugins/operate/scripts/
+# operate_sources.py copia de aqui artifact_state y adr_state. Un cambio en una
+# se replica en las otras; la prueba de contrato del selftest lo comprueba
+# contra discovery.
 # --------------------------------------------------------------------------
 
 ACCENTS = str.maketrans(
@@ -156,6 +158,8 @@ def artifact_state(text):
 # --------------------------------------------------------------------------
 # El producto de discovery. Copia de su formato (section, parse_items, citas);
 # leerlo es el contrato entre plugins ya aprobado para sdd.
+# plugins/operate/scripts/operate_sources.py copia de aqui section,
+# parse_items, header_fields, quality y adrs para leer architecture/.
 # --------------------------------------------------------------------------
 
 # Diferencia con la copia de discovery ([GB]\d+): aqui la misma expresion lee
@@ -600,7 +604,9 @@ PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_*])_[^_\n]+_(?![A-Za-z0-9_*])")
 
 
 def check_templates(root):
-    """Huecos de plantilla (texto en cursiva) que siguen sin rellenar."""
+    """Huecos de plantilla (texto en cursiva) que siguen sin rellenar. La
+    misma regla esta en holes de plugins/release/scripts/release.py y de
+    plugins/operate/scripts/operate.py."""
     out = []
     files = ([f"{ARCH_DIR}/{name}" for name in SET_FILES + (DIAGRAMS,)]
              + [a["file"] for a in adrs(root)])

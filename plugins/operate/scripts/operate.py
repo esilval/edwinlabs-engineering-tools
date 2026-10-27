@@ -8,7 +8,9 @@ skills solo redactan.
 
 El plugin lee releases/ (lo deja release), architecture/ (architecture) y
 specs/ (sdd), y solo escribe en operations/. No importa codigo de otros
-plugins: lo que lee de ellos lo copia, documentado, operate_sources.py.
+plugins: lo que lee de ellos lo copia, documentado, operate_sources.py. A su
+vez, plugins/sdd/scripts/sdd_operate.py copia de aqui la lectura de los
+incidentes (incident_files, actions) para el traspaso /sdd:specify I001-A2.
 
 Subcomandos:
   prepare vX.Y.Z      Escribe operations/vX.Y.Z.md, la preparacion de una

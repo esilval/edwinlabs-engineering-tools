@@ -147,7 +147,7 @@ Las del traspaso, en `plugins/sdd/tests/selftest.py`.
 
 ### T009 — Skills, documentación y cierre
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008, R012, R016
 - **Depende de:** T007, T008
 - **Archivos:** `plugins/operate/skills/prepare/SKILL.md`, `plugins/operate/skills/incident/SKILL.md`, `plugins/operate/skills/postmortem/SKILL.md`, `plugins/operate/skills/approve/SKILL.md`, `plugins/operate/skills/check/SKILL.md`, `plugins/operate/README.md`, `README.md`, `plugins/sdd/README.md`

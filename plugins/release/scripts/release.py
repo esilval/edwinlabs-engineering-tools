@@ -53,8 +53,9 @@ PHASE_FILES = {"spec": "spec.md", "plan": "plan.md", "tasks": "tasks.md"}
 
 # --------------------------------------------------------------------------
 # Raiz del proyecto. Copia de project_root y find_upwards de
-# plugins/architecture/scripts/architecture.py (y de sdd.py y discovery.py):
-# los plugins no comparten codigo.
+# plugins/architecture/scripts/architecture.py (y de sdd.py y discovery.py),
+# copiada a su vez en plugins/operate/scripts/operate.py: los plugins no
+# comparten codigo.
 # --------------------------------------------------------------------------
 
 def project_root(payload=None):
@@ -86,7 +87,9 @@ def find_upwards(start, markers):
 
 
 # --------------------------------------------------------------------------
-# El artefacto releases/vX.Y.Z.md (D2): cabecera, Estado y huella
+# El artefacto releases/vX.Y.Z.md (D2): cabecera, Estado y huella.
+# plugins/operate/scripts/operate_sources.py copia de aqui content_digest,
+# release_state, feature_list, releases y published para leer releases/.
 # --------------------------------------------------------------------------
 
 STATUS_ROW = specs.STATUS_ROW
@@ -378,7 +381,9 @@ def check_trace(root, f, rel):
 
 
 # --------------------------------------------------------------------------
-# Huecos de plantilla (R010): texto en cursiva sin sustituir
+# Huecos de plantilla (R010): texto en cursiva sin sustituir. La misma regla
+# esta en check_templates de architecture.py; plugins/operate/scripts/
+# operate.py copia holes.
 # --------------------------------------------------------------------------
 
 PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_*])_[^_\n]+_(?![A-Za-z0-9_*])")
@@ -703,7 +708,8 @@ def set_status(text, value):
     """Devuelve (texto_nuevo, cambiado?). Copia de set_status de
     plugins/architecture/scripts/architecture.py, que copia la de
     plugins/discovery/scripts/discovery.py; la de plugins/sdd/scripts/
-    sdd_trace.py es la misma."""
+    sdd_trace.py es la misma. plugins/operate/scripts/operate.py la copia de
+    aqui."""
     end = specs._header_end(text)
     head, n = STATUS_ROW.subn(lambda m: m.group(1) + value + m.group(3), text[:end], count=1)
     return head + text[end:], bool(n)
