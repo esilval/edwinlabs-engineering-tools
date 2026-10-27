@@ -1,0 +1,33 @@
+{
+  "description": "Protege la operación: solo el usuario aprueba una preparación o un postmortem",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/operate.py", "guard"],
+            "timeout": 10,
+            "statusMessage": "Comprobando la aprobacion de la operacion"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/operate.py", "audit"],
+            "timeout": 10,
+            "statusMessage": "Auditando la aprobacion de la operacion"
+          }
+        ]
+      }
+    ]
+  }
+}

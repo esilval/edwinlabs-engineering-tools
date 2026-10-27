@@ -113,7 +113,7 @@ Las del traspaso, en `plugins/sdd/tests/selftest.py`.
 
 ### T007 — Guardrails de `operate`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R012
 - **Depende de:** T006
 - **Archivos:** `plugins/operate/scripts/operate.py`, `plugins/operate/hooks/hooks.json`, `plugins/operate/tests/selftest.py`, `plugins/sdd/scripts/sdd_bash.py`, `plugins/discovery/scripts/discovery.py`, `plugins/architecture/scripts/architecture.py`, `plugins/release/scripts/release.py`

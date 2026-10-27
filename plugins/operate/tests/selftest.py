@@ -964,6 +964,142 @@ def test_F011_R011_cambio_tras_aprobar():
            "la preparación editada tras aprobar avisa", f"{msgs}")
 
 
+# ----------------------------------------------------------------- T007
+
+# La misma lista de casos que los selftests de release, architecture,
+# discovery y sdd, con operate.py approve en lugar de la orden de cada plugin:
+# las cinco copias del analizador de comandos responden igual.
+MENCIONES = [
+    "git commit -q -m 'operate: la compuerta ya no bloquea operate.py approve'",
+    'gh pr create --title t --body "Corrige: python3 operate.py approve en texto"',
+    "cat > notas.md <<'EOF'\npython3 plugins/operate/scripts/operate.py approve\nEOF",
+    'echo "para aprobar: python3 operate.py approve"',
+    "grep -rn 'operate.py approve' plugins/operate/README.md",
+    "git commit -m 'la compuerta ya no bloquea `python3 operate.py approve`'",
+    "gh pr create --title t --body 'Ahora `operate.py approve` solo se bloquea si se ejecuta'",
+    "git commit -m 'cita $(python3 operate.py approve) en texto'",
+]
+
+EJECUCIONES = [
+    "python3 operate.py approve",
+    "python3 /x/plugins/operate/scripts/operate.py approve --skill",
+    'python3 "$HOME/plugins/operate/scripts/operate.py" approve v0.4.0',
+    "cd plugins/operate && python3 scripts/operate.py approve",
+    "ls; FOO=1 python3 operate.py approve I001",
+    "echo `python3 operate.py approve`",
+    'echo "$(python3 operate.py approve)"',
+    'git commit -m "$(python3 /x/operate.py approve)"',
+    "x=$(cd y && python3 operate.py approve)",
+    "python3 operate.py approve; echo $'it\\'s'",
+]
+
+
+def hook(root, sub, tool, tool_input, tool_use_id="t1", env_extra=None):
+    payload = json.dumps({"tool_name": tool, "tool_use_id": tool_use_id, "cwd": str(root),
+                          "tool_input": tool_input})
+    return run(root, sub, stdin=payload, env_extra=env_extra)
+
+
+def deniega(r):
+    if r.returncode != 0:
+        return None
+    if not r.stdout.strip():
+        return False
+    d = json.loads(r.stdout)["hookSpecificOutput"]
+    return d["permissionDecision"] == "deny" and bool(d["permissionDecisionReason"])
+
+
+def test_F011_R012_guardrails():
+    print("\nF011 · R012: el modelo no puede aprobar una preparación ni un postmortem")
+    p = con_version("r012")
+    prep = preparacion_completa(p)
+    inc = postmortem_completo(p)
+    for rel, linea in (("operations/v0.4.0.md", "| Estado   | Draft |"),
+                       (f"operations/incidents/{inc.name}", "| Estado           | Draft |")):
+        for nuevo in ("Approved", "Approved · 0123456789ab", "Aprobada", "Draft · 0123456789ab"):
+            r = hook(p, "guard", "Edit", {"file_path": rel, "old_string": linea,
+                                          "new_string": linea.replace("Draft", nuevo)})
+            expect(deniega(r) is True and "/operate:approve" in r.stdout,
+                   f"un Edit que pone {nuevo!r} en {rel.split('/')[-1]} se deniega", r.stdout)
+    aprobada = prep.read_text(encoding="utf-8").replace(
+        "| Estado   | Draft |", "| Estado   | Approved · 0123456789ab |")
+    r = hook(p, "guard", "Write", {"file_path": str(prep), "content": aprobada})
+    expect(deniega(r) is True, "un Write que aprueba se deniega", r.stdout)
+    r = hook(p, "guard", "Write", {"file_path": "operations/incidents/I009-x.md",
+                                   "content": "# x\n\n| Campo | Valor |\n| - | - |\n"
+                                              "| Estado | Approved |\n"})
+    expect(deniega(r) is True, "crear un incidente ya aprobado se deniega")
+    r = hook(p, "guard", "Edit", {"file_path": str(prep), "old_string": "Pasos redactados.",
+                                  "new_string": "Otros pasos."})
+    expect(deniega(r) is False, "editar el contenido de un borrador no se bloquea")
+    for ruta in ("operations/incidents.md", "operations/notas.md", "specs/x.md"):
+        r = hook(p, "guard", "Write", {"file_path": ruta, "content": "| Estado | Approved |"})
+        expect(deniega(r) is False, f"{ruta} no se protege")
+
+    for cmd in MENCIONES:
+        corto = cmd.splitlines()[0][:50]
+        expect(not operate.invokes_approve(cmd), f"no es ejecución: {corto!r}")
+        expect(deniega(hook(p, "guard", "Bash", {"command": cmd})) is False,
+               f"la compuerta no bloquea: {corto!r}")
+    for cmd in EJECUCIONES:
+        expect(operate.invokes_approve(cmd), f"es ejecución: {cmd!r}")
+        r = hook(p, "guard", "Bash", {"command": cmd})
+        expect(deniega(r) is True and "allow" not in r.stdout, f"bloquea: {cmd!r}", r.stdout)
+    for cmd in ("python3 operate.py check --check", "python3 operate.py prepare v0.4.0"):
+        expect(deniega(hook(p, "guard", "Bash", {"command": cmd})) is False,
+               f"otros subcomandos pasan: {cmd!r}")
+
+    print("  auditoría")
+    opaco = "bash -c 'python3 plugins/operate/scripts/operate.py approve I001'"
+    r = hook(p, "guard", "Bash", {"command": opaco}, tool_use_id="a1")
+    expect(deniega(r) is False, "la compuerta deja pasar un bash -c", r.stdout)
+    run(p, "approve", "I001")
+    expect(estado(inc).startswith("Approved"), "el comando opaco aprobó")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="a1")
+    expect(r.returncode == 2 and estado(inc) == "Draft" and inc.name in r.stderr,
+           "y la auditoría devuelve el postmortem a Draft y avisa", r.stderr)
+    hook(p, "guard", "Bash", {"command": "ls"}, tool_use_id="a2")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="a2")
+    expect(r.returncode == 0 and not r.stderr, "un comando que no toca el Estado: silencio")
+    expect(hook(p, "audit", "Bash", {}, tool_use_id="sin-foto").returncode == 0,
+           "sin instantánea no opina")
+
+    q = con_version("r012-sin-operations")
+    hook(q, "guard", "Bash", {"command": "python3 crea.py"}, tool_use_id="a3")
+    nuevo = q / "operations" / "v0.4.0.md"
+    nuevo.parent.mkdir()
+    nuevo.write_text("# x\n\n| Campo | Valor |\n| - | - |\n| Estado | Approved · 0123456789ab |\n",
+                     encoding="utf-8")
+    r = hook(q, "audit", "Bash", {}, tool_use_id="a3")
+    expect(r.returncode == 2 and estado(nuevo) == "Draft",
+           "sin operations/ al empezar: una preparación creada ya aprobada vuelve a Draft",
+           r.stderr)
+
+    print("  escape y fallo abierto")
+    r = hook(p, "guard", "Bash", {"command": "python3 operate.py approve"},
+             env_extra={"OPERATE_BYPASS": "1"})
+    expect(deniega(r) is False, "OPERATE_BYPASS=1 desactiva la compuerta")
+    hook(p, "guard", "Bash", {"command": "python3 x.py"}, tool_use_id="b1")
+    run(p, "approve", "v0.4.0")
+    r = hook(p, "audit", "Bash", {}, tool_use_id="b1", env_extra={"OPERATE_BYPASS": "1"})
+    expect(r.returncode == 0 and estado(prep).startswith("Approved"),
+           "OPERATE_BYPASS=1 también desactiva la auditoría")
+    r = run(p, "guard", stdin="no soy json")
+    expect(r.returncode == 0 and not r.stdout, "un payload ilegible falla abierto")
+    r = run(p, "guard", stdin=json.dumps({"tool_name": "Edit", "cwd": str(p),
+                                          "tool_input": {"file_path": 7}}))
+    expect(r.returncode == 0 and not r.stdout, "un payload inesperado falla abierto", r.stderr)
+    fuente = SCRIPT.read_text(encoding="utf-8")
+    expect('"allow"' not in fuente and "'allow'" not in fuente, "nunca devuelve allow")
+
+    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    expect(all(h.get("timeout") and h.get("command") == "python3" and h.get("args")
+               for grupo in hooks.values() for m in grupo for h in m["hooks"])
+           and any(m["matcher"] == "Write|Edit|Bash" for m in hooks["PreToolUse"])
+           and any(m["matcher"] == "Bash" for m in hooks["PostToolUse"]),
+           "hooks.json registra guard y audit en forma exec con timeout")
+
+
 def cobertura_de_codigos():
     # main() la ejecuta despues de todas las pruebas: compara los codigos
     # declarados con los que las pruebas vieron emitirse.

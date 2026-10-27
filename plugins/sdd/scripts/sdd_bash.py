@@ -20,8 +20,9 @@ lo deja pasar y lo recoge la capa 2.
 
 invokes_approve y sus ayudantes tienen copias adaptadas en
 plugins/discovery/scripts/discovery.py, plugins/architecture/scripts/
-architecture.py y plugins/release/scripts/release.py: los plugins no
-comparten codigo. Un arreglo en una copia se replica en las otras.
+architecture.py, plugins/release/scripts/release.py y plugins/operate/
+scripts/operate.py: los plugins no comparten codigo. Un arreglo en una copia
+se replica en las otras.
 """
 
 import hashlib

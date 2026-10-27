@@ -844,7 +844,8 @@ def _guarded_target(root, raw_path):
 #
 # Copia adaptada del analizador de plugins/architecture/scripts/architecture.py,
 # que copia el de plugins/discovery/scripts/discovery.py, que a su vez copia el
-# de plugins/sdd/scripts/sdd_bash.py: los plugins no comparten codigo. Es la
+# de plugins/sdd/scripts/sdd_bash.py, y copiada a su vez en
+# plugins/operate/scripts/operate.py: los plugins no comparten codigo. Es la
 # cuarta copia. Un arreglo en una se replica en las otras, y los selftests usan
 # la misma lista de casos MENCIONES/EJECUCIONES.
 
