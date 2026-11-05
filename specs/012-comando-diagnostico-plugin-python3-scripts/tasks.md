@@ -86,7 +86,7 @@ plugin.
 
 ### T003 — `doctor.py`: scripts y hooks contra un proyecto temporal
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R004, R005, R006, R007
 - **Depende de:** T001
 - **Archivos:** `plugins/sdd/scripts/doctor.py`, `plugins/sdd/tests/selftest.py`

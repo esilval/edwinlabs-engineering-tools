@@ -2723,12 +2723,13 @@ def _operate_lee():
 # --------------------------------------------------------------------------
 
 
-def doctor(args=(), python=None, stdin=None, env_extra=None, plugin=PLUGIN):
+def doctor(args=(), python=None, stdin=None, env_extra=None, plugin=PLUGIN, cwd=None):
     """Ejecuta doctor.sh con DOCTOR_PYTHON; por defecto, el intérprete de las pruebas."""
     env = dict(os.environ, DOCTOR_PYTHON=python or sys.executable)
     env.update(env_extra or {})
     return subprocess.run(["sh", str(plugin / "scripts" / "doctor.sh"), *args],
-                          input=stdin, capture_output=True, text=True, env=env, timeout=60)
+                          input=stdin, capture_output=True, text=True, env=env, timeout=60,
+                          cwd=str(cwd) if cwd else None)
 
 
 def python_falso(base, nombre, cuerpo):
@@ -2905,6 +2906,138 @@ def test_F012_N001_aviso_rapido(base):
     check(r.returncode == 0 and dura < 1.0, f"terminó en {dura:.2f} s", f"{dura:.2f} s")
 
 
+# --------------------------------------------------------------------------
+# Feature 012: diagnóstico del plugin (doctor.py)
+# --------------------------------------------------------------------------
+
+DOCTOR_PLUGINS = ("discovery", "architecture", "sdd", "release", "operate")
+COMUN = "# --- común a las cinco copias ---"
+
+
+def copia_del_plugin(base, nombre):
+    """Copia solo este plugin, sin los demás ni sus cachés."""
+    destino = base / nombre / PLUGIN.name
+    shutil.rmtree(str(destino.parent), ignore_errors=True)
+    shutil.copytree(str(PLUGIN), str(destino),
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    return destino
+
+
+def huella_de(directorio):
+    """Contenido de todos los archivos bajo directorio, por ruta relativa."""
+    return {p.relative_to(directorio).as_posix(): p.read_bytes()
+            for p in sorted(directorio.rglob("*")) if p.is_file()}
+
+
+def test_F012_R003_script_roto(base):
+    print("\nF012 · R003: un script que no arranca se nombra con su error")
+    copia = copia_del_plugin(base, "r003")
+    scripts = (copia / "scripts").glob("*.py")
+    roto = sorted(p for p in scripts if p.name != "doctor.py")[-1]
+    roto.write_text(roto.read_text(encoding="utf-8") + "\ndef roto(:\n", encoding="utf-8")
+    r = doctor(plugin=copia)
+    check(f"[falla] script {roto.name}: no arranca: SyntaxError" in r.stdout
+          and r.returncode == 1, "nombra el script y su error",
+          f"{r.returncode} {r.stdout}")
+    check(f"no está listo: script {roto.name}" in r.stdout, "y el resumen lo nombra",
+          r.stdout)
+
+
+def guardrail_roto(base, nombre, cuerpo="    return 0\n"):
+    """Copia del plugin con un guard cambiado: por defecto, deja pasar todo."""
+    copia = copia_del_plugin(base, nombre)
+    script = copia / "scripts" / "sdd.py"
+    texto = script.read_text(encoding="utf-8")
+    assert "def cmd_guard(_args):\n" in texto
+    script.write_text(texto.replace("def cmd_guard(_args):\n",
+                                    "def cmd_guard(_args):\n" + cuerpo, 1),
+                      encoding="utf-8")
+    return copia
+
+
+def test_F012_R004_guardrails_responden(base):
+    print("\nF012 · R004: cada guardrail impide una aprobación de prueba y deja pasar lo"
+          " inocuo")
+    r = doctor()
+    for linea in ("[ok] guardrail guard (PreToolUse): impide una aprobación de prueba",
+                  "[ok] guardrail audit (PostToolUse): responde",
+                  "[ok] hook quality (PostToolUse): responde",
+                  "[ok] hook context (SessionStart): responde"):
+        check(linea in r.stdout, f"el plugin real: {linea}", r.stdout)
+    r = doctor(env_extra={"SDD_BYPASS": "1"})
+    check("[ok] guardrail guard" in r.stdout, "el escape del entorno no cambia la prueba",
+          r.stdout)
+    r = doctor(plugin=guardrail_roto(base, "r004"))
+    check("[falla] guardrail guard (PreToolUse): no impide una aprobación de prueba: "
+          "no protege" in r.stdout and r.returncode == 1,
+          "un guard que deja pasar todo da [falla]", f"{r.returncode} {r.stdout}")
+    concede = ('    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",'
+               ' "permissionDecision": "allow"}}))\n    return 0\n')
+    r = doctor(plugin=guardrail_roto(base, "r004-allow", concede))
+    check("[falla] guardrail guard (PreToolUse): concede permisos (allow)" in r.stdout
+          and r.returncode == 1, "un guard que devuelve allow da [falla]",
+          f"{r.returncode} {r.stdout}")
+    r = doctor(plugin=guardrail_roto(base, "r004-lista", "    print('[]')\n    return 0\n"))
+    check("[falla] guardrail guard (PreToolUse): no impide" in r.stdout
+          and "Resumen: sdd no está listo: guardrail guard" in r.stdout,
+          "un guard que imprime JSON que no es un objeto se nombra, sin reventar", r.stdout)
+
+
+def test_F012_R005_no_modifica_el_proyecto(base):
+    print("\nF012 · R005: el diagnóstico no cambia ningún archivo del proyecto")
+    proyecto = base / "r005"
+    feature = proyecto / "specs" / "001-x"
+    feature.mkdir(parents=True)
+    (feature / "spec.md").write_text(SPEC_LISTA, encoding="utf-8")
+    run("approve", cwd=proyecto)
+    check("Approved" in (feature / "spec.md").read_text(encoding="utf-8"),
+          "el proyecto tiene un artefacto aprobado")
+    (proyecto / "specs" / "002-y").mkdir()
+    (proyecto / "specs" / "002-y" / "spec.md").write_text(SPEC_LISTA, encoding="utf-8")
+    (proyecto / "src").mkdir()
+    (proyecto / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    antes = huella_de(proyecto)
+    r = doctor(cwd=proyecto, env_extra={"CLAUDE_PROJECT_DIR": str(proyecto)})
+    check("Resumen: sdd está listo." in r.stdout, "el diagnóstico termina", r.stdout)
+    check(huella_de(proyecto) == antes, "ningún archivo del proyecto cambia")
+
+
+def test_F012_R006_resumen(base):
+    print("\nF012 · R006: el resumen dice si el plugin está listo o qué falta")
+    r = doctor()
+    check(r.stdout.rstrip().endswith("Resumen: sdd está listo.") and r.returncode == 0,
+          "el plugin real está listo", f"{r.returncode} {r.stdout}")
+    r = doctor(plugin=guardrail_roto(base, "r006"))
+    check("Resumen: sdd no está listo: guardrail guard (PreToolUse)." in r.stdout,
+          "con un guardrail roto, no está listo y lo nombra", r.stdout)
+
+
+def test_F012_R007_sin_los_demas(base):
+    print("\nF012 · R007: el diagnóstico funciona sin los demás plugins")
+    r = doctor(plugin=copia_del_plugin(base, "r007"))
+    check("Resumen: sdd está listo." in r.stdout and r.returncode == 0,
+          "una copia solo de este plugin está lista", f"{r.returncode} {r.stdout}")
+
+
+def test_F012_copias_del_diagnostico(base):
+    print("\nF012: el diagnóstico es la misma copia en los cinco plugins")
+    propio = PLUGIN / "scripts" / "doctor.sh"
+    r = subprocess.run(["sh", "-n", str(propio)], capture_output=True, text=True)
+    check(r.returncode == 0, "sh -n acepta doctor.sh", r.stderr)
+    comun = (PLUGIN / "scripts" / "doctor.py").read_text(encoding="utf-8")
+    check(COMUN in comun, "doctor.py marca su parte común")
+    comun = comun.split(COMUN, 1)[-1]
+    for nombre in DOCTOR_PLUGINS:
+        otro = PLUGIN.parent / nombre / "scripts"
+        if nombre == PLUGIN.name or not (otro / "doctor.sh").is_file():
+            continue
+        check((otro / "doctor.sh").read_bytes() == propio.read_bytes(),
+              f"doctor.sh igual al de {nombre}")
+        texto = (otro / "doctor.py").read_text(encoding="utf-8")
+        check(texto.split(COMUN, 1)[-1] == comun and COMUN in texto,
+              f"la parte común de doctor.py igual a la de {nombre}")
+
+
 
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
@@ -2984,6 +3117,12 @@ def main():
         test_F012_R010_fallo_no_bloquea(base)
         test_F012_R011_un_aviso_por_sesion(base)
         test_F012_N001_aviso_rapido(base)
+        test_F012_R003_script_roto(base)
+        test_F012_R004_guardrails_responden(base)
+        test_F012_R005_no_modifica_el_proyecto(base)
+        test_F012_R006_resumen(base)
+        test_F012_R007_sin_los_demas(base)
+        test_F012_copias_del_diagnostico(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
