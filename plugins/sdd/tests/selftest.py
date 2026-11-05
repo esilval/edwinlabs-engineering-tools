@@ -2718,6 +2718,77 @@ def _operate_lee():
     import sdd_operate
     return sdd_operate
 
+# --------------------------------------------------------------------------
+# Feature 012: diagnóstico del plugin (doctor.sh)
+# --------------------------------------------------------------------------
+
+
+def doctor(args=(), python=None, stdin=None, env_extra=None, plugin=PLUGIN):
+    """Ejecuta doctor.sh con DOCTOR_PYTHON; por defecto, el intérprete de las pruebas."""
+    env = dict(os.environ, DOCTOR_PYTHON=python or sys.executable)
+    env.update(env_extra or {})
+    return subprocess.run(["sh", str(plugin / "scripts" / "doctor.sh"), *args],
+                          input=stdin, capture_output=True, text=True, env=env, timeout=60)
+
+
+def python_falso(base, nombre, cuerpo):
+    """Un 'intérprete' de mentira: un script de shell ejecutable."""
+    ruta = base / "falsos" / nombre
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text("#!/bin/sh\n" + cuerpo + "\n", encoding="utf-8")
+    ruta.chmod(0o755)
+    return str(ruta)
+
+
+def test_F012_R001_interprete_bien(base):
+    print("\nF012 · R001: intérprete válido, con su versión")
+    r = doctor()
+    v = "%d.%d.%d" % tuple(sys.version_info[:3])
+    check(f"[ok] intérprete: Python {v} ({sys.executable})" in r.stdout,
+          "el intérprete real da [ok] con su versión y su ruta", r.stdout)
+    r = doctor(python=python_falso(base, "py311", "echo 3.11.4"))
+    check("[ok] intérprete: Python 3.11.4" in r.stdout, "un intérprete 3.11.4 da 3.11.4",
+          r.stdout)
+
+
+def test_F012_R002_interprete_falta_o_antiguo(base):
+    print("\nF012 · R002: intérprete ausente, antiguo o que no se ejecuta")
+    r = doctor(python=str(base / "no-existe" / "python3"))
+    out = r.stdout
+    check("[falla] intérprete: falta" in out, "dice que falta", out)
+    check("guardrails de sdd" in out and "compuerta" in out,
+          "dice que los guardrails y la compuerta no funcionan", out)
+    check("Cómo resolverlo: Instala Python" in out, "dice cómo instalarlo", out)
+    check("[--] scripts: sin comprobar" in out and "doctor.py" not in out,
+          "no ejecuta doctor.py", out)
+    r = doctor(python=python_falso(base, "py36", "echo 3.6.15"))
+    check("Python 3.6.15 es anterior a 3.8" in r.stdout and "Cómo resolverlo" in r.stdout,
+          "3.6 es anterior a 3.8, y qué hacer", r.stdout)
+    r = doctor(python=python_falso(base, "store", "echo 'Python was not found; run "
+                                   "without arguments to install from the Microsoft "
+                                   "Store'; exit 9009"))
+    check("no se ejecuta" in r.stdout and "Microsoft Store" in r.stdout,
+          "un intérprete que no se ejecuta lo dice, con su salida", r.stdout)
+    r = doctor(python=python_falso(base, "py27", "echo 2.7.18"))
+    check("Python 2.7.18 es anterior a 3.8" in r.stdout, "Python 2 es anterior", r.stdout)
+    r = doctor(python=python_falso(base, "py4", "echo 4.0.0"))
+    check("[ok] intérprete: Python 4.0.0" in r.stdout, "una versión mayor sirve", r.stdout)
+
+
+def test_F012_R006_resumen_sin_interprete(base):
+    print("\nF012 · R006: resumen y código de salida sin intérprete")
+    falta = str(base / "no-existe" / "python3")
+    r = doctor(python=falta)
+    check("Resumen: sdd no está listo: intérprete." in r.stdout and r.returncode == 1,
+          "resumen «no está listo» y salida 1", f"{r.returncode} {r.stdout}")
+    r = doctor(["--skill"], python=falta)
+    check("Resumen: sdd no está listo" in r.stdout and r.returncode == 0,
+          "con --skill sale con 0", f"{r.returncode} {r.stdout}")
+    r = doctor(["--otra"])
+    check(r.returncode == 2 and "Uso:" in r.stderr, "uso incorrecto sale con 2",
+          f"{r.returncode} {r.stderr}")
+
+
 
 def main():
     base = Path(tempfile.mkdtemp(prefix="sdd-selftest-"))
@@ -2789,6 +2860,9 @@ def main():
         test_F011_R014_traspaso_denegado(base)
         test_F011_R018_sin_registro_igual(base)
         test_F011_R013_contrato_con_operate(base)
+        test_F012_R001_interprete_bien(base)
+        test_F012_R002_interprete_falta_o_antiguo(base)
+        test_F012_R006_resumen_sin_interprete(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
