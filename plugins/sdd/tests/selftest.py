@@ -2939,8 +2939,9 @@ def test_F012_R003_script_roto(base):
     check(f"[falla] script {roto.name}: no arranca: SyntaxError" in r.stdout
           and r.returncode == 1, "nombra el script y su error",
           f"{r.returncode} {r.stdout}")
-    check(f"no está listo: script {roto.name}" in r.stdout, "y el resumen lo nombra",
-          r.stdout)
+    resumen = [linea for linea in r.stdout.splitlines() if linea.startswith("Resumen:")]
+    check(bool(resumen) and "no está listo" in resumen[0]
+          and f"script {roto.name}" in resumen[0], "y el resumen lo nombra", r.stdout)
 
 
 def guardrail_roto(base, nombre, cuerpo="    return 0\n"):

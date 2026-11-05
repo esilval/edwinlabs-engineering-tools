@@ -24,8 +24,8 @@ CASE = {
     "dirs": ["architecture"],
     "approval": {
         "file_path": "architecture/quality.md",
-        "content": "# Prueba del diagnóstico\n\n| Campo  | Valor    |\n| ------ | -------- |\n"
-                   "| Estado | Approved |\n",
+        "content": "# Prueba del diagnóstico\n\n"
+                   "| Campo  | Valor    |\n| ------ | -------- |\n| Estado | Approved |\n",
     },
 }
 

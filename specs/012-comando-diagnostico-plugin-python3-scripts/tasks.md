@@ -162,7 +162,7 @@ plugin.
 
 ### T006 — El diagnóstico en `release` y `operate` `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R004, R005, R006, R007, R008
 - **Depende de:** T004
 - **Archivos:** `plugins/{release,operate}/scripts/doctor.sh`, `plugins/{release,operate}/scripts/doctor.py`, `plugins/{release,operate}/skills/doctor/SKILL.md`, `plugins/{release,operate}/hooks/hooks.json`, `plugins/{release,operate}/tests/selftest.py`, `plugins/{release,operate}/README.md`

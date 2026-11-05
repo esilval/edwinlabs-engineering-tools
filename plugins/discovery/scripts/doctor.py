@@ -24,8 +24,8 @@ CASE = {
     "dirs": ["product"],
     "approval": {
         "file_path": "product/brief.md",
-        "content": "# Prueba del diagnóstico\n\n| Campo  | Valor    |\n| ------ | -------- |\n"
-                   "| Estado | Approved |\n",
+        "content": "# Prueba del diagnóstico\n\n"
+                   "| Campo  | Valor    |\n| ------ | -------- |\n| Estado | Approved |\n",
     },
 }
 

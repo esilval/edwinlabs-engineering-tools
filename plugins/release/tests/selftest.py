@@ -1044,7 +1044,10 @@ def test_F010_R013_guardrails():
     expect('"allow"' not in fuente and "'allow'" not in fuente, "nunca devuelve allow")
 
     hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
-    expect(all(h.get("timeout") and h.get("command") == "python3" and h.get("args")
+    # El SessionStart de doctor.sh (feature 012) va en sh: avisa cuando falta Python.
+    expect(all(h.get("timeout") and h.get("args")
+               and (h.get("command") == "python3"
+                    or (h.get("command") == "sh" and h["args"][0].endswith("/doctor.sh")))
                for grupo in hooks.values() for m in grupo for h in m["hooks"])
            and any(m["matcher"] == "Write|Edit|Bash" for m in hooks["PreToolUse"])
            and any(m["matcher"] == "Bash" for m in hooks["PostToolUse"]),
@@ -1058,6 +1061,166 @@ def cobertura_de_codigos():
     declarados = set(release.FINDINGS)
     expect(declarados <= PROBADOS, f"los {len(declarados)} codigos declarados se prueban",
            f"sin probar: {sorted(declarados - PROBADOS)}")
+
+
+# --------------------------------------------------------------------------
+# Feature 012: diagnóstico del plugin (doctor.sh y doctor.py)
+#
+# Las pruebas de doctor.sh (intérprete, aviso, marca por sesión) viven en el
+# selftest de sdd, el original; aquí se prueba la copia de este plugin. Los
+# helpers doctor, copia_del_plugin, guardrail_roto y huella_de copian los de
+# plugins/sdd/tests/selftest.py, y este bloque es el mismo en los selftests de
+# discovery, architecture, release y operate: un cambio se replica en todos.
+# --------------------------------------------------------------------------
+
+DOCTOR_PLUGINS = ("discovery", "architecture", "sdd", "release", "operate")
+COMUN = "# --- común a las cinco copias ---"
+# Un artefacto del plugin, aprobado y en borrador, para la prueba de F012-R005.
+ARTEFACTOS = [
+    ('releases/v0.1.0.md', 'Approved · 0123456789ab'),
+    ('releases/v0.2.0.md', 'Draft'),
+]
+
+
+def doctor(args=(), python=None, stdin=None, env_extra=None, plugin=PLUGIN, cwd=None):
+    """Ejecuta doctor.sh con DOCTOR_PYTHON; por defecto, el intérprete de las pruebas."""
+    env = dict(os.environ, DOCTOR_PYTHON=python or sys.executable)
+    env.update(env_extra or {})
+    return subprocess.run(["sh", str(plugin / "scripts" / "doctor.sh"), *args],
+                          input=stdin, capture_output=True, text=True, env=env,
+                          timeout=120, cwd=str(cwd) if cwd else None)
+
+
+def copia_del_plugin(nombre):
+    """Copia solo este plugin, sin los demás ni sus cachés."""
+    destino = BASE / "f012" / nombre / PLUGIN.name
+    shutil.rmtree(str(destino.parent), ignore_errors=True)
+    shutil.copytree(str(PLUGIN), str(destino),
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    return destino
+
+
+def guardrail_roto(nombre, cuerpo="    return 0\n"):
+    """Copia del plugin con un guard cambiado: por defecto, deja pasar todo."""
+    copia = copia_del_plugin(nombre)
+    script = copia / "scripts" / f"{PLUGIN.name}.py"
+    texto = script.read_text(encoding="utf-8")
+    assert "def cmd_guard(_args):\n" in texto
+    script.write_text(texto.replace("def cmd_guard(_args):\n",
+                                    "def cmd_guard(_args):\n" + cuerpo, 1),
+                      encoding="utf-8")
+    return copia
+
+
+def huella_de(directorio):
+    """Contenido de todos los archivos bajo directorio, por ruta relativa."""
+    return {p.relative_to(directorio).as_posix(): p.read_bytes()
+            for p in sorted(directorio.rglob("*")) if p.is_file()}
+
+
+def test_F012_R003_script_roto():
+    print()
+    print(f"F012-R003: un script de {PLUGIN.name} que no arranca, con su error")
+    copia = copia_del_plugin("r003")
+    scripts = (copia / "scripts").glob("*.py")
+    roto = sorted(p for p in scripts if p.name != "doctor.py")[-1]
+    roto.write_text(roto.read_text(encoding="utf-8") + "\ndef roto(:\n", encoding="utf-8")
+    r = doctor(plugin=copia)
+    expect(f"[falla] script {roto.name}: no arranca: SyntaxError" in r.stdout
+           and r.returncode == 1, "nombra el script y su error",
+           f"{r.returncode} {r.stdout}")
+    resumen = [linea for linea in r.stdout.splitlines() if linea.startswith("Resumen:")]
+    expect(bool(resumen) and "no está listo" in resumen[0]
+           and f"script {roto.name}" in resumen[0], "y el resumen lo nombra", r.stdout)
+
+
+def test_F012_R004_guardrails_responden():
+    print()
+    print(f"F012-R004: los guardrails de {PLUGIN.name} responden a las pruebas")
+    r = doctor()
+    for linea in ("[ok] guardrail guard (PreToolUse): impide una aprobación de prueba",
+                  "[ok] guardrail audit (PostToolUse): responde"):
+        expect(linea in r.stdout, f"el plugin real: {linea}", r.stdout)
+    r = doctor(env_extra={f"{PLUGIN.name.upper()}_BYPASS": "1"})
+    expect("[ok] guardrail guard" in r.stdout,
+           "el escape del entorno no cambia la prueba", r.stdout)
+    r = doctor(plugin=guardrail_roto("r004"))
+    expect("[falla] guardrail guard (PreToolUse): no impide una aprobación de prueba: "
+           "no protege" in r.stdout and r.returncode == 1,
+           "un guard que deja pasar todo da [falla]", f"{r.returncode} {r.stdout}")
+    concede = ('    print(\'{"hookSpecificOutput": {"hookEventName": "PreToolUse", '
+               '"permissionDecision": "allow"}}\')\n    return 0\n')
+    r = doctor(plugin=guardrail_roto("r004-allow", concede))
+    expect("[falla] guardrail guard (PreToolUse): concede permisos (allow)" in r.stdout,
+           "un guard que devuelve allow da [falla]", r.stdout)
+
+
+def test_F012_R005_no_modifica_el_proyecto():
+    print()
+    print(f"F012-R005: el diagnóstico de {PLUGIN.name} no cambia el proyecto")
+    proyecto = BASE / "f012" / "r005-proyecto"
+    for ruta, estado in ARTEFACTOS:
+        destino = proyecto / ruta
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(f"# x\n\n| Campo  | Valor |\n| ------ | ----- |\n"
+                           f"| Estado | {estado} |\n", encoding="utf-8")
+    antes = huella_de(proyecto)
+    r = doctor(cwd=proyecto, env_extra={"CLAUDE_PROJECT_DIR": str(proyecto)})
+    expect(f"Resumen: {PLUGIN.name} está listo." in r.stdout, "el diagnóstico termina",
+           r.stdout)
+    expect(huella_de(proyecto) == antes, "ningún archivo del proyecto cambia")
+
+
+def test_F012_R006_resumen():
+    print()
+    print(f"F012-R006: el resumen de {PLUGIN.name} dice si está listo o qué falta")
+    r = doctor()
+    expect(r.stdout.rstrip().endswith(f"Resumen: {PLUGIN.name} está listo.")
+           and r.returncode == 0, "el plugin real está listo",
+           f"{r.returncode} {r.stdout}")
+    r = doctor(plugin=guardrail_roto("r006"))
+    expect(f"Resumen: {PLUGIN.name} no está listo: guardrail guard (PreToolUse)."
+           in r.stdout, "con un guardrail roto, no está listo y lo nombra", r.stdout)
+
+
+def test_F012_R007_sin_los_demas():
+    print()
+    print(f"F012-R007: el diagnóstico de {PLUGIN.name} sin los demás plugins")
+    r = doctor(plugin=copia_del_plugin("r007"))
+    expect(f"Resumen: {PLUGIN.name} está listo." in r.stdout and r.returncode == 0,
+           "una copia solo de este plugin está lista", f"{r.returncode} {r.stdout}")
+
+
+def test_F012_R008_aviso_nombra_el_plugin():
+    print()
+    print(f"F012-R008: sin intérprete, el aviso nombra /{PLUGIN.name}:doctor")
+    tmp = BASE / "f012" / "r008-tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+    r = doctor(["session"], python=str(BASE / "no-existe" / "python3"),
+               stdin='{"session_id": "f012-r008"}', env_extra={"TMPDIR": str(tmp)})
+    expect(r.returncode == 0 and f"/{PLUGIN.name}:doctor" in r.stdout
+           and '"systemMessage"' in r.stdout, "el aviso nombra el diagnóstico del plugin",
+           f"{r.returncode} {r.stdout}")
+
+
+def test_F012_copias_del_diagnostico():
+    print()
+    print("F012: el diagnóstico es la misma copia en los cinco plugins")
+    propio = PLUGIN / "scripts" / "doctor.sh"
+    r = subprocess.run(["sh", "-n", str(propio)], capture_output=True, text=True)
+    expect(r.returncode == 0, "sh -n acepta doctor.sh", r.stderr)
+    comun = (PLUGIN / "scripts" / "doctor.py").read_text(encoding="utf-8")
+    expect(COMUN in comun, "doctor.py marca su parte común")
+    comun = comun.split(COMUN, 1)[-1]
+    for nombre in DOCTOR_PLUGINS:
+        otro = PLUGIN.parent / nombre / "scripts"
+        if nombre == PLUGIN.name or not (otro / "doctor.sh").is_file():
+            continue
+        expect((otro / "doctor.sh").read_bytes() == propio.read_bytes(),
+               f"doctor.sh igual al de {nombre}")
+        texto = (otro / "doctor.py").read_text(encoding="utf-8")
+        expect(COMUN in texto and texto.split(COMUN, 1)[-1] == comun,
+               f"la parte común de doctor.py igual a la de {nombre}")
 
 
 def main():
