@@ -175,7 +175,7 @@ plugin.
 
 ### T007 — README raíz y cierre
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R006, R007
 - **Depende de:** T005, T006
 - **Archivos:** `README.md`

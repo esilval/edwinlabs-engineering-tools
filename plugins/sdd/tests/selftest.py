@@ -2745,61 +2745,61 @@ def test_F012_R001_interprete_bien(base):
     print("\nF012 · R001: intérprete válido, con su versión")
     r = doctor()
     v = "%d.%d.%d" % tuple(sys.version_info[:3])
-    check(f"[ok] intérprete: Python {v} ({sys.executable})" in r.stdout,
-          "el intérprete real da [ok] con su versión y su ruta", r.stdout)
+    expect(f"[ok] intérprete: Python {v} ({sys.executable})" in r.stdout,
+           "el intérprete real da [ok] con su versión y su ruta", r.stdout)
     r = doctor(python=python_falso(base, "py311", "echo 3.11.4"))
-    check("[ok] intérprete: Python 3.11.4" in r.stdout, "un intérprete 3.11.4 da 3.11.4",
-          r.stdout)
+    expect("[ok] intérprete: Python 3.11.4" in r.stdout, "un intérprete 3.11.4 da 3.11.4",
+           r.stdout)
 
 
 def test_F012_R002_interprete_falta_o_antiguo(base):
     print("\nF012 · R002: intérprete ausente, antiguo o que no se ejecuta")
     r = doctor(python=str(base / "no-existe" / "python3"))
     out = r.stdout
-    check("[falla] intérprete: falta" in out, "dice que falta", out)
-    check("guardrails de sdd" in out and "compuerta" in out,
-          "dice que los guardrails y la compuerta no funcionan", out)
-    check("Cómo resolverlo: Instala Python" in out, "dice cómo instalarlo", out)
-    check("[--] scripts: sin comprobar" in out and "doctor.py" not in out,
-          "no ejecuta doctor.py", out)
+    expect("[falla] intérprete: falta" in out, "dice que falta", out)
+    expect("guardrails de sdd" in out and "compuerta" in out,
+           "dice que los guardrails y la compuerta no funcionan", out)
+    expect("Cómo resolverlo: Instala Python" in out, "dice cómo instalarlo", out)
+    expect("[--] scripts: sin comprobar" in out and "doctor.py" not in out,
+           "no ejecuta doctor.py", out)
     r = doctor(python=python_falso(base, "py36", "echo 3.6.15"))
-    check("Python 3.6.15 es anterior a 3.8" in r.stdout and "Cómo resolverlo" in r.stdout,
-          "3.6 es anterior a 3.8, y qué hacer", r.stdout)
+    expect("Python 3.6.15 es anterior a 3.8" in r.stdout and "Cómo resolverlo" in r.stdout,
+           "3.6 es anterior a 3.8, y qué hacer", r.stdout)
     r = doctor(python=python_falso(base, "store", "echo 'Python was not found; run "
                                    "without arguments to install from the Microsoft "
                                    "Store'; exit 9009"))
-    check("no se ejecuta" in r.stdout and "Microsoft Store" in r.stdout,
-          "un intérprete que no se ejecuta lo dice, con su salida", r.stdout)
+    expect("no se ejecuta" in r.stdout and "Microsoft Store" in r.stdout,
+           "un intérprete que no se ejecuta lo dice, con su salida", r.stdout)
     r = doctor(python=python_falso(base, "py27", "echo 2.7.18"))
-    check("Python 2.7.18 es anterior a 3.8" in r.stdout, "Python 2 es anterior", r.stdout)
+    expect("Python 2.7.18 es anterior a 3.8" in r.stdout, "Python 2 es anterior", r.stdout)
     r = doctor(python=python_falso(base, "py4", "echo 4.0.0"))
-    check("[ok] intérprete: Python 4.0.0" in r.stdout, "una versión mayor sirve",
-          r.stdout)
+    expect("[ok] intérprete: Python 4.0.0" in r.stdout, "una versión mayor sirve",
+           r.stdout)
 
 
 def test_F012_R006_resumen_sin_interprete(base):
     print("\nF012 · R006: resumen y código de salida sin intérprete")
     falta = str(base / "no-existe" / "python3")
     r = doctor(python=falta)
-    check("Resumen: sdd no está listo: intérprete." in r.stdout and r.returncode == 1,
-          "resumen «no está listo» y salida 1", f"{r.returncode} {r.stdout}")
+    expect("Resumen: sdd no está listo: intérprete." in r.stdout and r.returncode == 1,
+           "resumen «no está listo» y salida 1", f"{r.returncode} {r.stdout}")
     r = doctor(["--skill"], python=falta)
-    check("Resumen: sdd no está listo" in r.stdout and r.returncode == 0,
-          "con --skill sale con 0", f"{r.returncode} {r.stdout}")
+    expect("Resumen: sdd no está listo" in r.stdout and r.returncode == 0,
+           "con --skill sale con 0", f"{r.returncode} {r.stdout}")
     for args in (["--otra"], ["--skill", "extra"]):
         r = doctor(args)
-        check(r.returncode == 2 and "Uso:" in r.stderr,
-              f"{args}: uso incorrecto sale con 2", f"{r.returncode} {r.stderr}")
+        expect(r.returncode == 2 and "Uso:" in r.stderr,
+               f"{args}: uso incorrecto sale con 2", f"{r.returncode} {r.stderr}")
     # D1: con el intérprete válido, doctor.py que no llega a su resumen es un
     # fallo de scripts, con su error.
     roto = python_falso(base, "py-sin-doctor", 'if [ "$1" = -c ]; then echo 3.11.4; '
                         'else echo "doctor.py: algo revento" >&2; exit 1; fi')
     r = doctor(python=roto)
-    check("[falla] scripts: doctor.py no terminó" in r.stdout
-          and "    doctor.py: algo revento" in r.stdout
-          and "Resumen: sdd no está listo: scripts." in r.stdout and r.returncode == 1,
-          "doctor.py sin resumen: fallo de scripts con su error, y salida 1",
-          f"{r.returncode} {r.stdout}")
+    expect("[falla] scripts: doctor.py no terminó" in r.stdout
+           and "    doctor.py: algo revento" in r.stdout
+           and "Resumen: sdd no está listo: scripts." in r.stdout and r.returncode == 1,
+           "doctor.py sin resumen: fallo de scripts con su error, y salida 1",
+           f"{r.returncode} {r.stdout}")
 
 def aviso(base, session_id="s1", python=None, stdin=None, tmp=None):
     """doctor.sh session con un TMPDIR propio, para no dejar marcas fuera de base."""
@@ -2822,44 +2822,44 @@ def test_F012_R008_aviso_sin_interprete(base):
         out = {}
     msg = out.get("systemMessage", "")
     ctx = (out.get("hookSpecificOutput") or {}).get("additionalContext", "")
-    check(r.returncode == 0 and "falta" in msg and "/sdd:doctor" in msg,
-          "JSON con systemMessage que dice que falta y nombra /sdd:doctor",
-          f"{r.returncode} {r.stdout}")
-    check((out.get("hookSpecificOutput") or {}).get("hookEventName") == "SessionStart"
-          and "/sdd:doctor" in ctx, "y el mismo aviso como contexto del modelo", r.stdout)
+    expect(r.returncode == 0 and "falta" in msg and "/sdd:doctor" in msg,
+           "JSON con systemMessage que dice que falta y nombra /sdd:doctor",
+           f"{r.returncode} {r.stdout}")
+    expect((out.get("hookSpecificOutput") or {}).get("hookEventName") == "SessionStart"
+           and "/sdd:doctor" in ctx, "y el mismo aviso como contexto del modelo", r.stdout)
     r = aviso(base, "r008-antiguo", python=python_falso(base, "py36", "echo 3.6.15"))
-    check("3.6.15 es anterior a 3.8" in r.stdout, "también avisa si es antiguo", r.stdout)
+    expect("3.6.15 es anterior a 3.8" in r.stdout, "también avisa si es antiguo", r.stdout)
 
 
 def test_F012_R009_silencio_con_interprete(base):
     print("\nF012 · R009: con el intérprete válido, el inicio de sesión calla")
     r = aviso(base, "r009")
-    check(r.returncode == 0 and r.stdout == "" and r.stderr == "",
-          "sin salida y con 0", f"{r.returncode} {r.stdout!r} {r.stderr!r}")
+    expect(r.returncode == 0 and r.stdout == "" and r.stderr == "",
+           "sin salida y con 0", f"{r.returncode} {r.stdout!r} {r.stderr!r}")
 
 
 def test_F012_R010_fallo_no_bloquea(base):
     print("\nF012 · R010: un fallo en el aviso no impide la sesión")
     falta = str(base / "no-existe" / "python3")
     r = aviso(base, python=falta, stdin="esto no es JSON")
-    check(r.returncode == 0 and "systemMessage" in r.stdout,
-          "un payload que no es JSON sale con 0 y avisa igual",
-          f"{r.returncode} {r.stdout}")
+    expect(r.returncode == 0 and "systemMessage" in r.stdout,
+           "un payload que no es JSON sale con 0 y avisa igual",
+           f"{r.returncode} {r.stdout}")
     env = {"TMPDIR": str(base / "no-existe-tmp")}
     r = doctor(["session"], python=falta, stdin='{"session_id": "r010"}', env_extra=env)
-    check(r.returncode == 0 and "systemMessage" in r.stdout,
-          "un TMPDIR inexistente sale con 0 y avisa igual", f"{r.returncode} {r.stdout}")
+    expect(r.returncode == 0 and "systemMessage" in r.stdout,
+           "un TMPDIR inexistente sale con 0 y avisa igual", f"{r.returncode} {r.stdout}")
     r = doctor(["session"], stdin="", env_extra=env)
-    check(r.returncode == 0 and r.stdout == "", "sin entrada y con intérprete, calla",
-          f"{r.returncode} {r.stdout}")
+    expect(r.returncode == 0 and r.stdout == "", "sin entrada y con intérprete, calla",
+           f"{r.returncode} {r.stdout}")
     # Sin plugin.json legible, el aviso nombra /doctor:doctor en vez de fallar.
     suelto = base / "r010-sin-plugin-json"
     (suelto / "scripts").mkdir(parents=True)
     shutil.copy(str(PLUGIN / "scripts" / "doctor.sh"), str(suelto / "scripts"))
     r = doctor(["session"], python=falta, stdin='{"session_id": "r010-pj"}',
                env_extra=env, plugin=suelto)
-    check(r.returncode == 0 and "/doctor:doctor" in r.stdout,
-          "sin plugin.json, avisa con /doctor:doctor", f"{r.returncode} {r.stdout}")
+    expect(r.returncode == 0 and "/doctor:doctor" in r.stdout,
+           "sin plugin.json, avisa con /doctor:doctor", f"{r.returncode} {r.stdout}")
 
 
 def test_F012_R011_un_aviso_por_sesion(base):
@@ -2867,18 +2867,18 @@ def test_F012_R011_un_aviso_por_sesion(base):
     falta = str(base / "no-existe" / "python3")
     tmp = base / "tmp-r011"
     avisos = [aviso(base, "r011-a", python=falta, tmp=tmp).stdout for _ in range(5)]
-    check(sum(1 for a in avisos if a.strip()) == 1,
-          "cinco ejecuciones con el mismo session_id dan un aviso",
-          f"{[bool(a.strip()) for a in avisos]}")
+    expect(sum(1 for a in avisos if a.strip()) == 1,
+           "cinco ejecuciones con el mismo session_id dan un aviso",
+           f"{[bool(a.strip()) for a in avisos]}")
     otro = aviso(base, "r011-b", python=falta, tmp=tmp).stdout
-    check(bool(otro.strip()), "otra sesión vuelve a avisar", otro)
+    expect(bool(otro.strip()), "otra sesión vuelve a avisar", otro)
     raro = aviso(base, "../x\\y", python=falta, tmp=tmp)
     marcas = sorted(p.name for p in tmp.iterdir())
-    check(bool(raro.stdout.strip()) and "edwinlabs-doctor.xy" in marcas
-          and all(m.startswith("edwinlabs-doctor.") for m in marcas)
-          and not [p for p in base.iterdir() if p.name.startswith("edwinlabs")],
-          "un session_id con barras se limpia y no sale del directorio temporal",
-          f"{marcas} {raro.stdout}")
+    expect(bool(raro.stdout.strip()) and "edwinlabs-doctor.xy" in marcas
+           and all(m.startswith("edwinlabs-doctor.") for m in marcas)
+           and not [p for p in base.iterdir() if p.name.startswith("edwinlabs")],
+           "un session_id con barras se limpia y no sale del directorio temporal",
+           f"{marcas} {raro.stdout}")
     # Los hooks de los cinco plugins corren a la vez: la marca es atómica.
     tmp = base / "tmp-r011-paralelo"
     tmp.mkdir()
@@ -2887,14 +2887,14 @@ def test_F012_R011_un_aviso_por_sesion(base):
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
                                  env=env) for _ in range(5)]
     salidas = [p.communicate('{"session_id": "r011-p"}', timeout=60)[0] for p in procesos]
-    check(sum(1 for s in salidas if s.strip()) == 1,
-          "cinco ejecuciones simultáneas dan un aviso",
-          f"{[bool(s.strip()) for s in salidas]}")
+    expect(sum(1 for s in salidas if s.strip()) == 1,
+           "cinco ejecuciones simultáneas dan un aviso",
+           f"{[bool(s.strip()) for s in salidas]}")
     r = doctor(["session", "extra"], python=falta, stdin='{"session_id": "r011-x"}',
                env_extra={"TMPDIR": str(tmp)})
-    check(r.returncode == 0 and "systemMessage" in r.stdout,
-          "session con argumentos de más sigue saliendo con 0",
-          f"{r.returncode} {r.stdout}")
+    expect(r.returncode == 0 and "systemMessage" in r.stdout,
+           "session con argumentos de más sigue saliendo con 0",
+           f"{r.returncode} {r.stdout}")
 
 
 def test_F012_N001_aviso_rapido(base):
@@ -2903,7 +2903,7 @@ def test_F012_N001_aviso_rapido(base):
     inicio = time.monotonic()
     r = aviso(base, "n001")
     dura = time.monotonic() - inicio
-    check(r.returncode == 0 and dura < 1.0, f"terminó en {dura:.2f} s", f"{dura:.2f} s")
+    expect(r.returncode == 0 and dura < 1.0, f"terminó en {dura:.2f} s", f"{dura:.2f} s")
 
 
 # --------------------------------------------------------------------------
@@ -2936,12 +2936,12 @@ def test_F012_R003_script_roto(base):
     roto = sorted(p for p in scripts if p.name != "doctor.py")[-1]
     roto.write_text(roto.read_text(encoding="utf-8") + "\ndef roto(:\n", encoding="utf-8")
     r = doctor(plugin=copia)
-    check(f"[falla] script {roto.name}: no arranca: SyntaxError" in r.stdout
-          and r.returncode == 1, "nombra el script y su error",
-          f"{r.returncode} {r.stdout}")
+    expect(f"[falla] script {roto.name}: no arranca: SyntaxError" in r.stdout
+           and r.returncode == 1, "nombra el script y su error",
+           f"{r.returncode} {r.stdout}")
     resumen = [linea for linea in r.stdout.splitlines() if linea.startswith("Resumen:")]
-    check(bool(resumen) and "no está listo" in resumen[0]
-          and f"script {roto.name}" in resumen[0], "y el resumen lo nombra", r.stdout)
+    expect(bool(resumen) and "no está listo" in resumen[0]
+           and f"script {roto.name}" in resumen[0], "y el resumen lo nombra", r.stdout)
 
 
 def guardrail_roto(base, nombre, cuerpo="    return 0\n"):
@@ -2964,24 +2964,24 @@ def test_F012_R004_guardrails_responden(base):
                   "[ok] guardrail audit (PostToolUse): responde",
                   "[ok] hook quality (PostToolUse): responde",
                   "[ok] hook context (SessionStart): responde"):
-        check(linea in r.stdout, f"el plugin real: {linea}", r.stdout)
+        expect(linea in r.stdout, f"el plugin real: {linea}", r.stdout)
     r = doctor(env_extra={"SDD_BYPASS": "1"})
-    check("[ok] guardrail guard" in r.stdout, "el escape del entorno no cambia la prueba",
-          r.stdout)
+    expect("[ok] guardrail guard" in r.stdout, "el escape del entorno no cambia la prueba",
+           r.stdout)
     r = doctor(plugin=guardrail_roto(base, "r004"))
-    check("[falla] guardrail guard (PreToolUse): no impide una aprobación de prueba: "
-          "no protege" in r.stdout and r.returncode == 1,
-          "un guard que deja pasar todo da [falla]", f"{r.returncode} {r.stdout}")
+    expect("[falla] guardrail guard (PreToolUse): no impide una aprobación de prueba: "
+           "no protege" in r.stdout and r.returncode == 1,
+           "un guard que deja pasar todo da [falla]", f"{r.returncode} {r.stdout}")
     concede = ('    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",'
                ' "permissionDecision": "allow"}}))\n    return 0\n')
     r = doctor(plugin=guardrail_roto(base, "r004-allow", concede))
-    check("[falla] guardrail guard (PreToolUse): concede permisos (allow)" in r.stdout
-          and r.returncode == 1, "un guard que devuelve allow da [falla]",
-          f"{r.returncode} {r.stdout}")
+    expect("[falla] guardrail guard (PreToolUse): concede permisos (allow)" in r.stdout
+           and r.returncode == 1, "un guard que devuelve allow da [falla]",
+           f"{r.returncode} {r.stdout}")
     r = doctor(plugin=guardrail_roto(base, "r004-lista", "    print('[]')\n    return 0\n"))
-    check("[falla] guardrail guard (PreToolUse): no impide" in r.stdout
-          and "Resumen: sdd no está listo: guardrail guard" in r.stdout,
-          "un guard que imprime JSON que no es un objeto se nombra, sin reventar", r.stdout)
+    expect("[falla] guardrail guard (PreToolUse): no impide" in r.stdout
+           and "Resumen: sdd no está listo: guardrail guard" in r.stdout,
+           "un guard que imprime JSON que no es un objeto se nombra, sin reventar", r.stdout)
 
 
 def test_F012_R005_no_modifica_el_proyecto(base):
@@ -2991,52 +2991,52 @@ def test_F012_R005_no_modifica_el_proyecto(base):
     feature.mkdir(parents=True)
     (feature / "spec.md").write_text(SPEC_LISTA, encoding="utf-8")
     run("approve", cwd=proyecto)
-    check("Approved" in (feature / "spec.md").read_text(encoding="utf-8"),
-          "el proyecto tiene un artefacto aprobado")
+    expect("Approved" in (feature / "spec.md").read_text(encoding="utf-8"),
+           "el proyecto tiene un artefacto aprobado")
     (proyecto / "specs" / "002-y").mkdir()
     (proyecto / "specs" / "002-y" / "spec.md").write_text(SPEC_LISTA, encoding="utf-8")
     (proyecto / "src").mkdir()
     (proyecto / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
     antes = huella_de(proyecto)
     r = doctor(cwd=proyecto, env_extra={"CLAUDE_PROJECT_DIR": str(proyecto)})
-    check("Resumen: sdd está listo." in r.stdout, "el diagnóstico termina", r.stdout)
-    check(huella_de(proyecto) == antes, "ningún archivo del proyecto cambia")
+    expect("Resumen: sdd está listo." in r.stdout, "el diagnóstico termina", r.stdout)
+    expect(huella_de(proyecto) == antes, "ningún archivo del proyecto cambia")
 
 
 def test_F012_R006_resumen(base):
     print("\nF012 · R006: el resumen dice si el plugin está listo o qué falta")
     r = doctor()
-    check(r.stdout.rstrip().endswith("Resumen: sdd está listo.") and r.returncode == 0,
-          "el plugin real está listo", f"{r.returncode} {r.stdout}")
+    expect(r.stdout.rstrip().endswith("Resumen: sdd está listo.") and r.returncode == 0,
+           "el plugin real está listo", f"{r.returncode} {r.stdout}")
     r = doctor(plugin=guardrail_roto(base, "r006"))
-    check("Resumen: sdd no está listo: guardrail guard (PreToolUse)." in r.stdout,
-          "con un guardrail roto, no está listo y lo nombra", r.stdout)
+    expect("Resumen: sdd no está listo: guardrail guard (PreToolUse)." in r.stdout,
+           "con un guardrail roto, no está listo y lo nombra", r.stdout)
 
 
 def test_F012_R007_sin_los_demas(base):
     print("\nF012 · R007: el diagnóstico funciona sin los demás plugins")
     r = doctor(plugin=copia_del_plugin(base, "r007"))
-    check("Resumen: sdd está listo." in r.stdout and r.returncode == 0,
-          "una copia solo de este plugin está lista", f"{r.returncode} {r.stdout}")
+    expect("Resumen: sdd está listo." in r.stdout and r.returncode == 0,
+           "una copia solo de este plugin está lista", f"{r.returncode} {r.stdout}")
 
 
 def test_F012_copias_del_diagnostico(base):
     print("\nF012: el diagnóstico es la misma copia en los cinco plugins")
     propio = PLUGIN / "scripts" / "doctor.sh"
     r = subprocess.run(["sh", "-n", str(propio)], capture_output=True, text=True)
-    check(r.returncode == 0, "sh -n acepta doctor.sh", r.stderr)
+    expect(r.returncode == 0, "sh -n acepta doctor.sh", r.stderr)
     comun = (PLUGIN / "scripts" / "doctor.py").read_text(encoding="utf-8")
-    check(COMUN in comun, "doctor.py marca su parte común")
+    expect(COMUN in comun, "doctor.py marca su parte común")
     comun = comun.split(COMUN, 1)[-1]
     for nombre in DOCTOR_PLUGINS:
         otro = PLUGIN.parent / nombre / "scripts"
         if nombre == PLUGIN.name or not (otro / "doctor.sh").is_file():
             continue
-        check((otro / "doctor.sh").read_bytes() == propio.read_bytes(),
-              f"doctor.sh igual al de {nombre}")
+        expect((otro / "doctor.sh").read_bytes() == propio.read_bytes(),
+               f"doctor.sh igual al de {nombre}")
         texto = (otro / "doctor.py").read_text(encoding="utf-8")
-        check(texto.split(COMUN, 1)[-1] == comun and COMUN in texto,
-              f"la parte común de doctor.py igual a la de {nombre}")
+        expect(texto.split(COMUN, 1)[-1] == comun and COMUN in texto,
+               f"la parte común de doctor.py igual a la de {nombre}")
 
 
 
