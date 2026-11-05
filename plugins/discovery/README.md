@@ -158,6 +158,29 @@ Límites conocidos:
   aprobado no pasa por la auditoría: los hooks no actúan sin `product/`.
 - Una edición múltiple (`MultiEdit`) no se analiza; solo `Write`, `Edit` y Bash.
 
+## Diagnóstico
+
+Los guardrails fallan abiertos: si `python3` falta o es anterior a 3.8, la
+protección de la aprobación del producto (`brief.md` y `backlog.md`) deja pasar
+todo sin decir nada. `/discovery:doctor` comprueba que la instalación funciona:
+
+- **El intérprete**: que `python3` está en el `PATH`, se ejecuta y es 3.8 o
+  posterior. Lo comprueba `scripts/doctor.sh`, en shell, para poder informar
+  aunque Python falte, y dice cómo instalarlo si hace falta.
+- **Los scripts**: que cada `scripts/*.py` se carga sin errores.
+- **Los guardrails**: que `guard` impide una aprobación escrita por el modelo y
+  deja pasar una escritura inocua, que `audit` responde y que ninguno devuelve
+  `allow`. Se prueban en un proyecto temporal y sin `DISCOVERY_BYPASS`.
+
+No toca el proyecto ni instala nada. Sin la skill: `sh scripts/doctor.sh`, que
+sale con 0 si el plugin está listo y con 1 si no.
+
+Al iniciar la sesión, un hook `SessionStart` comprueba solo el intérprete: calla
+si está bien y, si no, avisa y nombra `/discovery:doctor`. Con varios plugins de
+la serie instalados, el aviso sale una sola vez por sesión, y nunca impide que
+la sesión empiece. El diagnóstico es el mismo en los cinco plugins; el README de
+`sdd` lo describe en detalle.
+
 ## Relación con los demás plugins
 
 - No lee ni escribe `specs/`: se une a `sdd` solo por archivos.

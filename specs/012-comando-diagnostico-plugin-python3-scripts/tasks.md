@@ -142,7 +142,7 @@ plugin.
 
 ### T005 — El diagnóstico en `discovery` y `architecture` `P`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R003, R004, R005, R006, R007, R008
 - **Depende de:** T004
 - **Archivos:** `plugins/{discovery,architecture}/scripts/doctor.sh`, `plugins/{discovery,architecture}/scripts/doctor.py`, `plugins/{discovery,architecture}/skills/doctor/SKILL.md`, `plugins/{discovery,architecture}/hooks/hooks.json`, `plugins/{discovery,architecture}/tests/selftest.py`, `plugins/{discovery,architecture}/README.md`
