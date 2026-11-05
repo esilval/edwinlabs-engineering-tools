@@ -2772,7 +2772,8 @@ def test_F012_R002_interprete_falta_o_antiguo(base):
     r = doctor(python=python_falso(base, "py27", "echo 2.7.18"))
     check("Python 2.7.18 es anterior a 3.8" in r.stdout, "Python 2 es anterior", r.stdout)
     r = doctor(python=python_falso(base, "py4", "echo 4.0.0"))
-    check("[ok] intérprete: Python 4.0.0" in r.stdout, "una versión mayor sirve", r.stdout)
+    check("[ok] intérprete: Python 4.0.0" in r.stdout, "una versión mayor sirve",
+          r.stdout)
 
 
 def test_F012_R006_resumen_sin_interprete(base):
@@ -2784,9 +2785,124 @@ def test_F012_R006_resumen_sin_interprete(base):
     r = doctor(["--skill"], python=falta)
     check("Resumen: sdd no está listo" in r.stdout and r.returncode == 0,
           "con --skill sale con 0", f"{r.returncode} {r.stdout}")
-    r = doctor(["--otra"])
-    check(r.returncode == 2 and "Uso:" in r.stderr, "uso incorrecto sale con 2",
-          f"{r.returncode} {r.stderr}")
+    for args in (["--otra"], ["--skill", "extra"]):
+        r = doctor(args)
+        check(r.returncode == 2 and "Uso:" in r.stderr,
+              f"{args}: uso incorrecto sale con 2", f"{r.returncode} {r.stderr}")
+    # D1: con el intérprete válido, doctor.py que no llega a su resumen es un
+    # fallo de scripts, con su error.
+    roto = python_falso(base, "py-sin-doctor", 'if [ "$1" = -c ]; then echo 3.11.4; '
+                        'else echo "doctor.py: algo revento" >&2; exit 1; fi')
+    r = doctor(python=roto)
+    check("[falla] scripts: doctor.py no terminó" in r.stdout
+          and "    doctor.py: algo revento" in r.stdout
+          and "Resumen: sdd no está listo: scripts." in r.stdout and r.returncode == 1,
+          "doctor.py sin resumen: fallo de scripts con su error, y salida 1",
+          f"{r.returncode} {r.stdout}")
+
+def aviso(base, session_id="s1", python=None, stdin=None, tmp=None):
+    """doctor.sh session con un TMPDIR propio, para no dejar marcas fuera de base."""
+    tmp = tmp or (base / "tmp-doctor")
+    tmp.mkdir(parents=True, exist_ok=True)
+    entrada = stdin if stdin is not None else json.dumps(
+        {"session_id": session_id, "hook_event_name": "SessionStart",
+         "source": "startup"})
+    return doctor(["session"], python=python, stdin=entrada,
+                  env_extra={"TMPDIR": str(tmp)})
+
+
+def test_F012_R008_aviso_sin_interprete(base):
+    print("\nF012 · R008: sin intérprete, el inicio de sesión avisa y nombra el"
+          " diagnóstico")
+    r = aviso(base, "r008", python=str(base / "no-existe" / "python3"))
+    try:
+        out = json.loads(r.stdout)
+    except ValueError:
+        out = {}
+    msg = out.get("systemMessage", "")
+    ctx = (out.get("hookSpecificOutput") or {}).get("additionalContext", "")
+    check(r.returncode == 0 and "falta" in msg and "/sdd:doctor" in msg,
+          "JSON con systemMessage que dice que falta y nombra /sdd:doctor",
+          f"{r.returncode} {r.stdout}")
+    check((out.get("hookSpecificOutput") or {}).get("hookEventName") == "SessionStart"
+          and "/sdd:doctor" in ctx, "y el mismo aviso como contexto del modelo", r.stdout)
+    r = aviso(base, "r008-antiguo", python=python_falso(base, "py36", "echo 3.6.15"))
+    check("3.6.15 es anterior a 3.8" in r.stdout, "también avisa si es antiguo", r.stdout)
+
+
+def test_F012_R009_silencio_con_interprete(base):
+    print("\nF012 · R009: con el intérprete válido, el inicio de sesión calla")
+    r = aviso(base, "r009")
+    check(r.returncode == 0 and r.stdout == "" and r.stderr == "",
+          "sin salida y con 0", f"{r.returncode} {r.stdout!r} {r.stderr!r}")
+
+
+def test_F012_R010_fallo_no_bloquea(base):
+    print("\nF012 · R010: un fallo en el aviso no impide la sesión")
+    falta = str(base / "no-existe" / "python3")
+    r = aviso(base, python=falta, stdin="esto no es JSON")
+    check(r.returncode == 0 and "systemMessage" in r.stdout,
+          "un payload que no es JSON sale con 0 y avisa igual",
+          f"{r.returncode} {r.stdout}")
+    env = {"TMPDIR": str(base / "no-existe-tmp")}
+    r = doctor(["session"], python=falta, stdin='{"session_id": "r010"}', env_extra=env)
+    check(r.returncode == 0 and "systemMessage" in r.stdout,
+          "un TMPDIR inexistente sale con 0 y avisa igual", f"{r.returncode} {r.stdout}")
+    r = doctor(["session"], stdin="", env_extra=env)
+    check(r.returncode == 0 and r.stdout == "", "sin entrada y con intérprete, calla",
+          f"{r.returncode} {r.stdout}")
+    # Sin plugin.json legible, el aviso nombra /doctor:doctor en vez de fallar.
+    suelto = base / "r010-sin-plugin-json"
+    (suelto / "scripts").mkdir(parents=True)
+    shutil.copy(str(PLUGIN / "scripts" / "doctor.sh"), str(suelto / "scripts"))
+    r = doctor(["session"], python=falta, stdin='{"session_id": "r010-pj"}',
+               env_extra=env, plugin=suelto)
+    check(r.returncode == 0 and "/doctor:doctor" in r.stdout,
+          "sin plugin.json, avisa con /doctor:doctor", f"{r.returncode} {r.stdout}")
+
+
+def test_F012_R011_un_aviso_por_sesion(base):
+    print("\nF012 · R011: un solo aviso por sesión aunque estén los cinco plugins")
+    falta = str(base / "no-existe" / "python3")
+    tmp = base / "tmp-r011"
+    avisos = [aviso(base, "r011-a", python=falta, tmp=tmp).stdout for _ in range(5)]
+    check(sum(1 for a in avisos if a.strip()) == 1,
+          "cinco ejecuciones con el mismo session_id dan un aviso",
+          f"{[bool(a.strip()) for a in avisos]}")
+    otro = aviso(base, "r011-b", python=falta, tmp=tmp).stdout
+    check(bool(otro.strip()), "otra sesión vuelve a avisar", otro)
+    raro = aviso(base, "../x\\y", python=falta, tmp=tmp)
+    marcas = sorted(p.name for p in tmp.iterdir())
+    check(bool(raro.stdout.strip()) and "edwinlabs-doctor.xy" in marcas
+          and all(m.startswith("edwinlabs-doctor.") for m in marcas)
+          and not [p for p in base.iterdir() if p.name.startswith("edwinlabs")],
+          "un session_id con barras se limpia y no sale del directorio temporal",
+          f"{marcas} {raro.stdout}")
+    # Los hooks de los cinco plugins corren a la vez: la marca es atómica.
+    tmp = base / "tmp-r011-paralelo"
+    tmp.mkdir()
+    env = dict(os.environ, DOCTOR_PYTHON=falta, TMPDIR=str(tmp))
+    procesos = [subprocess.Popen(["sh", str(PLUGIN / "scripts" / "doctor.sh"), "session"],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                                 env=env) for _ in range(5)]
+    salidas = [p.communicate('{"session_id": "r011-p"}', timeout=60)[0] for p in procesos]
+    check(sum(1 for s in salidas if s.strip()) == 1,
+          "cinco ejecuciones simultáneas dan un aviso",
+          f"{[bool(s.strip()) for s in salidas]}")
+    r = doctor(["session", "extra"], python=falta, stdin='{"session_id": "r011-x"}',
+               env_extra={"TMPDIR": str(tmp)})
+    check(r.returncode == 0 and "systemMessage" in r.stdout,
+          "session con argumentos de más sigue saliendo con 0",
+          f"{r.returncode} {r.stdout}")
+
+
+def test_F012_N001_aviso_rapido(base):
+    print("\nF012 · N001: el aviso de inicio tarda menos de 1 s con el intérprete válido")
+    import time
+    inicio = time.monotonic()
+    r = aviso(base, "n001")
+    dura = time.monotonic() - inicio
+    check(r.returncode == 0 and dura < 1.0, f"terminó en {dura:.2f} s", f"{dura:.2f} s")
 
 
 
@@ -2863,6 +2979,11 @@ def main():
         test_F012_R001_interprete_bien(base)
         test_F012_R002_interprete_falta_o_antiguo(base)
         test_F012_R006_resumen_sin_interprete(base)
+        test_F012_R008_aviso_sin_interprete(base)
+        test_F012_R009_silencio_con_interprete(base)
+        test_F012_R010_fallo_no_bloquea(base)
+        test_F012_R011_un_aviso_por_sesion(base)
+        test_F012_N001_aviso_rapido(base)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

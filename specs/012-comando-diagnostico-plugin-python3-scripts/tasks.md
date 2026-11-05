@@ -29,7 +29,7 @@ plugin.
 
 ### T001 — `doctor.sh`: comprobación del intérprete y diagnóstico completo
 
-- **Estado:** `[~]`
+- **Estado:** `[x]`
 - **Requisitos:** R001, R002, R006
 - **Depende de:** —
 - **Archivos:** `plugins/sdd/scripts/doctor.sh`, `plugins/sdd/tests/selftest.py`
@@ -61,7 +61,7 @@ plugin.
 
 ### T002 — `doctor.sh session`: aviso al iniciar y marca por sesión
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R008, R009, R010, R011
 - **Depende de:** T001
 - **Archivos:** `plugins/sdd/scripts/doctor.sh`, `plugins/sdd/tests/selftest.py`
