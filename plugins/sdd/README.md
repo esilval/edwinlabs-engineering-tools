@@ -26,7 +26,56 @@ Se cargará en la siguiente sesión como `sdd@skills-dir`, sin marketplace ni pa
 de instalación.
 
 **Requisitos:** Python 3.8+ en el `PATH` como `python3`. Git es opcional. Sin
-dependencias externas: el plugin no instala nada.
+dependencias externas: el plugin no instala nada. Tras instalarlo, `/sdd:doctor`
+comprueba que todo funciona (ver «Diagnóstico»).
+
+## Diagnóstico
+
+Los guardrails fallan abiertos: si `python3` falta o es anterior a 3.8, la
+compuerta y la protección de las aprobaciones dejan pasar todo sin decir nada.
+`/sdd:doctor` comprueba que la instalación funciona:
+
+- **El intérprete**: que `python3` está en el `PATH`, se ejecuta y es 3.8 o
+  posterior. Esto lo comprueba `scripts/doctor.sh`, en shell, para poder
+  informar aunque Python falte. Si falla, dice cómo instalarlo en macOS, Linux
+  o Windows (Git Bash).
+- **Los scripts**: que cada `scripts/*.py` se carga sin errores.
+- **Los hooks**: que cada hook de `hooks/hooks.json` responde como debe, en un
+  proyecto temporal y sin escapes (`*_BYPASS`):
+  - la compuerta (`guard`) impide una aprobación escrita por el modelo y deja
+    pasar una escritura inocua;
+  - `audit`, `quality` y `context` responden sin bloquear;
+  - ninguno devuelve `allow`.
+
+No toca el proyecto ni instala nada. Una salida típica, abreviada:
+
+```text
+Diagnóstico de sdd
+[ok] intérprete: Python 3.12.4 (/usr/bin/python3)
+[ok] script sdd.py: arranca
+[ok] script sdd_trace.py: arranca
+[ok] guardrail guard (PreToolUse): impide una aprobación de prueba y deja pasar una escritura inocua
+[ok] hook quality (PostToolUse): responde
+[ok] guardrail audit (PostToolUse): responde
+[ok] hook context (SessionStart): responde
+Resumen: sdd está listo.
+```
+
+Sin la skill: `sh scripts/doctor.sh`, que sale con 0 si el plugin está listo, 1
+si no y 2 si el uso es incorrecto.
+
+**Aviso al iniciar la sesión.** Un hook `SessionStart` (`doctor.sh session`)
+comprueba solo el intérprete, en milisegundos:
+- si está bien, no dice nada;
+- si falta o es antiguo, avisa al usuario y al modelo, y nombra `/sdd:doctor`.
+
+Los cinco plugins de la serie llevan el mismo aviso. Para no repetirlo, el
+primero que avisa crea una marca por sesión, un directorio vacío, en el directorio temporal
+(`$TMPDIR/edwinlabs-doctor.<sesión>`) y los demás callan. El aviso nunca
+impide que la sesión empiece.
+
+`doctor.sh` y la parte común de `doctor.py` son idénticos en los cinco plugins;
+el selftest de cada uno lo comprueba.
 
 ## Uso
 

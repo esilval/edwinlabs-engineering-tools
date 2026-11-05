@@ -61,6 +61,15 @@
               "context"
             ],
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "sh",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh",
+              "session"
+            ],
+            "timeout": 5
           }
         ]
       }

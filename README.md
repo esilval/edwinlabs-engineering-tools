@@ -19,6 +19,24 @@ En VS Code: escribe `/plugins`, pestaña **Marketplaces**, añade
 `esilval/edwinlabs-engineering-tools`, y luego instala desde la pestaña
 **Plugins**.
 
+**Requisitos:** Python 3.8 o posterior en el `PATH` como `python3`, y un shell
+(`sh`), que en Windows es el de Git Bash. Sin dependencias externas.
+
+**Comprueba la instalación.** Tras instalar cada plugin, ejecuta su diagnóstico:
+`/discovery:doctor`, `/architecture:doctor`, `/sdd:doctor`, `/release:doctor` u
+`/operate:doctor`. El diagnóstico comprueba:
+- que `python3` existe y es 3.8 o posterior;
+- que los scripts del plugin arrancan;
+- que sus guardrails impiden una aprobación de prueba y dejan pasar lo inocuo.
+
+Termina con «está listo» o con lo que falta, y no toca el proyecto. Importa
+porque los guardrails fallan abiertos: sin un Python válido dejan pasar todo
+sin decir nada.
+
+Además, al iniciar cada sesión, los plugins comprueban el intérprete y, si falta
+o es antiguo, avisan una sola vez aunque haya varios instalados. Basta con un
+plugin de la serie para recibir el aviso.
+
 ## Plugins
 
 Los plugins forman una serie que cubre el ciclo de vida de un producto, una
