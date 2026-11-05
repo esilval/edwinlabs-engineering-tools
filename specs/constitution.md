@@ -2,7 +2,7 @@
 
 | Campo | Valor      |
 | ----- | ---------- |
-| Fecha | 2026-10-27 |
+| Fecha | 2026-11-04 |
 
 > Reglas que ninguna spec, plan o tarea puede violar. Si una regla aquí impide
 > algo que hace falta, se cambia la regla explícitamente, no se ignora.
@@ -11,7 +11,9 @@
 
 1. **Lo determinista vive en un script, no en un prompt.** Numeración, resolución
    de estado, compuertas y comprobaciones de cobertura son código Python. Las
-   skills solo describen lo que requiere criterio.
+   skills solo describen lo que requiere criterio. La única excepción es la
+   comprobación del propio intérprete (`scripts/doctor.sh`), que está en shell
+   porque tiene que avisar cuando Python falta.
 2. **Cada plugin es una etapa del ciclo de vida, unida a las demás por archivos.**
    Un plugin no importa código de otro; lee los artefactos que el otro deja. Cada
    plugin funciona aunque los demás no estén instalados.
@@ -29,6 +31,11 @@
 
 - **Lenguajes y versiones:** Python 3.8 como mínimo, solo biblioteca estándar.
   Sin dependencias externas en los scripts de los plugins.
+  - Excepción: `scripts/doctor.sh`, en shell POSIX. Solo comprueba el
+    intérprete y cede a `doctor.py`, sin otra lógica.
+  - Sin bashismos y solo con utilidades POSIX (`command -v`, `sed`, `grep`,
+    `uname`, `mkdir`, `tr`, `head`, `cat`).
+  - Es la misma copia en los cinco plugins.
 - **Formato y linting:** ninguna herramienta configurada hoy. Se sigue el estilo
   del código existente (PEP 8, 4 espacios, líneas de ~90 caracteres).
 - **Estructura de directorios:**
@@ -89,13 +96,14 @@ que alguien se acuerde, y eso hay que saberlo.
 | Todo código de hallazgo alcanzable | mecánica | el selftest compara los declarados con los probados | cumple en los 5 plugins |
 | Solo biblioteca estándar | mecánica | pendiente de automatizar: comprobar los `import` en `validate.py` | cumple |
 | Hooks en forma exec | mecánica | pendiente de automatizar en `validate.py` | cumple |
+| Shell solo en `doctor.sh`, POSIX e idéntico en los cinco plugins | mecánica (parcial) | el selftest de cada plugin pasa `sh -n` y compara su `doctor.sh`, y la parte común de `doctor.py`, con las otras cuatro copias; el CI corre en Ubuntu, donde `sh` es `dash`. Pendiente de automatizar: que `validate.py` rechace cualquier otro `.sh` en un plugin. Que `doctor.sh` no crezca con otra lógica es revisable: revisión del diff | cumple |
 | Ningún hook devuelve `allow` | mecánica (parcial) | el selftest de cada plugin lo comprueba para su compuerta; el resto, revisión del diff | cumple |
 | Lo determinista en scripts | revisable | revisión del diff | — |
 | Guardrail con escape documentado | revisable | revisión del diff y README | — |
 | Aprobaciones solo por el usuario | revisable | revisión del diff; `disable-model-invocation` en las skills que aprueban | — |
 | Códigos y schemas como contrato | revisable | revisión del diff | — |
 | Plugins unidos solo por archivos | revisable | revisión del diff | — |
-| Código copiado entre plugins, referenciado y contrastado | revisable (parcial) | revisión del diff; pruebas de contrato contra `discovery` en los selftests de `sdd` y `architecture`, contra `sdd` en el de `release`, contra `release`, `architecture`, `discovery` y `sdd` en el de `operate`, y contra `operate` en el de `sdd` | cumple |
+| Código copiado entre plugins, referenciado y contrastado | revisable (parcial) | revisión del diff; pruebas de contrato contra `discovery` en los selftests de `sdd` y `architecture`, contra `sdd` en el de `release`, contra `release`, `architecture`, `discovery` y `sdd` en el de `operate`, y contra `operate` en el de `sdd`; y la comparación de las copias del diagnóstico en los cinco selftests | cumple |
 | Idioma y formato de commits | juicio | criterio humano | — |
 | Estilo del código | juicio | criterio humano; sin herramienta | — |
 
