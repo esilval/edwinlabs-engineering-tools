@@ -135,7 +135,11 @@ run_full() {
 # (mkdir es atómico) y los demás callan. Sin session_id, o si la marca no se
 # puede crear, avisa igual: mejor repetido que callado.
 run_session() {
-    payload=$(cat 2>/dev/null)
+    # Lanzado a mano desde una terminal, no espera una entrada que no llegará.
+    payload=""
+    if [ ! -t 0 ]; then
+        payload=$(cat 2>/dev/null)
+    fi
     check_interpreter
     if [ "$STATE" = bien ]; then
         return 0

@@ -121,7 +121,7 @@ plugin.
 
 ### T004 — Skill `/sdd:doctor`, hook `SessionStart` y README de `sdd`
 
-- **Estado:** `[ ]`
+- **Estado:** `[x]`
 - **Requisitos:** R006, R008
 - **Depende de:** T002, T003
 - **Archivos:** `plugins/sdd/skills/doctor/SKILL.md`, `plugins/sdd/hooks/hooks.json`, `plugins/sdd/README.md`
